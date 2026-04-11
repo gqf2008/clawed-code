@@ -11,7 +11,7 @@ use clawed_core::file_watcher::ConfigWatcher;
 use crate::commands::{CommandResult, SlashCommand};
 use crate::config;
 use crate::input::{InputReader, InputResult, history_file_path};
-use crate::output::{print_stream, spawn_esc_listener, OutputRenderer};
+use crate::output::{print_stream, spawn_stream_input, OutputRenderer};
 use crate::repl_commands::*;
 use crate::theme;
 
@@ -91,6 +91,10 @@ pub async fn run(
     // Cron tasks that fired while readline was blocking; processed at top of next iteration.
     let mut cron_pending: Vec<clawed_core::cron_tasks::CronTask> = Vec::new();
 
+    // Text the user typed during the previous AI response (captured in raw-mode typeahead).
+    // Pre-filled into the next readline prompt so no keystrokes are lost.
+    let mut typeahead_next = String::new();
+
     loop {
         // Context usage warning before prompt
         if let Some(pct) = engine.context_usage_percent().await {
@@ -126,8 +130,14 @@ pub async fn run(
         // Run readline in a blocking thread so the async runtime stays alive.
         // Race it against the cron channel — tasks that arrive during readline are
         // accumulated in `cron_pending` and executed at the top of the next iteration.
+        // If the user typed while the AI was responding, pre-fill readline with that text.
+        let queued = std::mem::take(&mut typeahead_next);
         let mut join = tokio::task::spawn_blocking(move || {
-            let r = rl.readline("> ");
+            let r = if queued.is_empty() {
+                rl.readline("> ")
+            } else {
+                rl.readline_with_initial("> ", &queued)
+            };
             (rl, r)
         });
         let (new_rl, readline_result) = loop {
@@ -934,7 +944,7 @@ pub async fn run(
                         eprintln!("{}Failed to send request: {}\x1b[0m", theme::c_err(), e);
                     } else {
                         // ESC listener for abort during bus-based rendering
-                        let _esc_guard = spawn_esc_listener(engine.abort_signal());
+                        let _stream_guard = spawn_stream_input(engine.abort_signal());
                         // Render notifications until TurnComplete (10min per-notification timeout)
                         let mut renderer = OutputRenderer::new(&model);
                         let render_timeout = Duration::from_secs(600);
@@ -974,14 +984,22 @@ pub async fn run(
                         engine.submit_with_content(content).await
                     };
 
-                    if let Err(e) = print_stream(stream, &model, Some(engine.cost_tracker()), Some(&engine.abort_signal())).await {
-                        if engine.abort_signal().is_aborted() {
-                            eprintln!("{}⏹ Interrupted\x1b[0m", theme::c_warn());
-                            engine.abort_signal().reset();
-                            let _ = engine.save_session().await;
-                            turns_since_save = 0;
-                        } else {
-                            eprintln!("{}Error: {}\x1b[0m", theme::c_err(), e);
+                    match print_stream(stream, &model, Some(engine.cost_tracker()), Some(&engine.abort_signal())).await {
+                        Ok(queued_input) => {
+                            // Buffer any text the user typed during streaming for the next prompt.
+                            if !queued_input.trim().is_empty() {
+                                typeahead_next = queued_input;
+                            }
+                        }
+                        Err(e) => {
+                            if engine.abort_signal().is_aborted() {
+                                eprintln!("{}⏹ Interrupted\x1b[0m", theme::c_warn());
+                                engine.abort_signal().reset();
+                                let _ = engine.save_session().await;
+                                turns_since_save = 0;
+                            } else {
+                                eprintln!("{}Error: {}\x1b[0m", theme::c_err(), e);
+                            }
                         }
                     }
                 }

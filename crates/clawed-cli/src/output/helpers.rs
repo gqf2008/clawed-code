@@ -405,38 +405,90 @@ pub(super) fn categorize_error(msg: &str) -> (&'static str, Option<&'static str>
     }
 }
 
-/// Spawn a background thread that listens for ESC key press and triggers abort.
-/// Returns a guard that stops the listener when dropped.
-pub(crate) fn spawn_esc_listener(abort: AbortSignal) -> EscListenerGuard {
+/// Spawn a background thread that listens for key presses during streaming.
+///
+/// - **Esc** and **Ctrl+C** trigger the abort signal.
+/// - **Printable characters** and **Backspace** are buffered as typeahead so
+///   they can be used to pre-fill the readline prompt after streaming ends.
+///
+/// Returns a guard that stops the listener when dropped or when
+/// [`StreamInputGuard::stop_and_take`] is called.
+pub(crate) fn spawn_stream_input(abort: AbortSignal) -> StreamInputGuard {
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stop2 = stop.clone();
+    let typeahead = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let typeahead2 = typeahead.clone();
+
     let handle = std::thread::spawn(move || {
-        // Enable raw mode to capture individual key presses
         if crossterm::terminal::enable_raw_mode().is_err() {
             return;
         }
         while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
-            // Poll for events with a short timeout
             if crossterm::event::poll(std::time::Duration::from_millis(100)).unwrap_or(false) {
                 if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read() {
-                    if key.code == crossterm::event::KeyCode::Esc {
-                        abort.abort();
-                        break;
+                    use crossterm::event::{KeyCode, KeyModifiers};
+                    match key.code {
+                        KeyCode::Esc => {
+                            abort.abort();
+                            break;
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            abort.abort();
+                            break;
+                        }
+                        KeyCode::Backspace => {
+                            let mut buf = typeahead2
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner());
+                            buf.pop();
+                        }
+                        KeyCode::Char(c)
+                            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                                && !key.modifiers.contains(KeyModifiers::ALT) =>
+                        {
+                            let mut buf = typeahead2
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner());
+                            buf.push(c);
+                        }
+                        _ => {}
                     }
                 }
             }
         }
         let _ = crossterm::terminal::disable_raw_mode();
     });
-    EscListenerGuard { stop, handle: Some(handle) }
+
+    StreamInputGuard { stop, typeahead, handle: Some(handle) }
 }
 
-pub(crate) struct EscListenerGuard {
+/// Guard for the raw-mode streaming input listener.
+///
+/// Stops the background thread and restores normal terminal mode when dropped.
+/// Call [`stop_and_take`](Self::stop_and_take) to retrieve the typeahead buffer before dropping.
+pub(crate) struct StreamInputGuard {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    typeahead: std::sync::Arc<std::sync::Mutex<String>>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
-impl Drop for EscListenerGuard {
+impl StreamInputGuard {
+    /// Stop the listener thread and return any typeahead text the user typed
+    /// while streaming was running.
+    pub(crate) fn stop_and_take(mut self) -> String {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+        // Thread has exited; the lock is uncontested.
+        self.typeahead
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+}
+
+impl Drop for StreamInputGuard {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(h) = self.handle.take() {

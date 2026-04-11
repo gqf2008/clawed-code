@@ -56,7 +56,7 @@ impl OutputRenderer {
         cost_tracker: Option<&CostTracker>,
         abort_signal: Option<&AbortSignal>,
     ) {
-        let _esc_guard = abort_signal.map(|a| spawn_esc_listener(a.clone()));
+        let _stream_guard = abort_signal.map(|a| spawn_stream_input(a.clone()));
 
         while let Some(notification) = client.recv_notification().await {
             let done = self.render(notification, cost_tracker);

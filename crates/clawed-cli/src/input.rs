@@ -347,6 +347,7 @@ impl InputReader {
             .completion_type(CompletionType::List)
             .edit_mode(EditMode::Emacs)
             .auto_add_history(false)
+            .bracketed_paste(true)
             .build();
 
         let mut editor = Editor::<InputHelper, DefaultHistory>::with_config(config)
@@ -417,6 +418,21 @@ impl InputReader {
         }
 
         match self.editor.readline(prompt) {
+            Ok(line) => Ok(InputResult::Line(line)),
+            Err(ReadlineError::Interrupted) => Ok(InputResult::Interrupted),
+            Err(ReadlineError::Eof) => Ok(InputResult::Eof),
+            Err(e) => Err(io::Error::other(e)),
+        }
+    }
+    /// Read user input with completion and multiline support, pre-filling the
+    /// buffer with `initial` text (e.g. typeahead captured during streaming).
+    ///
+    /// The cursor is placed at the end of the pre-filled text.
+    pub fn readline_with_initial(&mut self, prompt: &str, initial: &str) -> io::Result<InputResult> {
+        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+            return read_pipe_fallback(prompt);
+        }
+        match self.editor.readline_with_initial(prompt, (initial, "")) {
             Ok(line) => Ok(InputResult::Line(line)),
             Err(ReadlineError::Interrupted) => Ok(InputResult::Interrupted),
             Err(ReadlineError::Eof) => Ok(InputResult::Eof),

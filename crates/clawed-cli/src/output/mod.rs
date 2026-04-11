@@ -4,7 +4,7 @@ mod stream;
 
 pub use renderer::OutputRenderer;
 pub use stream::print_stream;
-pub(crate) use helpers::spawn_esc_listener;
+pub(crate) use helpers::spawn_stream_input;
 
 use clawed_agent::engine::QueryEngine;
 use clawed_agent::task_runner::{run_task, CompletionReason, TaskProgress};
@@ -13,7 +13,7 @@ use helpers::format_tool_result_inline;
 pub async fn run_single(engine: &QueryEngine, prompt: &str) -> anyhow::Result<()> {
     let model = { engine.state().read().await.model.clone() };
     let stream = engine.submit(prompt).await;
-    print_stream(stream, &model, Some(engine.cost_tracker()), None).await
+    print_stream(stream, &model, Some(engine.cost_tracker()), None).await.map(|_| ())
 }
 
 /// Run a single prompt and output structured JSON result.

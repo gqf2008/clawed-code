@@ -7,12 +7,19 @@ use std::io::Write as _;
 
 use super::helpers::*;
 
+/// Stream AI events to the terminal and return any typeahead text typed by the user
+/// during streaming.
+///
+/// While streaming is active the terminal is placed in raw mode so individual
+/// keystrokes can be captured. Printable characters are buffered and returned as
+/// the `String` inside `Ok(…)` so the caller can pre-fill the next readline prompt.
+/// Esc and Ctrl+C trigger `abort_signal` as before.
 pub async fn print_stream(
     mut stream: std::pin::Pin<Box<dyn futures::Stream<Item = AgentEvent> + Send>>,
     model: &str,
     cost_tracker: Option<&CostTracker>,
     abort_signal: Option<&AbortSignal>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<String> {
     let mut last_tool_name = String::new();
     let mut tool_start_time: Option<std::time::Instant> = None;
     let mut thinking_started = false;
@@ -22,7 +29,7 @@ pub async fn print_stream(
     let mut total_output_tokens: u64 = 0;
     let stream_start = std::time::Instant::now();
 
-    let _esc_guard = abort_signal.map(|a| spawn_esc_listener(a.clone()));
+    let stream_guard = abort_signal.map(|a| spawn_stream_input(a.clone()));
 
     let spinner = Spinner::start("Thinking...");
     let mut tool_spinner: Option<Spinner> = None;
@@ -153,7 +160,12 @@ pub async fn print_stream(
         }
     }
     md.finish();
-    Ok(())
+    // Stop the raw-mode listener and collect any text the user typed while the
+    // AI was responding. The caller can use this to pre-fill the next prompt.
+    let typeahead = stream_guard
+        .map(|g| g.stop_and_take())
+        .unwrap_or_default();
+    Ok(typeahead)
 }
 
 /// Estimate context window size based on model name.
