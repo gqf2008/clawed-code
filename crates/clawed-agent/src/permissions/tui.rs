@@ -115,49 +115,46 @@ fn select_menu(prompt: &str, items: &[(String, String)]) -> io::Result<Option<us
     draw_items(&mut out, items, cursor)?;
 
     loop {
-        match event::read()? {
-            Event::Key(KeyEvent {
-                code,
-                kind,
-                modifiers,
-                ..
-            }) => {
-                if kind != KeyEventKind::Press && kind != KeyEventKind::Repeat {
-                    continue;
-                }
-                match code {
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        cursor = cursor.saturating_sub(1);
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        if cursor + 1 < n {
-                            cursor += 1;
-                        }
-                    }
-                    KeyCode::Enter => {
-                        write!(out, "\x1b[{}F\x1b[J", n)?;
-                        write!(out, "   \x1b[32m✓\x1b[0m {}\r\n", items[cursor].0)?;
-                        out.flush()?;
-                        return Ok(Some(cursor));
-                    }
-                    KeyCode::Esc => {
-                        write!(out, "\x1b[{}F\x1b[J", n)?;
-                        write!(out, "   \x1b[2m✗ cancelled\x1b[0m\r\n")?;
-                        out.flush()?;
-                        return Ok(None);
-                    }
-                    KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
-                        write!(out, "\x1b[{}F\x1b[J", n)?;
-                        write!(out, "   \x1b[2m✗ cancelled\x1b[0m\r\n")?;
-                        out.flush()?;
-                        return Ok(None);
-                    }
-                    _ => continue,
-                }
-                write!(out, "\x1b[{}F\x1b[J", n)?;
-                draw_items(&mut out, items, cursor)?;
+        if let Event::Key(KeyEvent {
+            code,
+            kind,
+            modifiers,
+            ..
+        }) = event::read()? {
+            if kind != KeyEventKind::Press && kind != KeyEventKind::Repeat {
+                continue;
             }
-            _ => {}
+            match code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    cursor = cursor.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if cursor + 1 < n {
+                        cursor += 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    write!(out, "\x1b[{}F\x1b[J", n)?;
+                    write!(out, "   \x1b[32m✓\x1b[0m {}\r\n", items[cursor].0)?;
+                    out.flush()?;
+                    return Ok(Some(cursor));
+                }
+                KeyCode::Esc => {
+                    write!(out, "\x1b[{}F\x1b[J", n)?;
+                    write!(out, "   \x1b[2m✗ cancelled\x1b[0m\r\n")?;
+                    out.flush()?;
+                    return Ok(None);
+                }
+                KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    write!(out, "\x1b[{}F\x1b[J", n)?;
+                    write!(out, "   \x1b[2m✗ cancelled\x1b[0m\r\n")?;
+                    out.flush()?;
+                    return Ok(None);
+                }
+                _ => continue,
+            }
+            write!(out, "\x1b[{}F\x1b[J", n)?;
+            draw_items(&mut out, items, cursor)?;
         }
     }
 }

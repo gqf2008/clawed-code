@@ -90,51 +90,48 @@ pub fn crossterm_select(
     draw_select_items(&mut out, items, cursor)?;
 
     loop {
-        match event::read()? {
-            Event::Key(KeyEvent {
-                code,
-                kind,
-                modifiers,
-                ..
-            }) => {
-                if kind != KeyEventKind::Press && kind != KeyEventKind::Repeat {
-                    continue;
-                }
-                match code {
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        cursor = cursor.saturating_sub(1);
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        if cursor + 1 < n {
-                            cursor += 1;
-                        }
-                    }
-                    KeyCode::Enter => {
-                        // Clear option lines, print result
-                        write!(out, "\x1b[{}F\x1b[J", n)?;
-                        write!(out, "   \x1b[32m✓\x1b[0m {}\r\n", items[cursor].label)?;
-                        out.flush()?;
-                        return Ok(Some(cursor));
-                    }
-                    KeyCode::Esc => {
-                        write!(out, "\x1b[{}F\x1b[J", n)?;
-                        write!(out, "   \x1b[2m✗ cancelled\x1b[0m\r\n")?;
-                        out.flush()?;
-                        return Ok(None);
-                    }
-                    KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
-                        write!(out, "\x1b[{}F\x1b[J", n)?;
-                        write!(out, "   \x1b[2m✗ cancelled\x1b[0m\r\n")?;
-                        out.flush()?;
-                        return Ok(None);
-                    }
-                    _ => continue,
-                }
-                // Redraw
-                write!(out, "\x1b[{}F\x1b[J", n)?;
-                draw_select_items(&mut out, items, cursor)?;
+        if let Event::Key(KeyEvent {
+            code,
+            kind,
+            modifiers,
+            ..
+        }) = event::read()? {
+            if kind != KeyEventKind::Press && kind != KeyEventKind::Repeat {
+                continue;
             }
-            _ => {}
+            match code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    cursor = cursor.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if cursor + 1 < n {
+                        cursor += 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    // Clear option lines, print result
+                    write!(out, "\x1b[{}F\x1b[J", n)?;
+                    write!(out, "   \x1b[32m✓\x1b[0m {}\r\n", items[cursor].label)?;
+                    out.flush()?;
+                    return Ok(Some(cursor));
+                }
+                KeyCode::Esc => {
+                    write!(out, "\x1b[{}F\x1b[J", n)?;
+                    write!(out, "   \x1b[2m✗ cancelled\x1b[0m\r\n")?;
+                    out.flush()?;
+                    return Ok(None);
+                }
+                KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    write!(out, "\x1b[{}F\x1b[J", n)?;
+                    write!(out, "   \x1b[2m✗ cancelled\x1b[0m\r\n")?;
+                    out.flush()?;
+                    return Ok(None);
+                }
+                _ => continue,
+            }
+            // Redraw
+            write!(out, "\x1b[{}F\x1b[J", n)?;
+            draw_select_items(&mut out, items, cursor)?;
         }
     }
 }
@@ -169,11 +166,13 @@ fn char_to_byte(s: &str, char_idx: usize) -> usize {
     s.char_indices().nth(char_idx).map_or(s.len(), |(b, _)| b)
 }
 
+type InputValidator = Box<dyn Fn(&str) -> Result<(), String>>;
+
 pub fn crossterm_input(
     prompt: &str,
     placeholder: &str,
     masked: bool,
-    validator: Option<Box<dyn Fn(&str) -> Result<(), String>>>,
+    validator: Option<InputValidator>,
 ) -> io::Result<Option<String>> {
     let _guard = RawModeGuard::acquire()?;
     let mut out = io::stderr();
@@ -185,120 +184,115 @@ pub fn crossterm_input(
     draw_input_line(&mut out, &buffer, cursor, placeholder, masked, &error_msg)?;
 
     loop {
-        match event::read()? {
-            Event::Key(KeyEvent {
-                code,
-                kind,
-                modifiers,
-                ..
-            }) => {
-                if kind != KeyEventKind::Press && kind != KeyEventKind::Repeat {
-                    continue;
+        if let Event::Key(KeyEvent {
+            code,
+            kind,
+            modifiers,
+            ..
+        }) = event::read()? {
+            if kind != KeyEventKind::Press && kind != KeyEventKind::Repeat {
+                continue;
+            }
+
+            error_msg = None;
+            let char_count = buffer.chars().count();
+
+            match code {
+                KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    write!(out, "\r\x1b[2K   \x1b[2m✗ cancelled\x1b[0m\r\n")?;
+                    out.flush()?;
+                    return Ok(None);
                 }
-
-                error_msg = None;
-                let char_count = buffer.chars().count();
-
-                match code {
-                    KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
-                        write!(out, "\r\x1b[2K   \x1b[2m✗ cancelled\x1b[0m\r\n")?;
-                        out.flush()?;
-                        return Ok(None);
-                    }
-                    KeyCode::Esc => {
-                        write!(out, "\r\x1b[2K   \x1b[2m✗ cancelled\x1b[0m\r\n")?;
-                        out.flush()?;
-                        return Ok(None);
-                    }
-                    KeyCode::Enter => {
-                        if let Some(ref v) = validator {
-                            if let Err(msg) = v(&buffer) {
-                                error_msg = Some(msg);
-                                write!(out, "\r\x1b[2K")?;
-                                draw_input_line(
-                                    &mut out,
-                                    &buffer,
-                                    cursor,
-                                    placeholder,
-                                    masked,
-                                    &error_msg,
-                                )?;
-                                continue;
-                            }
-                        }
-                        let display = if masked && !buffer.is_empty() {
-                            let first_char = buffer.chars().next().unwrap().to_string();
-                            let rest = buffer.chars().count().saturating_sub(1).min(16);
-                            format!("{}{}", first_char, "*".repeat(rest))
-                        } else {
-                            buffer.clone()
-                        };
-                        write!(out, "\r\x1b[2K   \x1b[32m✓\x1b[0m {}\r\n", display)?;
-                        out.flush()?;
-                        return Ok(Some(buffer));
-                    }
-                    KeyCode::Left => {
-                        if cursor > 0 {
-                            cursor -= 1;
+                KeyCode::Esc => {
+                    write!(out, "\r\x1b[2K   \x1b[2m✗ cancelled\x1b[0m\r\n")?;
+                    out.flush()?;
+                    return Ok(None);
+                }
+                KeyCode::Enter => {
+                    if let Some(ref v) = validator {
+                        if let Err(msg) = v(&buffer) {
+                            error_msg = Some(msg);
+                            write!(out, "\r\x1b[2K")?;
+                            draw_input_line(
+                                &mut out,
+                                &buffer,
+                                cursor,
+                                placeholder,
+                                masked,
+                                &error_msg,
+                            )?;
+                            continue;
                         }
                     }
-                    KeyCode::Right => {
-                        if cursor < char_count {
-                            cursor += 1;
-                        }
-                    }
-                    KeyCode::Char('a') if modifiers.contains(KeyModifiers::CONTROL) => {
-                        cursor = 0;
-                    }
-                    KeyCode::Char('e') if modifiers.contains(KeyModifiers::CONTROL) => {
-                        cursor = char_count;
-                    }
-                    KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
-                        // Delete word backward: skip trailing spaces then the word itself.
-                        let chars: Vec<char> = buffer.chars().collect();
-                        let mut new_cursor = cursor;
-                        while new_cursor > 0 && chars[new_cursor - 1] == ' ' {
-                            new_cursor -= 1;
-                        }
-                        while new_cursor > 0 && chars[new_cursor - 1] != ' ' {
-                            new_cursor -= 1;
-                        }
-                        let start_byte = char_to_byte(&buffer, new_cursor);
-                        let end_byte = char_to_byte(&buffer, cursor);
-                        buffer.drain(start_byte..end_byte);
-                        cursor = new_cursor;
-                    }
-                    KeyCode::Backspace
-                    | KeyCode::Char('h')
-                        if code == KeyCode::Backspace
-                            || modifiers.contains(KeyModifiers::CONTROL) =>
-                    {
-                        if cursor > 0 {
-                            let start_byte = char_to_byte(&buffer, cursor - 1);
-                            let end_byte = char_to_byte(&buffer, cursor);
-                            buffer.drain(start_byte..end_byte);
-                            cursor -= 1;
-                        }
-                    }
-                    KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
-                        buffer.clear();
-                        cursor = 0;
-                    }
-                    KeyCode::Char(c)
-                        if !modifiers
-                            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-                    {
-                        let byte = char_to_byte(&buffer, cursor);
-                        buffer.insert(byte, c);
+                    let display = if masked && !buffer.is_empty() {
+                        let first_char = buffer.chars().next().unwrap().to_string();
+                        let rest = buffer.chars().count().saturating_sub(1).min(16);
+                        format!("{}{}", first_char, "*".repeat(rest))
+                    } else {
+                        buffer.clone()
+                    };
+                    write!(out, "\r\x1b[2K   \x1b[32m✓\x1b[0m {}\r\n", display)?;
+                    out.flush()?;
+                    return Ok(Some(buffer));
+                }
+                KeyCode::Left => {
+                    cursor = cursor.saturating_sub(1);
+                }
+                KeyCode::Right => {
+                    if cursor < char_count {
                         cursor += 1;
                     }
-                    _ => continue,
                 }
-
-                write!(out, "\r\x1b[2K")?;
-                draw_input_line(&mut out, &buffer, cursor, placeholder, masked, &error_msg)?;
+                KeyCode::Char('a') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    cursor = 0;
+                }
+                KeyCode::Char('e') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    cursor = char_count;
+                }
+                KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    // Delete word backward: skip trailing spaces then the word itself.
+                    let chars: Vec<char> = buffer.chars().collect();
+                    let mut new_cursor = cursor;
+                    while new_cursor > 0 && chars[new_cursor - 1] == ' ' {
+                        new_cursor -= 1;
+                    }
+                    while new_cursor > 0 && chars[new_cursor - 1] != ' ' {
+                        new_cursor -= 1;
+                    }
+                    let start_byte = char_to_byte(&buffer, new_cursor);
+                    let end_byte = char_to_byte(&buffer, cursor);
+                    buffer.drain(start_byte..end_byte);
+                    cursor = new_cursor;
+                }
+                KeyCode::Backspace
+                | KeyCode::Char('h')
+                    if code == KeyCode::Backspace
+                        || modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    if cursor > 0 {
+                        let start_byte = char_to_byte(&buffer, cursor - 1);
+                        let end_byte = char_to_byte(&buffer, cursor);
+                        buffer.drain(start_byte..end_byte);
+                        cursor -= 1;
+                    }
+                }
+                KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    buffer.clear();
+                    cursor = 0;
+                }
+                KeyCode::Char(c)
+                    if !modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    let byte = char_to_byte(&buffer, cursor);
+                    buffer.insert(byte, c);
+                    cursor += 1;
+                }
+                _ => continue,
             }
-            _ => {}
+
+            write!(out, "\r\x1b[2K")?;
+            draw_input_line(&mut out, &buffer, cursor, placeholder, masked, &error_msg)?;
         }
     }
 }
@@ -345,41 +339,38 @@ pub fn crossterm_confirm(prompt: &str) -> io::Result<Option<bool>> {
     out.flush()?;
 
     loop {
-        match event::read()? {
-            Event::Key(KeyEvent {
-                code,
-                kind,
-                modifiers,
-                ..
-            }) => {
-                if kind != KeyEventKind::Press {
-                    continue;
-                }
-                match code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                        write!(out, "\x1b[32mYes\x1b[0m\r\n")?;
-                        out.flush()?;
-                        return Ok(Some(true));
-                    }
-                    KeyCode::Char('n') | KeyCode::Char('N') => {
-                        write!(out, "\x1b[31mNo\x1b[0m\r\n")?;
-                        out.flush()?;
-                        return Ok(Some(false));
-                    }
-                    KeyCode::Esc => {
-                        write!(out, "\x1b[2mcancelled\x1b[0m\r\n")?;
-                        out.flush()?;
-                        return Ok(None);
-                    }
-                    KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
-                        write!(out, "\x1b[2mcancelled\x1b[0m\r\n")?;
-                        out.flush()?;
-                        return Ok(None);
-                    }
-                    _ => {}
-                }
+        if let Event::Key(KeyEvent {
+            code,
+            kind,
+            modifiers,
+            ..
+        }) = event::read()? {
+            if kind != KeyEventKind::Press {
+                continue;
             }
-            _ => {}
+            match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    write!(out, "\x1b[32mYes\x1b[0m\r\n")?;
+                    out.flush()?;
+                    return Ok(Some(true));
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => {
+                    write!(out, "\x1b[31mNo\x1b[0m\r\n")?;
+                    out.flush()?;
+                    return Ok(Some(false));
+                }
+                KeyCode::Esc => {
+                    write!(out, "\x1b[2mcancelled\x1b[0m\r\n")?;
+                    out.flush()?;
+                    return Ok(None);
+                }
+                KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    write!(out, "\x1b[2mcancelled\x1b[0m\r\n")?;
+                    out.flush()?;
+                    return Ok(None);
+                }
+                _ => {}
+            }
         }
     }
 }

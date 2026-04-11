@@ -361,10 +361,8 @@ pub fn auto_cleanup_sessions(max_age_days: u32) -> u32 {
     let sessions = list_sessions();
     let mut deleted = 0u32;
     for s in &sessions {
-        if s.updated_at < cutoff {
-            if delete_session(&s.id).is_ok() {
-                deleted += 1;
-            }
+        if s.updated_at < cutoff && delete_session(&s.id).is_ok() {
+            deleted += 1;
         }
     }
     deleted
