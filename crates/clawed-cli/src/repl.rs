@@ -137,14 +137,10 @@ pub async fn run(
                     match result {
                         Ok(pair) => break pair,
                         Err(e) => {
-                            // JoinError means the blocking thread panicked — treat as EOF
+                            // JoinError means the blocking thread panicked — treat as EOF.
+                            // `rl` was moved into the panicked thread and is unrecoverable,
+                            // so history cannot be saved here.
                             eprintln!("{}readline panic: {}\x1b[0m", theme::c_err(), e);
-                            // We can't recover rl here; bail out of the REPL
-                            // Safety: save history before exiting
-                            if let Some(ref path) = hist_path {
-                                // hist_path still in scope; we'll fall through to the outer save
-                                let _ = path; // avoid unused warning
-                            }
                             return Ok(());
                         }
                     }
