@@ -127,7 +127,7 @@ clawed --output-format stream-json "explain this file" | jq .
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
 | `--api-key` | | `$ANTHROPIC_API_KEY` | API key for authentication |
-| `--model` | `-m` | `claude-sonnet-4-20250514` | Model name or alias |
+| `--model` | `-m` | `claude-sonnet-4-6` | Model name or alias |
 | `--permission-mode` | | `default` | Permission mode (see below) |
 | `--cwd` | `-d` | current dir | Working directory for the session |
 | `--print` | `-p` | `false` | Print final response only (pipe-friendly) |
@@ -158,9 +158,9 @@ clawed --output-format stream-json "explain this file" | jq .
 
 | Alias | Resolves to |
 |-------|-------------|
-| `sonnet` / `best` | `claude-sonnet-4-20250514` |
-| `opus` | `claude-opus-4-20250514` |
-| `haiku` | `claude-haiku-4-20250514` |
+| `sonnet` | `claude-sonnet-4-6` |
+| `opus` / `best` | `claude-opus-4-6` |
+| `haiku` | `claude-haiku-4-5-20251001` |
 
 ---
 
@@ -541,7 +541,7 @@ Clawed Code supports 8 API backends:
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
-clawed -m claude-sonnet-4-20250514
+clawed -m claude-sonnet-4-6
 ```
 
 ### OpenAI / OpenAI-compatible
@@ -566,7 +566,7 @@ clawed --provider ollama --base-url http://localhost:11434/v1 -m llama3.2
 ### DashScope (Alibaba Cloud)
 
 ```bash
-clawed --provider dashscope --api-key <key> -m qwen-plus
+clawed --provider openai --base-url https://dashscope.aliyuncs.com/compatible-mode/v1 --api-key <key> -m qwen-plus
 ```
 
 ### Together AI / Groq
@@ -576,7 +576,9 @@ clawed --provider together --api-key <key> -m meta-llama/Meta-Llama-3.1-70B-Inst
 clawed --provider groq    --api-key <key> -m llama-3.1-70b-versatile
 ```
 
-### AWS Bedrock / Google Vertex
+### AWS Bedrock / Google Vertex *(coming soon)*
+
+> **Note:** Bedrock and Vertex are recognized by the CLI but not yet fully implemented — AWS SigV4 signing and GCP authentication are pending.
 
 ```bash
 clawed --provider bedrock -m anthropic.claude-3-5-sonnet-20241022-v2:0

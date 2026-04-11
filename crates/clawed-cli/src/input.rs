@@ -305,6 +305,35 @@ impl ConditionalEventHandler for SlashTriggerHandler {
     }
 }
 
+/// Alt+V: paste clipboard image as `@<path>` reference in the input line.
+struct AltVHandler;
+
+impl ConditionalEventHandler for AltVHandler {
+    fn handle(
+        &self,
+        _evt: &Event,
+        n: RepeatCount,
+        _positive: bool,
+        _ctx: &EventContext<'_>,
+    ) -> Option<Cmd> {
+        match paste_clipboard_image() {
+            Ok(path) => {
+                let text = format!("@{} ", path.display());
+                Some(Cmd::Insert(n, text))
+            }
+            Err(e) => {
+                // Print a non-fatal warning without breaking the input line.
+                let _ = write!(
+                    io::stderr(),
+                    "\r\n\x1b[33m⚠  Alt+V: {}\x1b[0m\r\n",
+                    e
+                );
+                None
+            }
+        }
+    }
+}
+
 // --- Public InputReader -----------------------------------------------
 
 /// Rustyline-based input reader with slash command completion and history.
@@ -339,6 +368,12 @@ impl InputReader {
         editor.bind_sequence(
             KeyEvent(KeyCode::Char('/'), Modifiers::NONE),
             EventHandler::Conditional(Box::new(SlashTriggerHandler)),
+        );
+
+        // Alt+V: paste clipboard image as @<path> reference.
+        editor.bind_sequence(
+            KeyEvent(KeyCode::Char('v'), Modifiers::ALT),
+            EventHandler::Conditional(Box::new(AltVHandler)),
         );
 
         Self { editor }
@@ -479,7 +514,6 @@ fn complete_file_path(partial: &str) -> Option<Vec<String>> {
 ///
 /// # Errors
 /// Returns an error if the clipboard contains no image, or if encoding/saving fails.
-#[allow(dead_code)]
 pub fn paste_clipboard_image() -> anyhow::Result<std::path::PathBuf> {
     use anyhow::Context as _;
 

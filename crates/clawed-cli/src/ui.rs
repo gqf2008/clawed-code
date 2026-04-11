@@ -164,6 +164,11 @@ fn draw_select_items(
 ///
 /// If `masked` is true, input is displayed as `*` characters.
 /// Returns `None` if the user cancelled.
+/// Returns the byte offset in `s` corresponding to char index `char_idx`.
+fn char_to_byte(s: &str, char_idx: usize) -> usize {
+    s.char_indices().nth(char_idx).map_or(s.len(), |(b, _)| b)
+}
+
 pub fn crossterm_input(
     prompt: &str,
     placeholder: &str,
@@ -173,10 +178,11 @@ pub fn crossterm_input(
     let _guard = RawModeGuard::acquire()?;
     let mut out = io::stderr();
     let mut buffer = String::new();
+    let mut cursor: usize = 0; // char index
     let mut error_msg: Option<String> = None;
 
     write!(out, "\r\n\x1b[36m◆\x1b[0m  {}\r\n", prompt)?;
-    draw_input_line(&mut out, &buffer, placeholder, masked, &error_msg)?;
+    draw_input_line(&mut out, &buffer, cursor, placeholder, masked, &error_msg)?;
 
     loop {
         match event::read()? {
@@ -191,6 +197,7 @@ pub fn crossterm_input(
                 }
 
                 error_msg = None;
+                let char_count = buffer.chars().count();
 
                 match code {
                     KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
@@ -211,6 +218,7 @@ pub fn crossterm_input(
                                 draw_input_line(
                                     &mut out,
                                     &buffer,
+                                    cursor,
                                     placeholder,
                                     masked,
                                     &error_msg,
@@ -229,24 +237,66 @@ pub fn crossterm_input(
                         out.flush()?;
                         return Ok(Some(buffer));
                     }
+                    KeyCode::Left => {
+                        if cursor > 0 {
+                            cursor -= 1;
+                        }
+                    }
+                    KeyCode::Right => {
+                        if cursor < char_count {
+                            cursor += 1;
+                        }
+                    }
+                    KeyCode::Char('a') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        cursor = 0;
+                    }
+                    KeyCode::Char('e') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        cursor = char_count;
+                    }
+                    KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        // Delete word backward: skip trailing spaces then the word itself.
+                        let chars: Vec<char> = buffer.chars().collect();
+                        let mut new_cursor = cursor;
+                        while new_cursor > 0 && chars[new_cursor - 1] == ' ' {
+                            new_cursor -= 1;
+                        }
+                        while new_cursor > 0 && chars[new_cursor - 1] != ' ' {
+                            new_cursor -= 1;
+                        }
+                        let start_byte = char_to_byte(&buffer, new_cursor);
+                        let end_byte = char_to_byte(&buffer, cursor);
+                        buffer.drain(start_byte..end_byte);
+                        cursor = new_cursor;
+                    }
                     KeyCode::Backspace
                     | KeyCode::Char('h')
                         if code == KeyCode::Backspace
                             || modifiers.contains(KeyModifiers::CONTROL) =>
                     {
-                        buffer.pop();
+                        if cursor > 0 {
+                            let start_byte = char_to_byte(&buffer, cursor - 1);
+                            let end_byte = char_to_byte(&buffer, cursor);
+                            buffer.drain(start_byte..end_byte);
+                            cursor -= 1;
+                        }
                     }
                     KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
                         buffer.clear();
+                        cursor = 0;
                     }
-                    KeyCode::Char(c) => {
-                        buffer.push(c);
+                    KeyCode::Char(c)
+                        if !modifiers
+                            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                    {
+                        let byte = char_to_byte(&buffer, cursor);
+                        buffer.insert(byte, c);
+                        cursor += 1;
                     }
                     _ => continue,
                 }
 
                 write!(out, "\r\x1b[2K")?;
-                draw_input_line(&mut out, &buffer, placeholder, masked, &error_msg)?;
+                draw_input_line(&mut out, &buffer, cursor, placeholder, masked, &error_msg)?;
             }
             _ => {}
         }
@@ -256,20 +306,30 @@ pub fn crossterm_input(
 fn draw_input_line(
     out: &mut io::Stderr,
     buffer: &str,
+    cursor: usize,
     placeholder: &str,
     masked: bool,
     error: &Option<String>,
 ) -> io::Result<()> {
     write!(out, "   ")?;
+    let char_count = buffer.chars().count();
     if buffer.is_empty() {
         write!(out, "\x1b[2m{}\x1b[0m", placeholder)?;
     } else if masked {
-        write!(out, "{}", "*".repeat(buffer.chars().count()))?;
+        write!(out, "{}", "*".repeat(char_count))?;
     } else {
         write!(out, "{}", buffer)?;
     }
+
+    // Track how many visible columns to move the terminal cursor back.
+    let mut move_back = char_count.saturating_sub(cursor);
     if let Some(err) = error {
+        // "  ⚠ " = 4 visible columns
         write!(out, "  \x1b[31m⚠ {}\x1b[0m", err)?;
+        move_back += 4 + err.chars().count();
+    }
+    if move_back > 0 {
+        write!(out, "\x1b[{}D", move_back)?;
     }
     out.flush()
 }
@@ -296,12 +356,12 @@ pub fn crossterm_confirm(prompt: &str) -> io::Result<Option<bool>> {
                     continue;
                 }
                 match code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
                         write!(out, "\x1b[32mYes\x1b[0m\r\n")?;
                         out.flush()?;
                         return Ok(Some(true));
                     }
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Enter => {
+                    KeyCode::Char('n') | KeyCode::Char('N') => {
                         write!(out, "\x1b[31mNo\x1b[0m\r\n")?;
                         out.flush()?;
                         return Ok(Some(false));
@@ -477,7 +537,7 @@ pub fn model_select(current: &str) -> io::Result<String> {
         Some(idx) if idx < MODEL_OPTIONS.len() => Ok(MODEL_OPTIONS[idx].id.to_string()),
         Some(_) => {
             // Custom model ID
-            match crossterm_input("Enter model ID:", "claude-sonnet-4-20250514", false, None)? {
+            match crossterm_input("Enter model ID:", "claude-sonnet-4-6", false, None)? {
                 Some(id) => Ok(id),
                 None => Ok(current.to_string()),
             }
