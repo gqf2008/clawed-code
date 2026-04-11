@@ -405,11 +405,77 @@ pub(super) fn categorize_error(msg: &str) -> (&'static str, Option<&'static str>
     }
 }
 
+// ── Input dock helpers ─────────────────────────────────────────────────────
+
+/// Write a byte string to stdout in a single syscall (atomic w.r.t. other threads).
+fn stdout_write(seq: &str) {
+    use std::io::Write as _;
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    let _ = lock.write_all(seq.as_bytes());
+    let _ = lock.flush();
+}
+
+/// Redraw the separator + input prompt rows atomically.
+///
+/// Uses DEC save/restore cursor (`\x1b7`/`\x1b8`) so the streaming output
+/// cursor position is not disturbed.
+fn redraw_input_dock(term_h: u16, buffer: &str) {
+    let sep_row = term_h - 1; // 1-indexed ANSI
+    let input_row = term_h;
+    let w = crossterm::terminal::size()
+        .map(|(w, _)| w as usize)
+        .unwrap_or(80);
+    let sep = "─".repeat(w);
+    // Single atomic write: save cursor → draw separator → draw input → restore.
+    let seq = format!(
+        "\x1b7\x1b[{sep_row};1H\x1b[2K{sep}\x1b[{input_row};1H\x1b[2K> {buffer}\x1b8"
+    );
+    stdout_write(&seq);
+}
+
+/// Set up the ANSI scroll region and draw the initial dock.
+///
+/// After this call:
+/// - Rows `1..(term_h-2)` scroll normally (streaming output zone).
+/// - Row `term_h-1` is a fixed separator line (`────…`).
+/// - Row `term_h` is the fixed input prompt line.
+fn setup_split(term_h: u16) {
+    let scroll_bottom = term_h - 2; // last row of the scroll region (1-indexed)
+    let sep_row = term_h - 1;
+    let input_row = term_h;
+    let w = crossterm::terminal::size()
+        .map(|(w, _)| w as usize)
+        .unwrap_or(80);
+    let sep = "─".repeat(w);
+    // Push existing content up 2 rows, constrain the scroll region, draw dock.
+    let seq = format!(
+        "\r\n\r\n\x1b7\x1b[1;{scroll_bottom}r\x1b[{sep_row};1H\x1b[2K{sep}\x1b[{input_row};1H\x1b[2K> \x1b8"
+    );
+    stdout_write(&seq);
+}
+
+/// Tear down the scroll region and erase the dock rows.
+fn teardown_split(term_h: u16) {
+    let sep_row = term_h - 1;
+    let input_row = term_h;
+    // Clear dock rows, then reset scroll region to the full terminal.
+    let seq =
+        format!("\x1b[{sep_row};1H\x1b[2K\x1b[{input_row};1H\x1b[2K\x1b[r\x1b[{sep_row};1H");
+    stdout_write(&seq);
+}
+
+// ── Public API ─────────────────────────────────────────────────────────────
+
 /// Spawn a background thread that listens for key presses during streaming.
 ///
 /// - **Esc** and **Ctrl+C** trigger the abort signal.
 /// - **Printable characters** and **Backspace** are buffered as typeahead so
 ///   they can be used to pre-fill the readline prompt after streaming ends.
+/// - When the terminal is large enough (`h ≥ 4`, `w ≥ 10`), the bottom two
+///   rows are reserved as a fixed input dock (separator + prompt line) via an
+///   ANSI scroll region, keeping typed characters visually separate from
+///   streaming output.
 ///
 /// Returns a guard that stops the listener when dropped or when
 /// [`StreamInputGuard::stop_and_take`] is called.
@@ -419,10 +485,19 @@ pub(crate) fn spawn_stream_input(abort: AbortSignal) -> StreamInputGuard {
     let typeahead = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let typeahead2 = typeahead.clone();
 
+    let (term_h, do_split) = crossterm::terminal::size()
+        .map(|(w, h)| (h, h >= 4 && w >= 10))
+        .unwrap_or((24, false));
+
+    if do_split {
+        setup_split(term_h);
+    }
+
     let handle = std::thread::spawn(move || {
         if crossterm::terminal::enable_raw_mode().is_err() {
             return;
         }
+        let mut buffer = String::new();
         while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
             if crossterm::event::poll(std::time::Duration::from_millis(100)).unwrap_or(false) {
                 if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read() {
@@ -437,36 +512,30 @@ pub(crate) fn spawn_stream_input(abort: AbortSignal) -> StreamInputGuard {
                             break;
                         }
                         KeyCode::Backspace => {
-                            let mut buf = typeahead2
-                                .lock()
-                                .unwrap_or_else(|p| p.into_inner());
-                            if buf.pop().is_some() {
-                                // Erase the echoed character: move back, overwrite with space, move back.
-                                print!("\x08 \x08");
-                                let _ = std::io::Write::flush(&mut std::io::stdout());
+                            if buffer.pop().is_some() && do_split {
+                                redraw_input_dock(term_h, &buffer);
                             }
                         }
                         KeyCode::Char(c)
                             if !key.modifiers.contains(KeyModifiers::CONTROL)
                                 && !key.modifiers.contains(KeyModifiers::ALT) =>
                         {
-                            // Echo the character so the user can see what they're typing.
-                            print!("{c}");
-                            let _ = std::io::Write::flush(&mut std::io::stdout());
-                            let mut buf = typeahead2
-                                .lock()
-                                .unwrap_or_else(|p| p.into_inner());
-                            buf.push(c);
+                            buffer.push(c);
+                            if do_split {
+                                redraw_input_dock(term_h, &buffer);
+                            }
                         }
                         _ => {}
                     }
+                    // Keep the shared typeahead buffer in sync.
+                    *typeahead2.lock().unwrap_or_else(|p| p.into_inner()) = buffer.clone();
                 }
             }
         }
         let _ = crossterm::terminal::disable_raw_mode();
     });
 
-    StreamInputGuard { stop, typeahead, handle: Some(handle) }
+    StreamInputGuard { stop, typeahead, handle: Some(handle), term_h, do_split }
 }
 
 /// Guard for the raw-mode streaming input listener.
@@ -477,15 +546,21 @@ pub(crate) struct StreamInputGuard {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     typeahead: std::sync::Arc<std::sync::Mutex<String>>,
     handle: Option<std::thread::JoinHandle<()>>,
+    term_h: u16,
+    do_split: bool,
 }
 
 impl StreamInputGuard {
-    /// Stop the listener thread and return any typeahead text the user typed
-    /// while streaming was running.
+    /// Stop the listener thread, tear down the dock layout, and return any
+    /// typeahead text the user typed while streaming was running.
     pub(crate) fn stop_and_take(mut self) -> String {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(h) = self.handle.take() {
             let _ = h.join();
+        }
+        if self.do_split {
+            teardown_split(self.term_h);
+            self.do_split = false; // prevent double-teardown in Drop
         }
         // Thread has exited; the lock is uncontested.
         self.typeahead
@@ -500,6 +575,9 @@ impl Drop for StreamInputGuard {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(h) = self.handle.take() {
             let _ = h.join();
+        }
+        if self.do_split {
+            teardown_split(self.term_h);
         }
     }
 }
