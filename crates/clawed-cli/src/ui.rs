@@ -324,8 +324,8 @@ fn draw_input_line(
     // Track how many visible columns to move the terminal cursor back.
     let mut move_back = char_count.saturating_sub(cursor);
     if let Some(err) = error {
-        // "  ⚠ " = 4 visible columns
-        write!(out, "  \x1b[31m⚠ {}\x1b[0m", err)?;
+        // "  ! " = exactly 4 visible columns (ASCII avoids wide-char ambiguity of ⚠)
+        write!(out, "  \x1b[31m! {}\x1b[0m", err)?;
         move_back += 4 + err.chars().count();
     }
     if move_back > 0 {

@@ -322,12 +322,12 @@ impl ConditionalEventHandler for AltVHandler {
                 Some(Cmd::Insert(n, text))
             }
             Err(e) => {
-                // Print a non-fatal warning without breaking the input line.
-                let _ = write!(
-                    io::stderr(),
-                    "\r\n\x1b[33m⚠  Alt+V: {}\x1b[0m\r\n",
-                    e
-                );
+                // BEL (\x07) gives audible/visible feedback without moving the cursor,
+                // so rustyline's internal cursor tracking stays consistent.
+                let _ = write!(io::stderr(), "\x07");
+                let _ = io::stderr().flush();
+                // Suppress the error — user will notice from the missing @path.
+                let _ = e;
                 None
             }
         }
