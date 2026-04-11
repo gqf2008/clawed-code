@@ -630,14 +630,14 @@ claude --permission-mode plan "how would you refactor this?"
 ```
 claude-code-rs/
 ├── crates/
-│   ├── claude-core/        # 配置、消息、工具类型、会话、权限
-│   ├── claude-api/         # API 客户端、流式解析、多 Provider
-│   ├── claude-tools/       # 40+ 工具实现（文件/Shell/Web/MCP 等）
-│   ├── claude-agent/       # 推理引擎、Hooks、协调器、DispatchAgent
-│   ├── claude-computer-use/# 桌面自动化（截图/鼠标/键盘）
-│   ├── claude-mcp/         # MCP 客户端/服务端协议
-│   ├── claude-swarm/       # Swarm 多 Agent（kameo actors）
-│   └── claude-cli/         # CLI 入口、REPL、输入系统、渲染
+│   ├── clawed-core/        # 配置、消息、工具类型、会话、权限
+│   ├── clawed-api/         # API 客户端、流式解析、多 Provider
+│   ├── clawed-tools/       # 40+ 工具实现（文件/Shell/Web/MCP 等）
+│   ├── clawed-agent/       # 推理引擎、Hooks、协调器、DispatchAgent
+│   ├── clawed-computer-use/# 桌面自动化（截图/鼠标/键盘）
+│   ├── clawed-mcp/         # MCP 客户端/服务端协议
+│   ├── clawed-swarm/       # Swarm 多 Agent（kameo actors）
+│   └── clawed-cli/         # CLI 入口、REPL、输入系统、渲染
 └── docs/                   # 架构文档和审计报告
 ```
 
