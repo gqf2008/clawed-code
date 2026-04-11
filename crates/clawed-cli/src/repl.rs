@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use clawed_agent::cron_scheduler::{CronScheduler, CronSchedulerOptions};
 use clawed_agent::engine::QueryEngine;
 use clawed_agent::plugin::PluginLoader;
 use clawed_bus::bus::ClientHandle;
@@ -62,6 +63,21 @@ pub async fn run(
     // Start real-time config file watcher (CLAUDE.md + settings.json)
     let mut config_watcher = ConfigWatcher::start(&cwd).ok();
 
+    // Start cron scheduler — tasks stored in <cwd>/.claude/scheduled_tasks.json
+    let (cron_tx, mut cron_rx) =
+        tokio::sync::mpsc::unbounded_channel::<clawed_core::cron_tasks::CronTask>();
+    let _cron_scheduler = {
+        let tx = cron_tx.clone();
+        CronScheduler::start(CronSchedulerOptions {
+            dir: cwd.clone(),
+            session_id: engine.session_id().to_string(),
+            on_fire: Arc::new(move |task| {
+                let _ = tx.send(task.clone());
+            }),
+            is_loading: Arc::new(|| false),
+        })
+    };
+
     // Session start time for /stats display
     let session_start = std::time::Instant::now();
 
@@ -80,6 +96,28 @@ pub async fn run(
             } else if pct >= 80 {
                 eprintln!("{}⚠ Context {pct}% full\x1b[0m", theme::c_warn());
             }
+        }
+
+        // Drain any cron tasks that fired since the last readline.
+        while let Ok(task) = cron_rx.try_recv() {
+            eprintln!("\n{}⏰ Scheduled task firing…\x1b[0m", theme::c_warn());
+            eprintln!("\x1b[2m> {}\x1b[0m\n", task.prompt);
+            let model = { engine.state().read().await.model.clone() };
+            let stream = engine.submit(&task.prompt).await;
+            if let Err(e) = print_stream(
+                stream,
+                &model,
+                Some(engine.cost_tracker()),
+                Some(&engine.abort_signal()),
+            )
+            .await
+            {
+                eprintln!("{}Cron task error: {}\x1b[0m", theme::c_err(), e);
+            }
+            if engine.abort_signal().is_aborted() {
+                engine.abort_signal().reset();
+            }
+            let _ = engine.save_session().await;
         }
 
         let readline = rl.readline("> ");
