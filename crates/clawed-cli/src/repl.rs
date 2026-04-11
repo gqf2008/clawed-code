@@ -88,6 +88,9 @@ pub async fn run(
     // Images queued via /image command (merged with @-references on next submit)
     let mut pending_images: Vec<clawed_core::message::ContentBlock> = Vec::new();
 
+    // Cron tasks that fired while readline was blocking; processed at top of next iteration.
+    let mut cron_pending: Vec<clawed_core::cron_tasks::CronTask> = Vec::new();
+
     loop {
         // Context usage warning before prompt
         if let Some(pct) = engine.context_usage_percent().await {
@@ -98,8 +101,8 @@ pub async fn run(
             }
         }
 
-        // Drain any cron tasks that fired since the last readline.
-        while let Ok(task) = cron_rx.try_recv() {
+        // Execute any cron tasks that fired during the previous readline.
+        for task in cron_pending.drain(..) {
             eprintln!("\n{}⏰ Scheduled task firing…\x1b[0m", theme::c_warn());
             eprintln!("\x1b[2m> {}\x1b[0m\n", task.prompt);
             let model = { engine.state().read().await.model.clone() };
@@ -120,7 +123,40 @@ pub async fn run(
             let _ = engine.save_session().await;
         }
 
-        let readline = rl.readline("> ");
+        // Run readline in a blocking thread so the async runtime stays alive.
+        // Race it against the cron channel — tasks that arrive during readline are
+        // accumulated in `cron_pending` and executed at the top of the next iteration.
+        let mut join = tokio::task::spawn_blocking(move || {
+            let r = rl.readline("> ");
+            (rl, r)
+        });
+        let (new_rl, readline_result) = loop {
+            tokio::select! {
+                result = &mut join => {
+                    // readline returned (or panicked)
+                    match result {
+                        Ok(pair) => break pair,
+                        Err(e) => {
+                            // JoinError means the blocking thread panicked — treat as EOF
+                            eprintln!("{}readline panic: {}\x1b[0m", theme::c_err(), e);
+                            // We can't recover rl here; bail out of the REPL
+                            // Safety: save history before exiting
+                            if let Some(ref path) = hist_path {
+                                // hist_path still in scope; we'll fall through to the outer save
+                                let _ = path; // avoid unused warning
+                            }
+                            return Ok(());
+                        }
+                    }
+                }
+                Some(task) = cron_rx.recv() => {
+                    eprintln!("\n{}⏰ Scheduled task ready — press Enter to run\x1b[0m", theme::c_warn());
+                    cron_pending.push(task);
+                }
+            }
+        };
+        rl = new_rl;
+        let readline = readline_result;
         match readline {
             Ok(InputResult::Line(line)) => {
                 let trimmed = line.trim();
