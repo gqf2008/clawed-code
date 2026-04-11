@@ -1,10 +1,12 @@
 {
   "tasks": [
     {
-      "id": "541a73e9",
+      "id": "db3e9ced",
       "cron": "* * * * *",
-      "prompt": "给用户发一个冷笑话",
-      "createdAt": 1775898369440
+      "prompt": "给用户讲一个有趣的冷笑话。要简洁，不要重复之前讲过的笑话。用 Brief 工具发送给用户，status 设为 proactive。",
+      "createdAt": 1775904426681,
+      "lastFiredAt": 1775904665861,
+      "recurring": true
     }
   ]
 }
