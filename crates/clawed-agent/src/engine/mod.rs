@@ -4,7 +4,11 @@
 //! streaming API responses, executing tools, and managing conversation state.
 
 mod builder;
+mod compact;
+mod history;
 mod impl_traits;
+mod session_ops;
+mod submit;
 pub use builder::QueryEngineBuilder;
 
 use std::sync::Arc;
@@ -12,18 +16,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use clawed_api::client::ApiClient;
 use clawed_api::types::{CacheControl, ThinkingConfig, ToolDefinition};
-use clawed_core::message::{ContentBlock, Message, UserMessage};
-use clawed_core::tool::{AbortSignal, ToolContext};
+use clawed_core::message::Message;
+use clawed_core::tool::AbortSignal;
 use clawed_tools::ToolRegistry;
-use uuid::Uuid;
 
-use crate::compact::{compact_conversation, compact_context_message, AutoCompactState};
+use crate::compact::AutoCompactState;
 use crate::coordinator::TaskNotification;
 use crate::dispatch_agent::{AgentChannelMap, CancelTokenMap};
 use crate::cost::CostTracker;
 use crate::executor::ToolExecutor;
 use crate::hooks::{HookDecision, HookEvent, HookRegistry};
-use crate::query::{query_stream, AgentEvent, QueryConfig};
+use crate::query::QueryConfig;
 
 /// Runtime thinking override state.
 /// Uses a dedicated enum to avoid clippy::option_option.
@@ -117,140 +120,6 @@ impl QueryEngine {
         defs
     }
 
-    /// Submit a user message and get back a stream of AgentEvents.
-    pub async fn submit(
-        &self,
-        user_prompt: impl Into<String>,
-    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = AgentEvent> + Send>> {
-        let mut prompt_text: String = user_prompt.into();
-
-        // ── Empty prompt validation ──────────────────────────────────────────
-        if prompt_text.trim().is_empty() {
-            let err_stream = async_stream::stream! {
-                yield AgentEvent::Error("Prompt cannot be empty".to_string());
-            };
-            return Box::pin(err_stream);
-        }
-
-        // ── UserPromptSubmit hook ────────────────────────────────────────────
-        if self.hooks.has_hooks(HookEvent::UserPromptSubmit) {
-            let ctx = self.hooks.prompt_ctx(HookEvent::UserPromptSubmit, Some(prompt_text.clone()));
-            match self.hooks.run(HookEvent::UserPromptSubmit, ctx).await {
-                HookDecision::Block { reason } => {
-                    // Block: return a stream with just the error
-                    let err_stream = async_stream::stream! {
-                        yield AgentEvent::Error(format!("[UserPromptSubmit hook blocked]: {}", reason));
-                    };
-                    return Box::pin(err_stream);
-                }
-                HookDecision::AppendContext { text } => {
-                    prompt_text = format!("{}\n\n{}", prompt_text, text);
-                }
-                _ => {}
-            }
-        }
-
-        let (permission_mode, mut messages) = {
-            let s = self.state.read().await;
-            (s.permission_mode, s.messages.clone())
-        };
-
-        let user_msg = UserMessage {
-            uuid: Uuid::new_v4().to_string(),
-            content: vec![ContentBlock::Text { text: prompt_text }],
-        };
-        messages.push(Message::User(user_msg));
-
-        let tools = self.tool_definitions(permission_mode);
-        let tool_context = ToolContext {
-            cwd: self.cwd.clone(),
-            abort_signal: self.abort_signal.clone(),
-            permission_mode,
-            messages: Vec::new(),
-        };
-
-        query_stream(
-            self.client.clone(),
-            self.executor.clone(),
-            self.state.clone(),
-            tool_context,
-            self.build_query_config(),
-            messages,
-            tools,
-            self.hooks.clone(),
-        )
-    }
-
-    /// Submit a user message with mixed content blocks (text + images).
-    ///
-    /// Use this when the user attaches images via `@path/to/image.png` syntax.
-    /// The content blocks should be pre-built (text blocks for text, image blocks
-    /// for attached images).
-    pub async fn submit_with_content(
-        &self,
-        content: Vec<ContentBlock>,
-    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = AgentEvent> + Send>> {
-        if content.is_empty() {
-            let err_stream = async_stream::stream! {
-                yield AgentEvent::Error("Prompt cannot be empty".to_string());
-            };
-            return Box::pin(err_stream);
-        }
-
-        // Run UserPromptSubmit hook with text from first text block
-        let text_preview: String = content.iter().filter_map(|b| match b {
-            ContentBlock::Text { text } => Some(text.clone()),
-            _ => None,
-        }).collect::<Vec<_>>().join("\n");
-
-        let mut final_content = content;
-
-        if self.hooks.has_hooks(HookEvent::UserPromptSubmit) {
-            let ctx = self.hooks.prompt_ctx(HookEvent::UserPromptSubmit, Some(text_preview));
-            match self.hooks.run(HookEvent::UserPromptSubmit, ctx).await {
-                HookDecision::Block { reason } => {
-                    let err_stream = async_stream::stream! {
-                        yield AgentEvent::Error(format!("[UserPromptSubmit hook blocked]: {}", reason));
-                    };
-                    return Box::pin(err_stream);
-                }
-                HookDecision::AppendContext { text } => {
-                    final_content.push(ContentBlock::Text { text });
-                }
-                _ => {}
-            }
-        }
-
-        let (permission_mode, mut messages) = {
-            let s = self.state.read().await;
-            (s.permission_mode, s.messages.clone())
-        };
-
-        let user_msg = UserMessage {
-            uuid: Uuid::new_v4().to_string(),
-            content: final_content,
-        };
-        messages.push(Message::User(user_msg));
-
-        let tools = self.tool_definitions(permission_mode);
-        let tool_context = ToolContext {
-            cwd: self.cwd.clone(),
-            abort_signal: self.abort_signal.clone(),
-            permission_mode,
-            messages: Vec::new(),
-        };
-
-        query_stream(
-            self.client.clone(),
-            self.executor.clone(),
-            self.state.clone(),
-            tool_context,
-            self.build_query_config(),
-            messages,
-            tools,
-            self.hooks.clone(),
-        )
-    }
 
     pub fn state(&self) -> &SharedState {
         &self.state
@@ -397,299 +266,9 @@ impl QueryEngine {
         }
     }
 
-    /// Compact the current conversation history.
-    ///
-    /// Fires PreCompact hooks (which can block or append custom instructions),
-    /// calls Claude to summarise the conversation, replaces the history with a
-    /// single system context message, then fires PostCompact hooks.
-    ///
-    /// Returns `Ok(summary)` on success, `Err` if the conversation is empty or
-    /// the PreCompact hook blocked the operation.
-    pub async fn compact(&self, trigger: &str, custom_instructions: Option<&str>) -> anyhow::Result<String> {
-        let messages = {
-            let s = self.state.read().await;
-            s.messages.clone()
-        };
 
-        if messages.is_empty() {
-            anyhow::bail!("Nothing to compact — conversation is empty.");
-        }
 
-        // ── PreCompact hook ──────────────────────────────────────────────────
-        let mut extra_instructions = custom_instructions.map(|s| s.to_string());
-        if self.hooks.has_hooks(HookEvent::PreCompact) {
-            let ctx = self.hooks.compact_ctx(HookEvent::PreCompact, trigger, None);
-            match self.hooks.run(HookEvent::PreCompact, ctx).await {
-                HookDecision::Block { reason } => {
-                    anyhow::bail!("Compaction blocked by PreCompact hook: {}", reason);
-                }
-                HookDecision::AppendContext { text } => {
-                    extra_instructions = Some(match extra_instructions {
-                        Some(existing) => format!("{}\n\n{}", existing, text),
-                        None => text,
-                    });
-                }
-                _ => {}
-            }
-        }
-
-        // ── Call Claude for summary ──────────────────────────────────────────
-        let model = { self.state.read().await.model.clone() };
-        let summary = compact_conversation(
-            &self.client,
-            &messages,
-            &model,
-            extra_instructions.as_deref(),
-        )
-        .await?;
-
-        // ── Replace conversation history ─────────────────────────────────────
-        let context_msg = compact_context_message(&summary, None);
-        {
-            let mut s = self.state.write().await;
-            s.messages = vec![Message::User(UserMessage {
-                uuid: Uuid::new_v4().to_string(),
-                content: vec![ContentBlock::Text { text: context_msg }],
-            })];
-            s.total_input_tokens = 0;
-            s.total_output_tokens = 0;
-        }
-
-        // ── PostCompact hook ─────────────────────────────────────────────────
-        if self.hooks.has_hooks(HookEvent::PostCompact) {
-            let ctx = self.hooks.compact_ctx(
-                HookEvent::PostCompact,
-                trigger,
-                Some(summary.clone()),
-            );
-            // Fire-and-forget
-            let _ = self.hooks.run(HookEvent::PostCompact, ctx).await;
-        }
-
-        Ok(summary)
-    }
-
-    /// Check if auto-compact should trigger.
-    ///
-    /// Uses hybrid token counting: last API response's real token count plus
-    /// rough estimation for messages added since.  Falls back to the simple
-    /// fixed threshold for legacy callers that set a custom `compact_threshold`.
-    pub async fn should_auto_compact(&self) -> bool {
-        if self.compact_threshold == 0 {
-            return false;
-        }
-        let s = self.state.read().await;
-        // Hybrid counting: prefer API-reported usage + rough tail estimate
-        let current_tokens = clawed_core::token_estimation::token_count_with_estimation(&s.messages)
-            + clawed_core::token_estimation::estimate_system_tokens(&self.config.system_prompt);
-        drop(s);
-
-        let ac = self.auto_compact.lock().await;
-        if self.context_window > 0 {
-            ac.should_auto_compact(current_tokens, self.context_window)
-        } else {
-            // Fallback to simple threshold
-            current_tokens >= self.compact_threshold
-        }
-    }
-
-    /// Record a successful auto-compact (resets the circuit breaker).
-    pub async fn record_compact_success(&self) {
-        self.auto_compact.lock().await.record_success();
-    }
-
-    /// Record a failed auto-compact attempt (increments circuit breaker counter).
-    pub async fn record_compact_failure(&self) {
-        self.auto_compact.lock().await.record_failure();
-    }
-
-    /// Get the current context window usage as a percentage (0–100).
-    /// Returns None if context window is unknown (0).
-    pub async fn context_usage_percent(&self) -> Option<u8> {
-        if self.context_window == 0 {
-            return None;
-        }
-        let s = self.state.read().await;
-        let current = clawed_core::token_estimation::token_count_with_estimation(&s.messages)
-            + clawed_core::token_estimation::estimate_system_tokens(&self.config.system_prompt);
-        let pct = (current as f64 / self.context_window as f64 * 100.0).min(100.0) as u8;
-        Some(pct)
-    }
-
-    /// Clear conversation history and reset token counters.
-    pub async fn clear_history(&self) {
-        let mut s = self.state.write().await;
-        s.messages.clear();
-        s.turn_count = 0;
-        s.total_input_tokens = 0;
-        s.total_output_tokens = 0;
-    }
-
-    /// Get the last user message text from conversation history (for /retry).
-    ///
-    /// Returns `None` if no user messages exist.
-    pub async fn last_user_prompt(&self) -> Option<String> {
-        let s = self.state.read().await;
-        s.messages.iter().rev().find_map(|msg| {
-            if let Message::User(u) = msg {
-                u.content.iter().find_map(|b| {
-                    if let clawed_core::message::ContentBlock::Text { text } = b {
-                        Some(text.clone())
-                    } else {
-                        None
-                    }
-                })
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Undo the last assistant turn and return the user prompt that preceded it.
-    ///
-    /// Removes both the last assistant message and the last user message from history.
-    /// Used by `/retry` to resend the last user prompt.
-    pub async fn pop_last_turn(&self) -> Option<String> {
-        let mut s = self.state.write().await;
-
-        // Extract the last user prompt while holding the write lock
-        let prompt = s.messages.iter().rev().find_map(|m| {
-            if let Message::User(u) = m {
-                u.content.iter().find_map(|b| {
-                    if let ContentBlock::Text { text } = b {
-                        Some(text.clone())
-                    } else {
-                        None
-                    }
-                })
-            } else {
-                None
-            }
-        })?;
-
-        // Pop messages from the end until we've removed the last assistant + user pair
-        let mut removed_assistant = false;
-        while let Some(last) = s.messages.last() {
-            match last {
-                Message::Assistant(_) if !removed_assistant => {
-                    s.messages.pop();
-                    removed_assistant = true;
-                }
-                Message::User(_) if removed_assistant => {
-                    s.messages.pop();
-                    break;
-                }
-                _ if removed_assistant => {
-                    break; // stop if we hit a non-user message
-                }
-                _ => {
-                    s.messages.pop(); // skip tool result messages etc.
-                }
-            }
-        }
-        if s.turn_count > 0 {
-            s.turn_count -= 1;
-        }
-
-        Some(prompt)
-    }
-
-    // ── Session persistence ──────────────────────────────────────────────────
-
-    /// Save the current session to disk.
-    pub async fn save_session(&self) -> anyhow::Result<()> {
-        use clawed_core::session::*;
-        let s = self.state.read().await;
-        let snapshot = SessionSnapshot {
-            id: self.session_id.clone(),
-            title: title_from_messages(&s.messages),
-            model: s.model.clone(),
-            cwd: self.cwd.to_string_lossy().to_string(),
-            created_at: self.created_at,
-            updated_at: chrono::Utc::now(),
-            turn_count: s.turn_count,
-            input_tokens: s.total_input_tokens,
-            output_tokens: s.total_output_tokens,
-            model_usage: s.model_usage.iter().map(|(k, v)| {
-                (k.clone(), SessionModelUsage {
-                    input_tokens: v.input_tokens,
-                    output_tokens: v.output_tokens,
-                    cache_read_tokens: v.cache_read_tokens,
-                    cache_creation_tokens: v.cache_creation_tokens,
-                    api_calls: v.api_calls,
-                    cost_usd: v.cost_usd,
-                })
-            }).collect(),
-            total_cost_usd: s.model_usage.values().map(|u| u.cost_usd).sum(),
-            messages: s.messages.clone(),
-            git_branch: None,
-            custom_title: None,
-            ai_title: None,
-            summary: None,
-            last_prompt: None,
-        };
-        save_session(&snapshot)
-    }
-
-    /// Rename the current session (sets custom_title and re-saves).
-    pub async fn rename_session(&self, name: &str) -> anyhow::Result<()> {
-        use clawed_core::session::*;
-        let s = self.state.read().await;
-        let snapshot = SessionSnapshot {
-            id: self.session_id.clone(),
-            title: name.to_string(),
-            model: s.model.clone(),
-            cwd: self.cwd.to_string_lossy().to_string(),
-            created_at: self.created_at,
-            updated_at: chrono::Utc::now(),
-            turn_count: s.turn_count,
-            input_tokens: s.total_input_tokens,
-            output_tokens: s.total_output_tokens,
-            model_usage: s.model_usage.iter().map(|(k, v)| {
-                (k.clone(), SessionModelUsage {
-                    input_tokens: v.input_tokens,
-                    output_tokens: v.output_tokens,
-                    cache_read_tokens: v.cache_read_tokens,
-                    cache_creation_tokens: v.cache_creation_tokens,
-                    api_calls: v.api_calls,
-                    cost_usd: v.cost_usd,
-                })
-            }).collect(),
-            total_cost_usd: s.model_usage.values().map(|u| u.cost_usd).sum(),
-            messages: s.messages.clone(),
-            git_branch: None,
-            custom_title: Some(name.to_string()),
-            ai_title: None,
-            summary: None,
-            last_prompt: None,
-        };
-        save_session(&snapshot)
-    }
-
-    /// Restore a session from disk, replacing current state.
-    /// Applies message sanitization to fix orphaned thinking blocks,
-    /// unresolved tool references, and other artifacts from interrupted sessions.
-    pub async fn restore_session(&self, session_id: &str) -> anyhow::Result<String> {
-        use clawed_core::session::load_session;
-        use clawed_core::message_sanitize::sanitize_messages;
-        let snap = load_session(session_id)?;
-        let title = snap.title.clone();
-        let (sanitized_messages, report) = sanitize_messages(snap.messages);
-        if report.has_changes() {
-            tracing::info!("Session restore {}: {}", session_id, report.summary());
-        }
-        {
-            let mut s = self.state.write().await;
-            s.messages = sanitized_messages;
-            s.model = snap.model;
-            s.turn_count = snap.turn_count;
-            s.total_input_tokens = snap.input_tokens;
-            s.total_output_tokens = snap.output_tokens;
-        }
-        // Reset abort signal for new session
-        self.abort_signal.reset();
-        Ok(title)
-    }
+    // ── Accessors and runtime config ─────────────────────────────────────────
 
     /// Get the working directory.
     pub fn cwd(&self) -> &std::path::Path {
@@ -738,46 +317,6 @@ impl QueryEngine {
         self.break_cache_next.store(true, Ordering::SeqCst);
     }
 
-    /// Rewind the conversation by removing the last `n` turns (user+assistant pairs).
-    ///
-    /// Returns the number of turns actually removed and remaining message count.
-    pub async fn rewind_turns(&self, n: usize) -> (usize, usize) {
-        let mut s = self.state.write().await;
-        let mut removed = 0;
-
-        while removed < n && !s.messages.is_empty() {
-            // Remove trailing assistant messages (and tool_result messages between them)
-            let mut found_assistant = false;
-            while let Some(last) = s.messages.last() {
-                if matches!(last, Message::Assistant(_)) {
-                    s.messages.pop();
-                    found_assistant = true;
-                    break;
-                }
-                // Remove tool_result / system messages trailing after the pair
-                if found_assistant {
-                    break;
-                }
-                s.messages.pop();
-            }
-            // Remove the preceding user message
-            if found_assistant {
-                if let Some(last) = s.messages.last() {
-                    if matches!(last, Message::User(_)) {
-                        s.messages.pop();
-                    }
-                }
-                if s.turn_count > 0 {
-                    s.turn_count -= 1;
-                }
-                removed += 1;
-            } else {
-                break; // no more assistant messages to remove
-            }
-        }
-
-        (removed, s.messages.len())
-    }
 }
 
 #[cfg(test)]

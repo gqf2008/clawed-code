@@ -1,6 +1,7 @@
 //! Tests for QueryEngine and QueryEngineBuilder.
 
 use super::*;
+use crate::query::AgentEvent;
 
 // ── QueryEngineBuilder ───────────────────────────────────────────
 
