@@ -37,11 +37,7 @@ impl Tool for CronListTool {
 
         let mut out = format!("Scheduled jobs ({}):\n", tasks.len());
         for t in &tasks {
-            let prompt_preview = if t.prompt.len() > 80 {
-                format!("{}...", &t.prompt[..77])
-            } else {
-                t.prompt.clone()
-            };
+            let prompt_preview = clawed_core::text_util::truncate_chars(&t.prompt, 77, "...");
             let kind = if t.recurring { "recurring" } else { "one-shot" };
             out.push_str(&format!(
                 "  [{}] {} ({}) — {}\n    prompt: {}\n",

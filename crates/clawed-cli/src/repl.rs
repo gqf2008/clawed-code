@@ -102,7 +102,7 @@ pub async fn run(
         }
 
         // Execute any cron tasks that fired during the previous readline.
-        for task in cron_pending.drain(..) {
+        for task in std::mem::take(&mut cron_pending) {
             eprintln!("\n{}⏰ Scheduled task firing…\x1b[0m", theme::c_warn());
             eprintln!("\x1b[2m> {}\x1b[0m\n", task.prompt);
             let model = { engine.state().read().await.model.clone() };
@@ -370,7 +370,7 @@ pub async fn run(
                             CommandResult::Retry => {
                                 if let Some(prompt) = engine.pop_last_turn().await {
                                     eprintln!("{}[Retrying: {}…]\x1b[0m", theme::c_warn(),
-                                        if prompt.len() > 50 { &prompt[..50] } else { &prompt });
+                                        clawed_core::text_util::truncate_chars(&prompt, 50, "…"));
                                     let model = { engine.state().read().await.model.clone() };
                                     let stream = engine.submit(&prompt).await;
                                     if let Err(e) = print_stream(stream, &model, Some(engine.cost_tracker()), Some(&engine.abort_signal())).await {

@@ -71,11 +71,7 @@ impl SwarmNotifier {
 
     /// Emit a SwarmAgentQuery event (truncates prompt to preview length).
     pub fn agent_query(&self, team_name: &str, agent_id: &str, prompt: &str) {
-        let preview = if prompt.len() > 120 {
-            format!("{}…", &prompt[..120])
-        } else {
-            prompt.to_string()
-        };
+        let preview = clawed_core::text_util::truncate_chars(prompt, 120, "…");
         self.notify(AgentNotification::SwarmAgentQuery {
             team_name: team_name.to_string(),
             agent_id: agent_id.to_string(),
@@ -85,11 +81,7 @@ impl SwarmNotifier {
 
     /// Emit a SwarmAgentReply event (truncates text to preview length).
     pub fn agent_reply(&self, team_name: &str, agent_id: &str, text: &str, is_error: bool) {
-        let preview = if text.len() > 200 {
-            format!("{}…", &text[..200])
-        } else {
-            text.to_string()
-        };
+        let preview = clawed_core::text_util::truncate_chars(text, 200, "…");
         self.notify(AgentNotification::SwarmAgentReply {
             team_name: team_name.to_string(),
             agent_id: agent_id.to_string(),

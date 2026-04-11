@@ -26,6 +26,15 @@ pub fn truncate_utf8(text: &str, max_bytes: usize, suffix: &str) -> String {
     format!("{}{}", &text[..end], suffix)
 }
 
+/// Truncate `text` to at most `max_chars` Unicode scalar values, appending
+/// `suffix` if the string was shortened.  Safe for any Unicode content.
+pub fn truncate_chars(text: &str, max_chars: usize, suffix: &str) -> String {
+    match text.char_indices().nth(max_chars) {
+        Some((byte_idx, _)) => format!("{}{}", &text[..byte_idx], suffix),
+        None => text.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -49,5 +58,20 @@ mod tests {
         let result = truncate_utf8(s, 7, "…");
         // Should truncate to 6 bytes (2 chars) + suffix
         assert_eq!(result, "你好…");
+    }
+
+    #[test]
+    fn test_truncate_chars_ascii() {
+        assert_eq!(truncate_chars("hello world", 5, "..."), "hello...");
+        assert_eq!(truncate_chars("hi", 10, "..."), "hi");
+    }
+
+    #[test]
+    fn test_truncate_chars_cjk() {
+        // CJK chars are 3 bytes each — byte-slicing panics, char-slicing works
+        let s = "给用户讲一个有趣的冷笑话。";
+        let result = truncate_chars(s, 5, "...");
+        assert_eq!(result, "给用户讲一...");
+        assert_eq!(result.chars().count(), 8); // 5 chars + 3 for "..."
     }
 }

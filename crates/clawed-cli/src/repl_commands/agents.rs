@@ -252,11 +252,7 @@ fn show_agent(name: &str, cwd: &Path) {
                 println!("File:        {}", path.display());
             }
             // Show first 200 chars of system prompt
-            let prompt_preview = if a.system_prompt.len() > 200 {
-                format!("{}...", &a.system_prompt[..200])
-            } else {
-                a.system_prompt.clone()
-            };
+            let prompt_preview = clawed_core::text_util::truncate_chars(&a.system_prompt, 200, "...");
             println!("\n\x1b[2m--- System Prompt ---\x1b[0m");
             println!("{}", prompt_preview);
         }
