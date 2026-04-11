@@ -529,13 +529,33 @@ impl Tool for DispatchAgentTool {
             no_hooks,
         );
 
-        // Collect all text output from the sub-agent
+        // Show a header so the user knows the sub-agent has started.
+        let type_label = format!("{:?}", agent_type).to_lowercase();
+        let agent_label = agent_description
+            .as_deref()
+            .or(agent_name.as_deref())
+            .unwrap_or(&type_label);
+        eprintln!("\x1b[2m  ◌ [{}] working…\x1b[0m", agent_label);
+
+        // Collect all text output and emit lightweight progress lines to stderr.
         let mut output = String::new();
         let mut error_msg: Option<String> = None;
+        let mut tool_count: u32 = 0;
+        let mut turn: u32 = 0;
 
         while let Some(event) = stream.next().await {
             match event {
                 AgentEvent::TextDelta(text) => output.push_str(&text),
+                AgentEvent::ToolUseStart { name, .. } => {
+                    tool_count += 1;
+                    eprintln!("\x1b[2m  │ → {} (turn {})\x1b[0m", name, turn + 1);
+                }
+                AgentEvent::TurnComplete { .. } => {
+                    turn += 1;
+                }
+                AgentEvent::MaxTurns { limit } => {
+                    eprintln!("\x1b[33m  │ max turns ({}) reached\x1b[0m", limit);
+                }
                 AgentEvent::Error(e) => {
                     error_msg = Some(e);
                     break;
@@ -545,8 +565,12 @@ impl Tool for DispatchAgentTool {
         }
 
         if let Some(err) = error_msg {
+            eprintln!("\x1b[31m  ✗ [{}] failed\x1b[0m", agent_label);
             return Ok(ToolResult::error(format!("Sub-agent error: {}", err)));
         }
+
+        eprintln!("\x1b[2m  ✓ [{}] done ({} turns, {} tools)\x1b[0m",
+            agent_label, turn, tool_count);
 
         if output.trim().is_empty() {
             Ok(ToolResult::text("Sub-agent completed with no text output."))
