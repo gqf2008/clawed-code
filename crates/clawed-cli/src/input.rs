@@ -439,6 +439,46 @@ impl InputReader {
             Err(e) => Err(io::Error::other(e)),
         }
     }
+
+    /// Read a line from the user, then drain any additional lines that arrived
+    /// immediately (i.e. from a paste) and join them as a single multi-line input.
+    ///
+    /// **Paste detection**: rustyline on Windows does not support bracketed-paste
+    /// mode, so pasted multi-line text is sent to the app as a rapid sequence of
+    /// individual `\r`-terminated lines.  After the first line is returned by
+    /// readline we check with a zero-timeout poll whether more input is already
+    /// buffered.  If yes, we drain those lines as continuation paste content and
+    /// return everything joined with `\n`.  Human typing cannot trigger the false-
+    /// positive condition because the inter-keystroke delay is orders of magnitude
+    /// longer than a paste burst.
+    pub fn readline_paste_aware(&mut self, prompt: &str, initial: &str) -> io::Result<InputResult> {
+        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+            return read_pipe_fallback(prompt);
+        }
+        let first = if initial.is_empty() {
+            self.readline(prompt)?
+        } else {
+            self.readline_with_initial(prompt, initial)?
+        };
+        let InputResult::Line(ref first_text) = first else {
+            return Ok(first);
+        };
+        let mut lines = vec![first_text.clone()];
+
+        // Drain any lines that are immediately available — the hallmark of a paste.
+        while crossterm::event::poll(std::time::Duration::ZERO).unwrap_or(false) {
+            match self.editor.readline("") {
+                Ok(next) => lines.push(next),
+                Err(_) => break,
+            }
+        }
+
+        if lines.len() == 1 {
+            Ok(first)
+        } else {
+            Ok(InputResult::Line(lines.join("\n")))
+        }
+    }
 }
 
 /// Get the default history file path (~/.claude/history).

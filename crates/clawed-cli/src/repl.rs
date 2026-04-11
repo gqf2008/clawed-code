@@ -131,13 +131,10 @@ pub async fn run(
         // Race it against the cron channel — tasks that arrive during readline are
         // accumulated in `cron_pending` and executed at the top of the next iteration.
         // If the user typed while the AI was responding, pre-fill readline with that text.
+        // readline_paste_aware handles multi-line paste by detecting rapid input bursts.
         let queued = std::mem::take(&mut typeahead_next);
         let mut join = tokio::task::spawn_blocking(move || {
-            let r = if queued.is_empty() {
-                rl.readline("> ")
-            } else {
-                rl.readline_with_initial("> ", &queued)
-            };
+            let r = rl.readline_paste_aware("> ", &queued);
             (rl, r)
         });
         let (new_rl, readline_result) = loop {

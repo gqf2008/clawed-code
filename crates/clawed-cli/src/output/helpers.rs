@@ -440,12 +440,19 @@ pub(crate) fn spawn_stream_input(abort: AbortSignal) -> StreamInputGuard {
                             let mut buf = typeahead2
                                 .lock()
                                 .unwrap_or_else(|p| p.into_inner());
-                            buf.pop();
+                            if buf.pop().is_some() {
+                                // Erase the echoed character: move back, overwrite with space, move back.
+                                print!("\x08 \x08");
+                                let _ = std::io::Write::flush(&mut std::io::stdout());
+                            }
                         }
                         KeyCode::Char(c)
                             if !key.modifiers.contains(KeyModifiers::CONTROL)
                                 && !key.modifiers.contains(KeyModifiers::ALT) =>
                         {
+                            // Echo the character so the user can see what they're typing.
+                            print!("{c}");
+                            let _ = std::io::Write::flush(&mut std::io::stdout());
                             let mut buf = typeahead2
                                 .lock()
                                 .unwrap_or_else(|p| p.into_inner());
