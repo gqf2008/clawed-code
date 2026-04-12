@@ -443,6 +443,26 @@ impl InputWidget {
         }
     }
 
+    /// Insert a block of text at the cursor position (e.g. from a paste event).
+    /// Newlines in the text create additional lines, capped at `MAX_INPUT_ROWS`.
+    pub fn insert_text(&mut self, text: &str) {
+        self.completion = None;
+        for ch in text.chars() {
+            if ch == '\n' || ch == '\r' {
+                // Don't exceed the max line count
+                if self.line_count() >= MAX_INPUT_ROWS {
+                    continue;
+                }
+                let byte = char_to_byte(&self.buffer, self.cursor);
+                self.buffer.insert(byte, '\n');
+            } else {
+                let byte = char_to_byte(&self.buffer, self.cursor);
+                self.buffer.insert(byte, ch);
+            }
+            self.cursor += 1;
+        }
+    }
+
     /// Take the current buffer text for submission.
     pub fn take_text(&mut self) -> String {
         let text = self.buffer.clone();
@@ -798,5 +818,48 @@ mod tests {
         }
         let lines = w.display_lines();
         assert_eq!(lines, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn test_insert_text_single_line() {
+        let mut w = InputWidget::new();
+        w.insert_text("hello world");
+        assert_eq!(w.buffer(), "hello world");
+        assert_eq!(w.cursor(), 11);
+    }
+
+    #[test]
+    fn test_insert_text_multiline() {
+        let mut w = InputWidget::new();
+        w.insert_text("line1\nline2\nline3");
+        assert_eq!(w.buffer(), "line1\nline2\nline3");
+        assert_eq!(w.line_count(), 3);
+    }
+
+    #[test]
+    fn test_insert_text_cr_treated_as_newline() {
+        let mut w = InputWidget::new();
+        w.insert_text("a\rb\rc");
+        assert_eq!(w.buffer(), "a\nb\nc");
+        assert_eq!(w.line_count(), 3);
+    }
+
+    #[test]
+    fn test_insert_text_caps_at_max_rows() {
+        let mut w = InputWidget::new();
+        // MAX_INPUT_ROWS is 5, so 6+ newlines should be capped
+        w.insert_text("1\n2\n3\n4\n5\n6\n7");
+        assert_eq!(w.line_count(), MAX_INPUT_ROWS);
+    }
+
+    #[test]
+    fn test_insert_text_at_cursor_position() {
+        let mut w = InputWidget::new();
+        w.insert_text("hello");
+        // Move cursor left 2 positions → cursor before "lo"
+        w.handle_key(key(KeyCode::Left));
+        w.handle_key(key(KeyCode::Left));
+        w.insert_text("XX");
+        assert_eq!(w.buffer(), "helXXlo");
     }
 }

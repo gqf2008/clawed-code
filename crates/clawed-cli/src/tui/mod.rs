@@ -25,7 +25,9 @@ use std::time::Instant;
 use clawed_agent::engine::QueryEngine;
 use clawed_bus::bus::ClientHandle;
 use clawed_bus::events::{AgentNotification, ImageAttachment, PermissionRequest};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
+};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -787,7 +789,9 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     let prompt_style = Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
-    let text_style = Style::default().fg(Color::White);
+    let text_style = Style::default()
+        .fg(Color::Rgb(255, 255, 255))
+        .add_modifier(Modifier::BOLD);
     let image_style = Style::default().fg(Color::Magenta);
     let ghost_style = Style::default().fg(Color::DarkGray);
 
@@ -1023,6 +1027,10 @@ pub async fn run_tui(
     // Initialize ratatui terminal (handles raw mode + alternate screen)
     let mut terminal = ratatui::init();
 
+    // Enable bracketed paste so multi-line paste arrives as Event::Paste(String)
+    // instead of individual Key events (which would submit on Enter).
+    crossterm::execute!(std::io::stdout(), EnableBracketedPaste)?;
+
     // Main event loop
     while app.running {
         // Advance spinner when thinking
@@ -1242,7 +1250,12 @@ pub async fn run_tui(
                 Event::Resize(_, _) => {
                     // ratatui handles resize automatically on next draw
                 }
-                _ => {} // Mouse, Focus, Paste -- ignored
+                Event::Paste(text) => {
+                    // Normalize CR to LF (many terminals convert newlines to \r on paste)
+                    let text = text.replace('\r', "\n");
+                    app.input.insert_text(&text);
+                }
+                _ => {} // Mouse, Focus -- ignored
             }
         }
 
@@ -1278,6 +1291,7 @@ pub async fn run_tui(
     perm_forwarder.abort();
 
     // Restore terminal (ratatui handles raw mode + alternate screen)
+    let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
     ratatui::restore();
     Ok(())
 }
