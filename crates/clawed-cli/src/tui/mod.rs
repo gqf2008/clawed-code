@@ -1439,6 +1439,17 @@ pub async fn run_tui(
 
         // Drain notification channel
         while let Ok(notification) = notify_rx.try_recv() {
+            // After abort, skip text/thinking output that was already buffered
+            // in the channel — the user pressed Esc and doesn't want to see
+            // the rest of the response. Still process TurnComplete etc. so
+            // state resets cleanly.
+            if !app.is_generating {
+                match &notification {
+                    AgentNotification::TextDelta { .. }
+                    | AgentNotification::ThinkingDelta { .. } => continue,
+                    _ => {}
+                }
+            }
             if let Some(merged) = app.handle_notification(notification) {
                 // Queued inputs from while LLM was generating — submit as one message
                 app.push_message(MessageContent::UserInput(merged.clone()));
