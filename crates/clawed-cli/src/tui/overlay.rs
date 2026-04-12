@@ -7,7 +7,6 @@
 //! Overlays render on top of the message area and capture all keyboard input
 //! until dismissed with Esc.
 
-use super::MUTED;
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
@@ -216,13 +215,13 @@ fn render_selection_list(
             } else if item.is_current {
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White)
+                Style::default() // terminal default — avoids ANSI color remapping issues
             };
 
             let desc_style = if is_sel {
                 Style::default().fg(Color::LightCyan).bg(Color::Blue)
             } else {
-                Style::default().fg(MUTED)
+                Style::default().add_modifier(Modifier::DIM) // relative to terminal default
             };
 
             let marker_style = if is_sel {
@@ -230,7 +229,7 @@ fn render_selection_list(
             } else if item.is_current {
                 Style::default().fg(Color::Cyan)
             } else {
-                Style::default().fg(MUTED)
+                Style::default().add_modifier(Modifier::DIM)
             };
 
             let mut spans = vec![
@@ -261,7 +260,7 @@ fn render_selection_list(
         .title(block_title)
         .title_bottom(Line::styled(
             " ↑↓/jk: navigate  Enter: select  Esc: cancel ",
-            Style::default().fg(MUTED),
+            Style::default().add_modifier(Modifier::DIM),
         ));
 
     let list = List::new(list_items).block(block);
@@ -293,7 +292,7 @@ fn render_info_panel(
         .title(block_title)
         .title_bottom(Line::styled(
             " ↑↓/jk: scroll  Esc/q: close ",
-            Style::default().fg(MUTED),
+            Style::default().add_modifier(Modifier::DIM),
         ));
 
     // Manually slice lines for scroll support (Paragraph's scroll doesn't
@@ -432,15 +431,15 @@ fn style_info_line(line: &str) -> Line<'static> {
         );
     }
 
-    // Tip line: starts with bullet
+    // Tip line: starts with bullet — secondary/dim text
     if trimmed.starts_with('•') {
         return Line::from(vec![
             Span::raw(indent),
-            Span::styled(trimmed.to_string(), Style::default().fg(MUTED)),
+            Span::styled(trimmed.to_string(), Style::default().add_modifier(Modifier::DIM)),
         ]);
     }
 
-    // Command line: starts with '/'
+    // Command line: starts with '/' — bold command name, dim description
     if trimmed.starts_with('/') {
         // Split on first run of 2+ spaces to separate command from description
         if let Some(space_pos) = trimmed.find("  ") {
@@ -448,20 +447,14 @@ fn style_info_line(line: &str) -> Line<'static> {
             let desc = trimmed[space_pos..].trim_start();
             return Line::from(vec![
                 Span::raw(indent),
-                Span::styled(
-                    cmd.to_string(),
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-                ),
+                Span::styled(cmd.to_string(), Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw("  "),
-                Span::styled(desc.to_string(), Style::default().fg(MUTED)),
+                Span::styled(desc.to_string(), Style::default().add_modifier(Modifier::DIM)),
             ]);
         }
         return Line::from(vec![
             Span::raw(indent),
-            Span::styled(
-                trimmed.to_string(),
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(trimmed.to_string(), Style::default().add_modifier(Modifier::BOLD)),
         ]);
     }
 
@@ -490,7 +483,7 @@ pub fn build_status_overlay(
     let display = clawed_core::model::display_name_any(model);
     let total = input_tokens + output_tokens;
     let label = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-    let value = Style::default().fg(Color::White);
+    let value = Style::default(); // use terminal default to avoid ANSI color remapping
 
     let lines = vec![
         Line::from(""),
