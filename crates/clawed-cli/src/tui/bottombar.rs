@@ -1,4 +1,3 @@
-use super::MUTED;
 use ratatui::{
     layout::Rect,
     style::{Color, Style},
@@ -18,15 +17,16 @@ const HINTS: &[(&str, &str)] = &[
 ];
 
 pub fn render(frame: &mut Frame, area: Rect) {
-    let dim = Style::default().fg(MUTED);
-    let key_style = Style::default().fg(Color::Gray);
+    let sep = Style::default();
+    let key_style = Style::default().fg(Color::Cyan);
+    let desc_style = Style::default();
     let mut spans = Vec::new();
     for (i, (key, desc)) in HINTS.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::styled(" │ ", dim));
+            spans.push(Span::styled(" │ ", sep));
         }
         spans.push(Span::styled((*key).to_string(), key_style));
-        spans.push(Span::styled(format!(": {desc}"), dim));
+        spans.push(Span::styled(format!(": {desc}"), desc_style));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }

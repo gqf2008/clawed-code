@@ -229,7 +229,7 @@ fn render_selection_list(
             } else if item.is_current {
                 Style::default().fg(Color::Cyan)
             } else {
-                Style::default().add_modifier(Modifier::DIM)
+                Style::default()
             };
 
             let mut spans = vec![
@@ -260,7 +260,7 @@ fn render_selection_list(
         .title(block_title)
         .title_bottom(Line::styled(
             " ↑↓/jk: navigate  Enter: select  Esc: cancel ",
-            Style::default().add_modifier(Modifier::DIM),
+            Style::default(),
         ));
 
     let list = List::new(list_items).block(block);
@@ -292,7 +292,7 @@ fn render_info_panel(
         .title(block_title)
         .title_bottom(Line::styled(
             " ↑↓/jk: scroll  Esc/q: close ",
-            Style::default().add_modifier(Modifier::DIM),
+            Style::default(),
         ));
 
     // Manually slice lines for scroll support (Paragraph's scroll doesn't
@@ -435,7 +435,7 @@ fn style_info_line(line: &str) -> Line<'static> {
     if trimmed.starts_with('•') {
         return Line::from(vec![
             Span::raw(indent),
-            Span::styled(trimmed.to_string(), Style::default().add_modifier(Modifier::DIM)),
+            Span::styled(trimmed.to_string(), Style::default()),
         ]);
     }
 
@@ -528,7 +528,7 @@ pub async fn build_doctor_overlay(
     let ok = Style::default().fg(Color::Green);
     let warn = Style::default().fg(Color::Yellow);
     let err = Style::default().fg(Color::Red);
-    let dim = Style::default().add_modifier(Modifier::DIM);
+    let dim = Style::default();
     let label = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
 
     let mut lines: Vec<Line<'static>> = vec![Line::from("")];
