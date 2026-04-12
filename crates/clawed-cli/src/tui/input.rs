@@ -749,6 +749,63 @@ mod tests {
     }
 
     #[test]
+    fn test_ctrl_j_inserts_newline() {
+        let mut w = InputWidget::new();
+        w.handle_key(key(KeyCode::Char('a')));
+        // Ctrl+J: crossterm decodes byte 0x0A as Char('j') + CONTROL in raw mode
+        assert!(matches!(w.handle_key(ctrl('j')), InputAction::Changed));
+        w.handle_key(key(KeyCode::Char('b')));
+        assert_eq!(w.buffer(), "a\nb");
+        assert_eq!(w.cursor(), 3);
+    }
+
+    #[test]
+    fn test_ctrl_n_inserts_newline() {
+        let mut w = InputWidget::new();
+        w.handle_key(key(KeyCode::Char('x')));
+        assert!(matches!(w.handle_key(ctrl('n')), InputAction::Changed));
+        w.handle_key(key(KeyCode::Char('y')));
+        assert_eq!(w.buffer(), "x\ny");
+    }
+
+    #[test]
+    fn test_shift_enter_inserts_newline() {
+        let mut w = InputWidget::new();
+        w.handle_key(key(KeyCode::Char('a')));
+        assert!(matches!(
+            w.handle_key(shift_enter()),
+            InputAction::Changed
+        ));
+        w.handle_key(key(KeyCode::Char('b')));
+        assert_eq!(w.buffer(), "a\nb");
+    }
+
+    #[test]
+    fn test_alt_enter_inserts_newline() {
+        let mut w = InputWidget::new();
+        w.handle_key(key(KeyCode::Char('a')));
+        assert!(matches!(
+            w.handle_key(alt_enter()),
+            InputAction::Changed
+        ));
+        w.handle_key(key(KeyCode::Char('b')));
+        assert_eq!(w.buffer(), "a\nb");
+    }
+
+    #[test]
+    fn test_literal_newline_char_inserts_newline() {
+        let mut w = InputWidget::new();
+        w.handle_key(key(KeyCode::Char('a')));
+        // Edge case: Char('\n') without modifiers
+        assert!(matches!(
+            w.handle_key(key(KeyCode::Char('\n'))),
+            InputAction::Changed
+        ));
+        w.handle_key(key(KeyCode::Char('b')));
+        assert_eq!(w.buffer(), "a\nb");
+    }
+
+    #[test]
     fn test_history_navigation() {
         let mut w = InputWidget::new();
         w.push_history("hello".to_string());
