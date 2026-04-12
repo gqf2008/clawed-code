@@ -351,15 +351,21 @@ impl App {
                             .map(|(k, v)| {
                                 let val = match v {
                                     serde_json::Value::String(s) => {
-                                        if s.len() > 40 {
-                                            format!("\"{}…\"", &s[..37])
+                                        if s.chars().count() > 40 {
+                                            let t: String = s.chars().take(37).collect();
+                                            format!("\"{t}…\"")
                                         } else {
                                             format!("\"{s}\"")
                                         }
                                     }
                                     other => {
                                         let s = other.to_string();
-                                        if s.len() > 40 { format!("{}…", &s[..37]) } else { s }
+                                        if s.chars().count() > 40 {
+                                            let t: String = s.chars().take(37).collect();
+                                            format!("{t}…")
+                                        } else {
+                                            s
+                                        }
                                     }
                                 };
                                 format!("{k}={val}")
