@@ -827,6 +827,13 @@ fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
     let selected = app.input.completion_selected();
     let max_items = 8.min(matches.len());
 
+    // Calculate visible window that keeps `selected` in view
+    let scroll_offset = if selected >= max_items {
+        selected - max_items + 1
+    } else {
+        0
+    };
+
     // Calculate popup dimensions
     let max_cmd_width = matches.iter().map(|c| c.width()).max().unwrap_or(4);
     let popup_width = (max_cmd_width + 30).min(input_area.width as usize);
@@ -842,10 +849,11 @@ fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
         popup_height,
     );
 
-    // Build list items
+    // Build list items with scrolling window
     let items: Vec<ListItem> = matches
         .iter()
         .enumerate()
+        .skip(scroll_offset)
         .take(max_items)
         .map(|(i, cmd)| {
             let desc = command_description(cmd);
@@ -872,10 +880,20 @@ fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
         })
         .collect();
 
+    // Show scroll indicator in title when there are more items
+    let has_more_above = scroll_offset > 0;
+    let has_more_below = scroll_offset + max_items < matches.len();
+    let title = match (has_more_above, has_more_below) {
+        (true, true) => " ↑↓ ",
+        (true, false) => " ↑ ",
+        (false, true) => " ↓ ",
+        (false, false) => "",
+    };
+
     let list = List::new(items)
         .block(Block::default().borders(Borders::ALL).border_style(
             Style::default().fg(Color::DarkGray),
-        ));
+        ).title(title));
 
     // Clear the area first, then render
     frame.render_widget(Clear, popup_area);
@@ -1635,13 +1653,11 @@ async fn handle_async_command(
             )));
         }
         CommandResult::Memory { sub } => {
-            crate::repl_commands::handle_memory_command(
+            let output = crate::repl_commands::handle_memory_command_str(
                 &sub,
                 &std::env::current_dir().unwrap_or_default(),
             );
-            app.push_message(MessageContent::System(
-                "Memory command executed (see terminal output).".to_string(),
-            ));
+            app.push_message(MessageContent::System(output));
         }
         // Commands that submit a prompt to the agent
         CommandResult::Review { prompt }

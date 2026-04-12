@@ -311,6 +311,9 @@ impl InputWidget {
                     let end = char_to_byte(&self.buffer, self.cursor);
                     self.buffer.drain(start..end);
                     self.cursor -= 1;
+                    if self.buffer.starts_with('/') {
+                        self.update_completion();
+                    }
                     InputAction::Changed
                 } else {
                     InputAction::None
@@ -324,6 +327,9 @@ impl InputWidget {
                     let start = char_to_byte(&self.buffer, self.cursor);
                     let end = char_to_byte(&self.buffer, self.cursor + 1);
                     self.buffer.drain(start..end);
+                    if self.buffer.starts_with('/') {
+                        self.update_completion();
+                    }
                     InputAction::Changed
                 } else {
                     InputAction::None
@@ -353,6 +359,10 @@ impl InputWidget {
                 let byte = char_to_byte(&self.buffer, self.cursor);
                 self.buffer.insert(byte, c);
                 self.cursor += 1;
+                // Auto-show slash command menu as user types
+                if self.buffer.starts_with('/') {
+                    self.update_completion();
+                }
                 InputAction::Changed
             }
 
@@ -672,7 +682,7 @@ mod tests {
     fn test_tab_cycles_completions() {
         let mut w = InputWidget::new();
         w.handle_key(key(KeyCode::Char('/')));
-        w.handle_key(key(KeyCode::Tab));
+        // Typing '/' auto-triggers completion
         assert!(w.in_completion());
         assert_eq!(w.completion_selected(), 0);
         w.handle_key(key(KeyCode::Tab));
