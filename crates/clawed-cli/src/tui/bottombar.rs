@@ -1,3 +1,4 @@
+use super::MUTED;
 use ratatui::{
     layout::Rect,
     style::{Color, Style},
@@ -27,7 +28,7 @@ const HINTS_BASIC: &[(&str, &str)] = &[
 ];
 
 pub fn render(frame: &mut Frame, area: Rect, enhanced_keys: bool) {
-    let dim = Style::default().fg(Color::DarkGray);
+    let dim = Style::default().fg(MUTED);
     let key_style = Style::default().fg(Color::Gray);
     let hints = if enhanced_keys { HINTS_ENHANCED } else { HINTS_BASIC };
     let mut spans = Vec::new();

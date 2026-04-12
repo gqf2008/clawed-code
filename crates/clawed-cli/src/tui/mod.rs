@@ -47,6 +47,11 @@ use self::overlay::{Overlay, OverlayAction};
 use self::permission::PendingPermission;
 use self::status::{ToolInfo, TuiStatusState};
 
+/// Subdued text color for hints, separators, status indicators, and input text.
+/// Uses a true-color gray that is readable on both dark and light backgrounds,
+/// unlike `MUTED` (ANSI 8) which maps to bright on many terminals.
+const MUTED: Color = Color::Rgb(140, 140, 140);
+
 // -- App State ----------------------------------------------------------------
 
 struct App {
@@ -757,7 +762,7 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
                         return vec![Line::styled(
                             format!("\u{25B6} thinking ({line_count} lines, Ctrl+O to expand)"),
                             Style::default()
-                                .fg(Color::DarkGray)
+                                .fg(MUTED)
                                 .add_modifier(Modifier::ITALIC),
                         )];
                     }
@@ -799,7 +804,7 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize) {
         let line = Line::from(vec![
             Span::styled(
                 "\u{2500}".repeat(left),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(MUTED),
             ),
             Span::styled(
                 indicator,
@@ -807,13 +812,13 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize) {
             ),
             Span::styled(
                 "\u{2500}".repeat(right),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(MUTED),
             ),
         ]);
         frame.render_widget(Paragraph::new(line), area);
     } else {
         let sep = "\u{2500}".repeat(area.width as usize);
-        let line = Line::styled(sep, Style::default().fg(Color::DarkGray));
+        let line = Line::styled(sep, Style::default().fg(MUTED));
         frame.render_widget(Paragraph::new(line), area);
     }
 }
@@ -822,10 +827,10 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     let prompt_style = Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
-    let text_style = Style::default().fg(Color::DarkGray);
+    let text_style = Style::default().fg(MUTED);
     let image_style = Style::default().fg(Color::Magenta);
-    let ghost_style = Style::default().fg(Color::DarkGray);
-    let indicator_style = Style::default().fg(Color::DarkGray);
+    let ghost_style = Style::default().fg(MUTED);
+    let indicator_style = Style::default().fg(MUTED);
 
     let display_lines = app.input.display_lines();
     let img_count = app.pending_images.len();
@@ -923,7 +928,7 @@ fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
     );
 
     // Build lines — borderless, with left "│" margin, matching original style
-    let bar_style = Style::default().fg(Color::DarkGray);
+    let bar_style = Style::default().fg(MUTED);
     let items: Vec<ListItem> = matches
         .iter()
         .enumerate()
@@ -940,7 +945,7 @@ fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
             let desc_style = if is_selected {
                 Style::default().fg(Color::Cyan)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(MUTED)
             };
             let padding = " ".repeat(desc_col.saturating_sub(cmd.width()));
             ListItem::new(Line::from(vec![
@@ -968,8 +973,8 @@ fn render_welcome_lines(width: u16, model: &str) -> Vec<Line<'static>> {
     let border_style = Style::default().fg(Color::Cyan);
     let text_style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
     let model_style = Style::default().fg(Color::Cyan);
-    let hint_style = Style::default().fg(Color::DarkGray);
-    let tip_style = Style::default().fg(Color::DarkGray);
+    let hint_style = Style::default().fg(MUTED);
+    let tip_style = Style::default().fg(MUTED);
 
     let inner_width = title
         .width()
@@ -1092,21 +1097,29 @@ pub async fn run_tui(
     // Clear screen for a clean start
     terminal.clear()?;
 
-    // Detect whether the terminal actually supports keyboard enhancement (for UI hints).
-    let keyboard_enhancement_enabled = crossterm::terminal::supports_keyboard_enhancement()
-        .unwrap_or(false);
-    app.enhanced_keys = keyboard_enhancement_enabled;
-
-    if !keyboard_enhancement_enabled {
-        app.push_message(MessageContent::System(
-            "Tip: Your terminal doesn't support enhanced keyboard protocol. \
-             Use Ctrl+J or Ctrl+N to insert newlines (Shift+Enter unavailable)."
-                .to_string(),
-        ));
-    }
+    // Detect keyboard enhancement support in background to avoid blocking UI.
+    // `supports_keyboard_enhancement()` has a 2s timeout that stalls startup
+    // on terminals without kitty protocol support (e.g. macOS Terminal.app).
+    let (kb_tx, mut kb_rx) = mpsc::channel::<bool>(1);
+    std::thread::spawn(move || {
+        let supported = crossterm::terminal::supports_keyboard_enhancement()
+            .unwrap_or(false);
+        let _ = kb_tx.blocking_send(supported);
+    });
 
     // Main event loop
     while app.running {
+        // Check if keyboard enhancement detection completed (non-blocking)
+        if let Ok(supported) = kb_rx.try_recv() {
+            app.enhanced_keys = supported;
+            if !supported {
+                app.push_message(MessageContent::System(
+                    "Tip: Your terminal doesn't support enhanced keyboard protocol. \
+                     Use Ctrl+J to insert newlines (Shift+Enter unavailable)."
+                        .to_string(),
+                ));
+            }
+        }
         // Advance spinner when thinking
         if app.status.thinking || !app.status.active_tools.is_empty() {
             app.status.spinner_frame = app.status.spinner_frame.wrapping_add(1);
@@ -1387,7 +1400,7 @@ pub async fn run_tui(
 
     // Restore terminal (no alternate screen to leave)
     let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
-    if keyboard_enhancement_enabled {
+    if app.enhanced_keys {
         let _ = crossterm::execute!(
             std::io::stdout(),
             crossterm::event::PopKeyboardEnhancementFlags
