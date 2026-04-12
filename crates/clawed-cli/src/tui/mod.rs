@@ -681,11 +681,19 @@ fn render(frame: &mut Frame, app: &App) {
         input_rows + bottom_bar_rows
     };
 
+    // Dedicated queue banner row (only when items are queued and not in permission mode)
+    let queue_rows = if has_permission || app.queued_inputs.is_empty() {
+        0
+    } else {
+        1
+    };
+
     let constraints = [
         Constraint::Min(1),                       // messages
         Constraint::Length(task_plan_rows),        // task plan (0 if empty)
         Constraint::Length(1),                     // separator
         Constraint::Length(status_rows),           // status (0 or 1)
+        Constraint::Length(queue_rows),            // queue banner (0 or 1)
         Constraint::Length(footer_rows),           // input/permission footer
     ];
 
@@ -694,7 +702,8 @@ fn render(frame: &mut Frame, app: &App) {
     let task_area = chunks[1];
     let sep_area = chunks[2];
     let status_area = chunks[3];
-    let footer_area = chunks[4];
+    let queue_area = chunks[4];
+    let footer_area = chunks[5];
 
     render_messages(frame, msg_area, app);
 
@@ -714,6 +723,10 @@ fn render(frame: &mut Frame, app: &App) {
             app.total_output_tokens,
             app.queued_inputs.len(),
         );
+    }
+
+    if queue_rows > 0 {
+        render_queue_banner(frame, queue_area, app.queued_inputs.len());
     }
 
     if let Some(ref perm) = app.permission {
@@ -801,6 +814,19 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
 
     let paragraph = Paragraph::new(visible).wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
+}
+
+fn render_queue_banner(frame: &mut Frame, area: Rect, count: usize) {
+    let s = if count == 1 { "" } else { "s" };
+    let text = format!(
+        "  📥 {count} message{s} queued — will be sent when LLM finishes  [Esc / Ctrl+C to cancel]"
+    );
+    let para = Paragraph::new(text).style(
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    );
+    frame.render_widget(para, area);
 }
 
 fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize) {
@@ -1131,6 +1157,19 @@ pub async fn run_tui(
                         ));
                     }
 
+                    // Esc while LLM is generating always aborts immediately,
+                    // even if an overlay is open (close overlay + abort together).
+                    if key.code == KeyCode::Esc && app.status.thinking {
+                        let _ = client.abort();
+                        app.status.thinking = false;
+                        app.queued_inputs.clear();
+                        app.overlay = None;
+                        app.push_message(MessageContent::System(
+                            "[Aborted]".to_string(),
+                        ));
+                        continue;
+                    }
+
                     // If overlay is active, route keys there first
                     if app.overlay.is_some() {
                         let action = app.overlay.as_mut().unwrap().handle_key(key.code);
@@ -1296,14 +1335,8 @@ pub async fn run_tui(
                         input::InputAction::Submit => {
                             let text = app.input.take_text();
                             if !text.is_empty() || !app.pending_images.is_empty() {
-                                let display = if app.pending_images.is_empty() {
-                                    text.clone()
-                                } else {
-                                    format!("{text} [+{} image(s)]", app.pending_images.len())
-                                };
-
-                                // While LLM is generating, queue plain text inputs
-                                // (slash commands and /abort are always handled immediately)
+                                // While LLM is generating, queue plain text inputs.
+                                // Slash commands are always handled immediately.
                                 if app.status.thinking
                                     && !text.starts_with('/')
                                     && app.pending_images.is_empty()
@@ -1312,10 +1345,8 @@ pub async fn run_tui(
                                     continue;
                                 }
 
-                                app.push_message(MessageContent::UserInput(display));
-
                                 if text.starts_with('/') {
-                                    // /abort is special — always handle directly
+                                    // Slash commands execute silently — no message history echo.
                                     if text == "/abort" {
                                         let _ = client.abort();
                                         app.status.thinking = false;
@@ -1326,7 +1357,6 @@ pub async fn run_tui(
                                     } else {
                                         let client_ref = &client;
                                         app.handle_slash_command(client_ref, &text);
-                                        // Process async commands that need engine access
                                         if let Some(cmd) = app.pending_command.take() {
                                             handle_async_command(
                                                 cmd, &engine, &client, &mut app,
@@ -1335,6 +1365,16 @@ pub async fn run_tui(
                                     }
                                     app.pending_images.clear();
                                 } else {
+                                    // LLM prompt: show in conversation history.
+                                    let display = if app.pending_images.is_empty() {
+                                        text.clone()
+                                    } else {
+                                        format!(
+                                            "{text} [+{} image(s)]",
+                                            app.pending_images.len()
+                                        )
+                                    };
+                                    app.push_message(MessageContent::UserInput(display));
                                     let images = std::mem::take(&mut app.pending_images);
                                     if images.is_empty() {
                                         let _ = client.submit(&text);
