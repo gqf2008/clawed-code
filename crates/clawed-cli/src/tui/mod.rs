@@ -16,6 +16,7 @@ mod messages;
 mod overlay;
 mod permission;
 mod status;
+mod taskplan;
 
 pub use input::InputWidget;
 
@@ -53,6 +54,7 @@ struct App {
     auto_scroll: bool,
     input: InputWidget,
     status: TuiStatusState,
+    task_plan: taskplan::TaskPlan,
     permission: Option<PendingPermission>,
     overlay: Option<Overlay>,
     bottom_bar_hidden: bool,
@@ -75,6 +77,7 @@ impl App {
             auto_scroll: true,
             input: InputWidget::new(),
             status: TuiStatusState::new(),
+            task_plan: taskplan::TaskPlan::new(),
             permission: None,
             overlay: None,
             bottom_bar_hidden: false,
@@ -137,6 +140,12 @@ impl App {
                 self.append_thinking_text(&text);
             }
             AgentNotification::ToolUseStart { tool_name, .. } => {
+                if tool_name.to_lowercase().contains("bash")
+                    || tool_name.to_lowercase().contains("shell")
+                {
+                    self.status.active_shells += 1;
+                    self.task_plan.set_shells(self.status.active_shells);
+                }
                 self.status.active_tools.insert(
                     tool_name.clone(),
                     ToolInfo {
@@ -154,6 +163,12 @@ impl App {
                 result_preview,
                 ..
             } => {
+                if tool_name.to_lowercase().contains("bash")
+                    || tool_name.to_lowercase().contains("shell")
+                {
+                    self.status.active_shells = self.status.active_shells.saturating_sub(1);
+                    self.task_plan.set_shells(self.status.active_shells);
+                }
                 let duration_ms = self
                     .status
                     .active_tools
@@ -195,6 +210,7 @@ impl App {
                 let label = name.unwrap_or_else(|| {
                     agent_id.chars().take(8).collect::<String>()
                 });
+                self.task_plan.add_task(agent_id.clone(), label.clone());
                 self.push_message(MessageContent::System(
                     format!("\u{1F916} Agent spawned: {label}"),
                 ));
@@ -205,6 +221,7 @@ impl App {
                 result,
                 is_error,
             } => {
+                self.task_plan.complete_task(&agent_id, is_error);
                 self.status.active_agents.remove(&agent_id);
                 let icon = if is_error { "\u{2717}" } else { "\u{2713}" };
                 self.push_message(MessageContent::System(
@@ -212,6 +229,7 @@ impl App {
                 ));
             }
             AgentNotification::AgentTerminated { agent_id, reason } => {
+                self.task_plan.terminate_task(&agent_id);
                 self.status.active_agents.remove(&agent_id);
                 self.push_message(MessageContent::System(
                     format!("\u{26A0} Agent terminated: {reason}"),
@@ -632,6 +650,7 @@ fn render(frame: &mut Frame, app: &App) {
         u16::from(!app.bottom_bar_hidden)
     };
     let status_rows = u16::from(app.status.should_show());
+    let task_plan_rows = app.task_plan.render_height();
 
     // When permission is active, the input row + hint bar are replaced by
     // a 3-row permission prompt (description + buttons + hints).
@@ -643,19 +662,26 @@ fn render(frame: &mut Frame, app: &App) {
     };
 
     let constraints = [
-        Constraint::Min(1),                 // messages
-        Constraint::Length(1),              // separator
-        Constraint::Length(status_rows),    // status (0 or 1)
-        Constraint::Length(footer_rows),    // input/permission footer
+        Constraint::Min(1),                       // messages
+        Constraint::Length(task_plan_rows),        // task plan (0 if empty)
+        Constraint::Length(1),                     // separator
+        Constraint::Length(status_rows),           // status (0 or 1)
+        Constraint::Length(footer_rows),           // input/permission footer
     ];
 
     let chunks = Layout::vertical(constraints).split(area);
     let msg_area = chunks[0];
-    let sep_area = chunks[1];
-    let status_area = chunks[2];
-    let footer_area = chunks[3];
+    let task_area = chunks[1];
+    let sep_area = chunks[2];
+    let status_area = chunks[3];
+    let footer_area = chunks[4];
 
     render_messages(frame, msg_area, app);
+
+    if task_plan_rows > 0 {
+        taskplan::render(frame, task_area, &app.task_plan);
+    }
+
     render_separator(frame, sep_area, app.scroll_offset);
 
     if status_rows > 0 {
