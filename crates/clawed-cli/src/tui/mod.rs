@@ -703,11 +703,11 @@ fn render(frame: &mut Frame, app: &App) {
         input_rows + bottom_bar_rows
     };
 
-    // Dedicated queue banner row (only when items are queued and not in permission mode)
+    // Dedicated queue banner: 1 header row + 1 row per queued message (capped at 6)
     let queue_rows = if has_permission || app.queued_inputs.is_empty() {
         0
     } else {
-        1
+        (1 + app.queued_inputs.len()).min(6) as u16
     };
 
     let constraints = [
@@ -748,7 +748,7 @@ fn render(frame: &mut Frame, app: &App) {
     }
 
     if queue_rows > 0 {
-        render_queue_banner(frame, queue_area, app.queued_inputs.len());
+        render_queue_banner(frame, queue_area, &app.queued_inputs);
     }
 
     if let Some(ref perm) = app.permission {
@@ -838,17 +838,47 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
-fn render_queue_banner(frame: &mut Frame, area: Rect, count: usize) {
+fn render_queue_banner(frame: &mut Frame, area: Rect, queued: &[String]) {
+    let count = queued.len();
     let s = if count == 1 { "" } else { "s" };
-    let text = format!(
-        "  📥 {count} message{s} queued — will be sent when LLM finishes  [Esc / Ctrl+C to cancel]"
-    );
-    let para = Paragraph::new(text).style(
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD),
-    );
-    frame.render_widget(para, area);
+    let header = Line::from(vec![
+        Span::styled(
+            format!("  📥 {count} message{s} queued — will be sent when LLM finishes"),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "  [Esc / Ctrl+C to cancel]",
+            Style::default().fg(Color::Yellow),
+        ),
+    ]);
+
+    // One line per queued message, truncated to fit the available width
+    let max_text_width = (area.width as usize).saturating_sub(7); // "  N│ " prefix
+    let msg_lines: Vec<Line> = queued
+        .iter()
+        .enumerate()
+        .take(area.height.saturating_sub(1) as usize) // don't exceed area height
+        .map(|(i, msg)| {
+            // Show only the first line of multi-line messages
+            let first_line = msg.lines().next().unwrap_or(msg.as_str());
+            let truncated: String = if first_line.chars().count() > max_text_width {
+                first_line.chars().take(max_text_width.saturating_sub(1)).collect::<String>() + "…"
+            } else {
+                first_line.to_string()
+            };
+            Line::from(vec![
+                Span::styled(
+                    format!("  {}│ ", i + 1),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::styled(truncated, Style::default().fg(Color::Yellow)),
+            ])
+        })
+        .collect();
+
+    let mut lines = vec![header];
+    lines.extend(msg_lines);
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize) {
