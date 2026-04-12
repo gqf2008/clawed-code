@@ -77,6 +77,10 @@ struct App {
     key_debug: bool,
     /// Inputs queued while LLM is generating; merged and submitted on TurnComplete.
     queued_inputs: Vec<String>,
+    /// True from when client.submit() is called until TurnComplete is received.
+    /// Unlike status.thinking (which is false during TextDelta streaming),
+    /// this remains true for the entire LLM turn so queue/abort checks work correctly.
+    is_generating: bool,
 }
 
 impl App {
@@ -101,6 +105,7 @@ impl App {
             pending_command: None,
             key_debug: false,
             queued_inputs: Vec::new(),
+            is_generating: false,
         }
     }
 
@@ -109,6 +114,22 @@ impl App {
         if self.auto_scroll {
             self.scroll_offset = 0;
         }
+    }
+
+    /// Mark that the LLM is now generating a response.
+    /// Unlike status.thinking (which goes false during TextDelta), this stays
+    /// true for the entire turn so queue gating and Esc abort work correctly.
+    fn mark_generating(&mut self) {
+        self.status.thinking = true;
+        self.is_generating = true;
+    }
+
+    /// Clear all generation state (abort or TurnComplete).
+    fn mark_done(&mut self) {
+        self.status.thinking = false;
+        self.is_generating = false;
+        self.status.active_tools.clear();
+        self.status.active_shells = 0;
     }
 
     /// Append text to the last AssistantText message, or create one.
@@ -209,6 +230,7 @@ impl App {
                 self.total_input_tokens += usage.input_tokens;
                 self.total_output_tokens += usage.output_tokens;
                 self.status.thinking = false;
+                self.is_generating = false;
                 self.push_message(MessageContent::TurnDivider {
                     turn,
                     input_tokens: usage.input_tokens,
@@ -1159,9 +1181,10 @@ pub async fn run_tui(
 
                     // Esc while LLM is generating always aborts immediately,
                     // even if an overlay is open (close overlay + abort together).
-                    if key.code == KeyCode::Esc && app.status.thinking {
+                    if key.code == KeyCode::Esc && app.is_generating {
                         let _ = client.abort();
                         app.status.thinking = false;
+                        app.is_generating = false;
                         app.queued_inputs.clear();
                         app.overlay = None;
                         app.push_message(MessageContent::System(
@@ -1235,9 +1258,11 @@ pub async fn run_tui(
                     // Global shortcuts
                     match (key.code, key.modifiers) {
                         (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                            if app.status.thinking {
+                            if app.is_generating {
                                 let _ = client.abort();
                                 app.status.thinking = false;
+                                app.is_generating = false;
+                                app.queued_inputs.clear();
                                 app.push_message(MessageContent::System(
                                     "[Aborted]".to_string(),
                                 ));
@@ -1246,10 +1271,12 @@ pub async fn run_tui(
                             }
                             continue;
                         }
-                        // Esc while thinking → abort current task (not quit)
-                        (KeyCode::Esc, _) if app.status.thinking => {
+                        // Esc fallback (when not generating — handled above in early check)
+                        (KeyCode::Esc, _) if app.is_generating => {
                             let _ = client.abort();
                             app.status.thinking = false;
+                            app.is_generating = false;
+                            app.queued_inputs.clear();
                             app.push_message(MessageContent::System(
                                 "[Aborted]".to_string(),
                             ));
@@ -1337,7 +1364,7 @@ pub async fn run_tui(
                             if !text.is_empty() || !app.pending_images.is_empty() {
                                 // While LLM is generating, queue plain text inputs.
                                 // Slash commands are always handled immediately.
-                                if app.status.thinking
+                                if app.is_generating
                                     && !text.starts_with('/')
                                     && app.pending_images.is_empty()
                                 {
@@ -1350,6 +1377,7 @@ pub async fn run_tui(
                                     if text == "/abort" {
                                         let _ = client.abort();
                                         app.status.thinking = false;
+                                        app.is_generating = false;
                                         app.queued_inputs.clear();
                                         app.push_message(MessageContent::System(
                                             "[Aborted]".to_string(),
@@ -1381,13 +1409,14 @@ pub async fn run_tui(
                                     } else {
                                         let _ = client.submit_with_images(&text, images);
                                     }
-                                    app.status.thinking = true;
+                                    app.mark_generating();
                                 }
                             }
                         }
                         input::InputAction::Abort => {
                             let _ = client.abort();
                             app.status.thinking = false;
+                            app.is_generating = false;
                             app.queued_inputs.clear();
                             app.push_message(MessageContent::System(
                                 "[Aborted]".to_string(),
@@ -1414,7 +1443,7 @@ pub async fn run_tui(
                 // Queued inputs from while LLM was generating — submit as one message
                 app.push_message(MessageContent::UserInput(merged.clone()));
                 let _ = client.submit(&merged);
-                app.status.thinking = true;
+                app.mark_generating();
             }
         }
 
@@ -1558,7 +1587,7 @@ async fn handle_async_command(
                     "Retrying: {preview}",
                 )));
                 let _ = client.submit(&prompt);
-                app.status.thinking = true;
+                app.mark_generating();
             } else {
                 app.push_message(MessageContent::System(
                     "No previous prompt to retry.".to_string(),
@@ -1909,7 +1938,7 @@ async fn handle_async_command(
         | CommandResult::Pr { prompt } => {
             if !prompt.is_empty() {
                 let _ = client.submit(&prompt);
-                app.status.thinking = true;
+                app.mark_generating();
             }
         }
         CommandResult::Commit { message } => {
@@ -1919,7 +1948,7 @@ async fn handle_async_command(
                 format!("Create a commit with message: {message}")
             };
             let _ = client.submit(&prompt);
-            app.status.thinking = true;
+            app.mark_generating();
         }
         CommandResult::CommitPushPr { message } => {
             let prompt = if message.is_empty() {
@@ -1928,7 +1957,7 @@ async fn handle_async_command(
                 format!("Commit with message '{message}', push, and create a PR.")
             };
             let _ = client.submit(&prompt);
-            app.status.thinking = true;
+            app.mark_generating();
         }
         CommandResult::Search { query } => {
             if query.is_empty() {
@@ -1996,7 +2025,7 @@ async fn handle_async_command(
             } else {
                 let prompt = format!("Fetch and address review comments for PR #{pr_number}.");
                 let _ = client.submit(&prompt);
-                app.status.thinking = true;
+                app.mark_generating();
             }
         }
         CommandResult::Branch { name } => {
@@ -2047,7 +2076,7 @@ async fn handle_async_command(
         CommandResult::Summary => {
             let prompt = "Provide a brief summary of our conversation so far.";
             let _ = client.submit(prompt);
-            app.status.thinking = true;
+            app.mark_generating();
         }
         // Commands that are not meaningfully different in TUI
         CommandResult::Permissions { mode } => {
@@ -2082,7 +2111,7 @@ async fn handle_async_command(
         CommandResult::Init => {
             let prompt = "Create a CLAUDE.md file for this project with build commands, architecture, and conventions.";
             let _ = client.submit(prompt);
-            app.status.thinking = true;
+            app.mark_generating();
         }
         CommandResult::Plan { args } => {
             if args.is_empty() {
@@ -2092,7 +2121,7 @@ async fn handle_async_command(
             } else {
                 let prompt = format!("Create a detailed implementation plan for: {args}");
                 let _ = client.submit(&prompt);
-                app.status.thinking = true;
+                app.mark_generating();
             }
         }
         CommandResult::Login | CommandResult::Logout => {

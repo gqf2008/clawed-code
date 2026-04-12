@@ -368,8 +368,17 @@ fn render_code_block(lang: &str, code: &str, lines: &mut Vec<Line<'static>>) {
 
 /// Quick heuristic: does this text look like it contains markdown?
 fn likely_markdown(text: &str) -> bool {
-    // Check first 2048 chars for common markdown markers
-    let sample = if text.len() > 2048 { &text[..2048] } else { text };
+    // Check first ~2048 bytes for common markdown markers.
+    // Must find a valid char boundary to avoid panicking on multi-byte characters.
+    let sample = if text.len() > 2048 {
+        let mut end = 2048;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        &text[..end]
+    } else {
+        text
+    };
     sample.contains("**")
         || sample.contains('`')
         || sample.contains("```")
