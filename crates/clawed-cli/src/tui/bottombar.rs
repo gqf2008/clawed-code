@@ -10,9 +10,9 @@ const HINTS: &[(&str, &str)] = &[
     ("Tab", "complete"),
     ("Shift+\u{21B5}", "newline"),
     ("\u{2191}\u{2193}", "history"),
+    ("Ctrl+V", "paste image"),
     ("Ctrl+O", "thinking"),
     ("Ctrl+C", "abort/quit"),
-    ("Ctrl+L", "clear"),
 ];
 
 pub fn render(frame: &mut Frame, area: Rect) {

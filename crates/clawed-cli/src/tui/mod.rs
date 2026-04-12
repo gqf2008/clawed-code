@@ -23,7 +23,7 @@ use std::time::Instant;
 
 use clawed_agent::engine::QueryEngine;
 use clawed_bus::bus::ClientHandle;
-use clawed_bus::events::{AgentNotification, PermissionRequest};
+use clawed_bus::events::{AgentNotification, ImageAttachment, PermissionRequest};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -57,6 +57,7 @@ struct App {
     total_input_tokens: u64,
     total_output_tokens: u64,
     model: String,
+    pending_images: Vec<ImageAttachment>,
 }
 
 impl App {
@@ -75,6 +76,7 @@ impl App {
             total_input_tokens: 0,
             total_output_tokens: 0,
             model,
+            pending_images: Vec::new(),
         }
     }
 
@@ -268,6 +270,9 @@ impl App {
                         "  /compact     Compact the context\n",
                         "  /status      Show session info\n",
                         "  /model       Show current model\n",
+                        "  /sessions    List saved sessions\n",
+                        "  /resume      Resume latest session\n",
+                        "  /resume <id> Resume specific session\n",
                         "  /exit        Quit TUI\n",
                         "  /abort       Abort current operation\n",
                         "\n",
@@ -277,6 +282,7 @@ impl App {
                         "  Up/Down      History / cursor navigation\n",
                         "  Shift+Up/Dn  Scroll back/forward\n",
                         "  PageUp/Dn    Scroll 10 lines\n",
+                        "  Ctrl+V       Paste clipboard image\n",
                         "  Ctrl+O       Toggle thinking blocks\n",
                         "  Ctrl+E       Expand/collapse tool result\n",
                         "  Ctrl+T       Toggle bottom bar\n",
@@ -497,17 +503,26 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
     let text_style = Style::default();
+    let image_style = Style::default().fg(Color::Magenta);
 
     let display_lines = app.input.display_lines();
+    let img_count = app.pending_images.len();
     let lines: Vec<Line> = display_lines
         .iter()
         .enumerate()
         .map(|(i, line_text)| {
             if i == 0 {
-                Line::from(vec![
+                let mut spans = vec![
                     Span::styled("> ", prompt_style),
                     Span::styled((*line_text).to_string(), text_style),
-                ])
+                ];
+                if img_count > 0 {
+                    spans.push(Span::styled(
+                        format!(" 📎{img_count}"),
+                        image_style,
+                    ));
+                }
+                Line::from(spans)
             } else {
                 Line::from(vec![
                     Span::styled("  ", prompt_style), // continuation indent
@@ -800,6 +815,22 @@ pub async fn run_tui(
                             }
                             continue;
                         }
+                        (KeyCode::Char('v'), KeyModifiers::CONTROL) => {
+                            match read_clipboard_image() {
+                                Ok(attachment) => {
+                                    app.pending_images.push(attachment);
+                                    app.push_message(MessageContent::System(
+                                        format!("📎 Image attached ({} total)", app.pending_images.len()),
+                                    ));
+                                }
+                                Err(e) => {
+                                    app.push_message(MessageContent::System(
+                                        format!("Clipboard: {e}"),
+                                    ));
+                                }
+                            }
+                            continue;
+                        }
                         _ => {}
                     }
 
@@ -807,14 +838,88 @@ pub async fn run_tui(
                     match action {
                         input::InputAction::Submit => {
                             let text = app.input.take_text();
-                            if !text.is_empty() {
-                                app.push_message(MessageContent::UserInput(text.clone()));
+                            if !text.is_empty() || !app.pending_images.is_empty() {
+                                let display = if app.pending_images.is_empty() {
+                                    text.clone()
+                                } else {
+                                    format!("{text} [+{} image(s)]", app.pending_images.len())
+                                };
+                                app.push_message(MessageContent::UserInput(display));
 
                                 if text.starts_with('/') {
-                                    let client_ref = &client;
-                                    app.handle_slash_command(client_ref, &text);
+                                    if text == "/sessions" {
+                                        let sessions = clawed_core::session::list_sessions();
+                                        if sessions.is_empty() {
+                                            app.push_message(MessageContent::System(
+                                                "No saved sessions.".to_string(),
+                                            ));
+                                        } else {
+                                            let mut lines = String::from("Recent sessions:\n");
+                                            for (i, s) in sessions.iter().take(10).enumerate() {
+                                                let title = s.custom_title.as_deref()
+                                                    .or(s.last_prompt.as_deref())
+                                                    .unwrap_or(&s.title);
+                                                let age = chrono::Utc::now()
+                                                    .signed_duration_since(s.updated_at);
+                                                let age_str = format_duration(age);
+                                                lines.push_str(&format!(
+                                                    "  {}: {} ({}, {} turns, {})\n",
+                                                    i + 1, title, s.id, s.turn_count, age_str,
+                                                ));
+                                            }
+                                            lines.push_str("\nUse /resume <id> to restore.");
+                                            app.push_message(MessageContent::System(lines));
+                                        }
+                                    } else if text == "/resume" {
+                                        // Resume latest session
+                                        let sessions = clawed_core::session::list_sessions();
+                                        if let Some(latest) = sessions.first() {
+                                            let sid = latest.id.clone();
+                                            match engine.restore_session(&sid).await {
+                                                Ok(title) => {
+                                                    app.push_message(MessageContent::System(
+                                                        format!("Resumed session: {title}"),
+                                                    ));
+                                                    replay_session_messages(&engine, &mut app).await;
+                                                }
+                                                Err(e) => {
+                                                    app.push_message(MessageContent::System(
+                                                        format!("Resume failed: {e}"),
+                                                    ));
+                                                }
+                                            }
+                                        } else {
+                                            app.push_message(MessageContent::System(
+                                                "No sessions to resume.".to_string(),
+                                            ));
+                                        }
+                                    } else if let Some(sid) = text.strip_prefix("/resume ") {
+                                        let sid = sid.trim();
+                                        match engine.restore_session(sid).await {
+                                            Ok(title) => {
+                                                app.push_message(MessageContent::System(
+                                                    format!("Resumed session: {title}"),
+                                                ));
+                                                replay_session_messages(&engine, &mut app).await;
+                                            }
+                                            Err(e) => {
+                                                app.push_message(MessageContent::System(
+                                                    format!("Resume failed: {e}"),
+                                                ));
+                                            }
+                                        }
+                                    } else {
+                                        let client_ref = &client;
+                                        app.handle_slash_command(client_ref, &text);
+                                    }
+                                    app.pending_images.clear();
                                 } else {
-                                    let _ = client.submit(&text);
+                                    let images = std::mem::take(&mut app.pending_images);
+                                    if images.is_empty() {
+                                        let _ = client.submit(&text);
+                                    } else {
+                                        let _ = client.submit_with_images(&text, images);
+                                    }
                                     app.status.thinking = true;
                                 }
                             }
@@ -870,6 +975,116 @@ pub async fn run_tui(
     // Restore terminal (ratatui handles raw mode + alternate screen)
     ratatui::restore();
     Ok(())
+}
+
+// -- Clipboard image support --------------------------------------------------
+
+/// Read an image from the system clipboard and return it as an `ImageAttachment`.
+///
+/// Uses `arboard` for cross-platform clipboard access. The image is encoded as
+/// PNG and base64-encoded for the Anthropic API.
+fn read_clipboard_image() -> anyhow::Result<ImageAttachment> {
+    use anyhow::Context as _;
+    use base64::Engine as _;
+
+    let mut clip = arboard::Clipboard::new()
+        .context("Cannot open clipboard")?;
+
+    let img = clip.get_image()
+        .context("No image in clipboard")?;
+
+    // Encode RGBA pixels as PNG
+    let mut png_bytes: Vec<u8> = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(
+            std::io::Cursor::new(&mut png_bytes),
+            img.width as u32,
+            img.height as u32,
+        );
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .context("Failed to write PNG header")?;
+        writer
+            .write_image_data(&img.bytes)
+            .context("Failed to encode clipboard image as PNG")?;
+    }
+
+    let data = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+    Ok(ImageAttachment {
+        data,
+        media_type: "image/png".to_string(),
+    })
+}
+
+// -- Session resume helpers ---------------------------------------------------
+
+/// Replay the engine's current messages into the TUI display.
+async fn replay_session_messages(engine: &Arc<QueryEngine>, app: &mut App) {
+    use clawed_core::message::{ContentBlock, Message as CoreMsg};
+
+    app.messages.clear();
+    app.scroll_offset = 0;
+
+    let state = engine.state().read().await;
+    app.model = state.model.clone();
+    app.total_turns = state.turn_count;
+    app.total_input_tokens = state.total_input_tokens;
+    app.total_output_tokens = state.total_output_tokens;
+
+    for msg in &state.messages {
+        match msg {
+            CoreMsg::User(u) => {
+                for block in &u.content {
+                    if let ContentBlock::Text { text } = block {
+                        app.push_message(MessageContent::UserInput(text.clone()));
+                    }
+                }
+            }
+            CoreMsg::Assistant(a) => {
+                for block in &a.content {
+                    match block {
+                        ContentBlock::Text { text } => {
+                            app.push_message(MessageContent::AssistantText(text.clone()));
+                        }
+                        ContentBlock::Thinking { thinking } => {
+                            app.push_message(MessageContent::ThinkingText(thinking.clone()));
+                        }
+                        ContentBlock::ToolUse { name, .. } => {
+                            app.push_message(MessageContent::ToolUseStart {
+                                name: name.clone(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            CoreMsg::System(s) => {
+                app.push_message(MessageContent::System(s.message.clone()));
+            }
+        }
+    }
+
+    app.push_message(MessageContent::System(format!(
+        "--- Restored {} messages, {} turns ---",
+        state.messages.len(),
+        state.turn_count,
+    )));
+}
+
+/// Format a chrono Duration as a human-readable string.
+fn format_duration(dur: chrono::Duration) -> String {
+    let secs = dur.num_seconds();
+    if secs < 60 {
+        format!("{secs}s ago")
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h ago", secs / 3600)
+    } else {
+        format!("{}d ago", secs / 86400)
+    }
 }
 
 #[cfg(test)]

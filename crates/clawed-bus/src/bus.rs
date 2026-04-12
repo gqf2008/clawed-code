@@ -16,7 +16,7 @@
 use tokio::sync::{broadcast, mpsc, watch};
 use uuid::Uuid;
 
-use crate::events::{AgentNotification, AgentRequest, PermissionRequest, PermissionResponse, RiskLevel};
+use crate::events::{AgentNotification, AgentRequest, ImageAttachment, PermissionRequest, PermissionResponse, RiskLevel};
 
 // ── EventBus ─────────────────────────────────────────────────────────────────
 
@@ -335,6 +335,18 @@ impl ClientHandle {
         self.send_request(AgentRequest::Submit {
             text: text.into(),
             images: vec![],
+        })
+    }
+
+    /// Submit user input with image attachments.
+    pub fn submit_with_images(
+        &self,
+        text: impl Into<String>,
+        images: Vec<ImageAttachment>,
+    ) -> Result<(), SendError> {
+        self.send_request(AgentRequest::Submit {
+            text: text.into(),
+            images,
         })
     }
 

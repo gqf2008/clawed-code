@@ -26,14 +26,15 @@ use rustyline::{
 /// Slash commands for tab completion.
 pub const SLASH_COMMANDS: &[&str] = &[
     "/help", "/clear", "/model", "/compact", "/cost", "/skills", "/memory",
-    "/session", "/diff", "/status", "/permissions", "/config", "/undo",
-    "/review", "/doctor", "/init", "/commit", "/commit-push-pr", "/pr",
-    "/bug", "/search", "/history", "/retry", "/version", "/login", "/logout",
-    "/context", "/export", "/reload-context", "/mcp", "/plugin", "/exit",
-    "/fast", "/add-dir", "/summary", "/rename", "/copy", "/share", "/files",
-    "/env", "/agents", "/theme", "/plan", "/think", "/break-cache", "/rewind",
-    "/vim", "/stickers", "/effort", "/tag", "/release-notes", "/feedback",
-    "/stats", "/usage", "/image", "/pr-comments", "/branch",
+    "/session", "/sessions", "/resume", "/diff", "/status", "/permissions",
+    "/config", "/undo", "/review", "/doctor", "/init", "/commit",
+    "/commit-push-pr", "/pr", "/bug", "/search", "/history", "/retry",
+    "/version", "/login", "/logout", "/context", "/export", "/reload-context",
+    "/mcp", "/plugin", "/exit", "/fast", "/add-dir", "/summary", "/rename",
+    "/copy", "/share", "/files", "/env", "/agents", "/theme", "/plan",
+    "/think", "/break-cache", "/rewind", "/vim", "/stickers", "/effort",
+    "/tag", "/release-notes", "/feedback", "/stats", "/usage", "/image",
+    "/pr-comments", "/branch",
 ];
 
 /// Short description for each slash command (displayed in completion list).
@@ -47,6 +48,8 @@ pub(crate) fn command_description(name: &str) -> &'static str {
         "/skills" => "List available skills",
         "/memory" => "Manage memory files",
         "/session" => "Manage sessions",
+        "/sessions" => "List saved sessions",
+        "/resume" => "Resume a session",
         "/diff" => "Show git diff",
         "/status" => "Show session and git status",
         "/permissions" => "Show permission mode",
