@@ -7,6 +7,7 @@
 //! Overlays render on top of the message area and capture all keyboard input
 //! until dismissed with Esc.
 
+use super::MUTED;
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
@@ -221,7 +222,7 @@ fn render_selection_list(
             let desc_style = if is_sel {
                 Style::default().fg(Color::LightCyan).bg(Color::Blue)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(MUTED)
             };
 
             let marker_style = if is_sel {
@@ -229,7 +230,7 @@ fn render_selection_list(
             } else if item.is_current {
                 Style::default().fg(Color::Cyan)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(MUTED)
             };
 
             let mut spans = vec![
@@ -260,7 +261,7 @@ fn render_selection_list(
         .title(block_title)
         .title_bottom(Line::styled(
             " ↑↓/jk: navigate  Enter: select  Esc: cancel ",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(MUTED),
         ));
 
     let list = List::new(list_items).block(block);
@@ -292,7 +293,7 @@ fn render_info_panel(
         .title(block_title)
         .title_bottom(Line::styled(
             " ↑↓/jk: scroll  Esc/q: close ",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(MUTED),
         ));
 
     // Manually slice lines for scroll support (Paragraph's scroll doesn't

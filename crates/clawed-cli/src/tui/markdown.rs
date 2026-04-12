@@ -3,6 +3,7 @@
 //! Converts a markdown string into `Vec<Line<'static>>` using `pulldown-cmark`
 //! for parsing and `syntect` for code block syntax highlighting.
 
+use super::MUTED;
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd, CodeBlockKind};
 use ratatui::{
     style::{Color, Modifier, Style},
@@ -193,7 +194,7 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                 // Handle blockquote prefix
                 let bq_prefix = if state.blockquote_depth > 0 && current_spans.is_empty() {
                     let bars = "\u{2502} ".repeat(state.blockquote_depth as usize);
-                    Some(Span::styled(bars, Style::default().fg(Color::DarkGray)))
+                    Some(Span::styled(bars, Style::default().fg(MUTED)))
                 } else {
                     None
                 };
@@ -249,7 +250,7 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                 flush_line(&mut lines, &mut current_spans);
                 lines.push(Line::styled(
                     "\u{2500}".repeat(40),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(MUTED),
                 ));
             }
             Event::TaskListMarker(checked) => {
@@ -294,11 +295,11 @@ fn render_code_block(lang: &str, code: &str, lines: &mut Vec<Line<'static>>) {
     lines.push(Line::from(vec![
         Span::styled(
             format!("\u{250C}\u{2500}\u{2500} {lang_display} "),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(MUTED),
         ),
         Span::styled(
             "\u{2500}".repeat(20),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(MUTED),
         ),
     ]));
 
@@ -361,7 +362,7 @@ fn render_code_block(lang: &str, code: &str, lines: &mut Vec<Line<'static>>) {
     // Bottom border
     lines.push(Line::styled(
         format!("\u{2514}{}", "\u{2500}".repeat(30)),
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(MUTED),
     ));
 }
 

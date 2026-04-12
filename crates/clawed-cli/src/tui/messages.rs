@@ -1,4 +1,4 @@
-use super::markdown;
+use super::{markdown, MUTED};
 
 use std::cell::RefCell;
 use std::time::Instant;
@@ -128,7 +128,7 @@ impl Message {
             }
             MessageContent::ThinkingText(text) => {
                 let style = Style::default()
-                    .fg(Color::DarkGray)
+                    .fg(MUTED)
                     .add_modifier(Modifier::ITALIC);
                 text.lines()
                     .map(|l| Line::styled(l.to_string(), style))
@@ -182,7 +182,7 @@ impl Message {
                     // Show collapse hint
                     lines.push(Line::styled(
                         "  \u{25B6} Ctrl+E to expand".to_string(),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(MUTED),
                     ));
                 }
 

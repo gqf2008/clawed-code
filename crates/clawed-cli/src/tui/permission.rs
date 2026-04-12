@@ -7,6 +7,7 @@
 //! Tab: select  Enter: confirm  Esc: deny     ← hint row
 //! ```
 
+use super::MUTED;
 use clawed_bus::events::{PermissionRequest, PermissionResponse, RiskLevel};
 use ratatui::{
     layout::Rect,
@@ -135,11 +136,11 @@ pub fn render(
     if hint_area.height > 0 {
         let hint = Line::from(vec![
             Span::styled("Tab", Style::default().fg(Color::Cyan)),
-            Span::styled(": select  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(": select  ", Style::default().fg(MUTED)),
             Span::styled("Enter", Style::default().fg(Color::Cyan)),
-            Span::styled(": confirm  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(": confirm  ", Style::default().fg(MUTED)),
             Span::styled("Esc", Style::default().fg(Color::Cyan)),
-            Span::styled(": deny", Style::default().fg(Color::DarkGray)),
+            Span::styled(": deny", Style::default().fg(MUTED)),
         ]);
         frame.render_widget(Paragraph::new(hint), hint_area);
     }
@@ -162,7 +163,7 @@ fn build_button_line(selected: PermissionChoice, accent: Color) -> Line<'static>
             vec![
                 Span::styled(
                     format!("  {label}  "),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(MUTED),
                 ),
             ]
         }

@@ -49,7 +49,7 @@ use self::status::{ToolInfo, TuiStatusState};
 
 /// Subdued text color for hints, separators, status indicators, and input text.
 /// Uses a true-color gray that is readable on both dark and light backgrounds,
-/// unlike `MUTED` (ANSI 8) which maps to bright on many terminals.
+/// unlike `Color::DarkGray` (ANSI 8) which maps to bright on many terminals.
 const MUTED: Color = Color::Rgb(140, 140, 140);
 
 // -- App State ----------------------------------------------------------------

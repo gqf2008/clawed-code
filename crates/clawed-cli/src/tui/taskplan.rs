@@ -11,6 +11,7 @@
 //!   □ Cron: corruption handling
 //! ```
 
+use super::MUTED;
 use std::time::Instant;
 
 use ratatui::{
@@ -124,11 +125,11 @@ pub fn render(frame: &mut Frame, area: Rect, plan: &TaskPlan) {
         return;
     }
 
-    let dim = Style::default().fg(Color::DarkGray);
+    let dim = Style::default().fg(MUTED);
     let accent = Style::default().fg(Color::Magenta);
     let done_style = Style::default().fg(Color::Green);
     let fail_style = Style::default().fg(Color::Red);
-    let open_style = Style::default().fg(Color::DarkGray);
+    let open_style = Style::default().fg(MUTED);
     let title_style = Style::default().fg(Color::White);
     let bold_white = Style::default()
         .fg(Color::White)

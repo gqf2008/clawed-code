@@ -1,5 +1,6 @@
 //! Dynamic status line for the TUI (ratatui version).
 
+use super::MUTED;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -59,7 +60,7 @@ pub fn render(
     total_input_tokens: u64,
     total_output_tokens: u64,
 ) {
-    let dim = Style::default().fg(Color::DarkGray);
+    let dim = Style::default().fg(MUTED);
     let warn = Style::default().fg(Color::Yellow);
     let tool_style = Style::default().fg(Color::Blue);
 
