@@ -37,7 +37,7 @@ pub const SLASH_COMMANDS: &[&str] = &[
 ];
 
 /// Short description for each slash command (displayed in completion list).
-fn command_description(name: &str) -> &'static str {
+pub(crate) fn command_description(name: &str) -> &'static str {
     match name {
         "/help" => "Show help",
         "/clear" => "Clear conversation history",

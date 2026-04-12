@@ -408,7 +408,7 @@ pub(super) fn categorize_error(msg: &str) -> (&'static str, Option<&'static str>
 // ── Input dock helpers ─────────────────────────────────────────────────────
 
 /// Write a byte string to stdout in a single syscall (atomic w.r.t. other threads).
-fn stdout_write(seq: &str) {
+pub(crate) fn stdout_write(seq: &str) {
     use std::io::Write as _;
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
@@ -420,7 +420,7 @@ fn stdout_write(seq: &str) {
 ///
 /// Uses DEC save/restore cursor (`\x1b7`/`\x1b8`) so the streaming output
 /// cursor position is not disturbed.
-fn redraw_input_dock(term_h: u16, buffer: &str) {
+pub(crate) fn redraw_input_dock(term_h: u16, buffer: &str) {
     let sep_row = term_h - 1; // 1-indexed ANSI
     let input_row = term_h;
     let w = crossterm::terminal::size()
@@ -440,7 +440,7 @@ fn redraw_input_dock(term_h: u16, buffer: &str) {
 /// - Rows `1..(term_h-2)` scroll normally (streaming output zone).
 /// - Row `term_h-1` is a fixed separator line (`────…`).
 /// - Row `term_h` is the fixed input prompt line.
-fn setup_split(term_h: u16) {
+pub(crate) fn setup_split(term_h: u16) {
     let scroll_bottom = term_h - 2; // last row of the scroll region (1-indexed)
     let sep_row = term_h - 1;
     let input_row = term_h;
@@ -456,12 +456,21 @@ fn setup_split(term_h: u16) {
 }
 
 /// Tear down the scroll region and erase the dock rows.
-fn teardown_split(term_h: u16) {
+pub(crate) fn teardown_split(term_h: u16) {
     let sep_row = term_h - 1;
     let input_row = term_h;
     // Clear dock rows, then reset scroll region to the full terminal.
     let seq =
         format!("\x1b[{sep_row};1H\x1b[2K\x1b[{input_row};1H\x1b[2K\x1b[r\x1b[{sep_row};1H");
+    stdout_write(&seq);
+}
+
+/// Atomically draw content at an absolute row without disturbing the output cursor.
+///
+/// Uses DEC save/restore (`\x1b7`/`\x1b8`) so streaming output is not affected.
+#[allow(dead_code)]
+pub(crate) fn draw_at_row(row: u16, content: &str) {
+    let seq = format!("\x1b7\x1b[{row};1H\x1b[2K{content}\x1b8");
     stdout_write(&seq);
 }
 

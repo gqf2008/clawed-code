@@ -11,6 +11,7 @@ mod diff_display;
 mod session;
 pub mod theme;
 mod ui;
+mod tui;
 
 use std::sync::Arc;
 
@@ -182,6 +183,11 @@ struct Cli {
     /// 0 means no timeout (default)
     #[arg(long, default_value = "0")]
     timeout: u64,
+
+    /// Enable full-screen TUI mode with partitioned layout.
+    /// Provides a live status bar, scrollable output zone, and persistent input dock.
+    #[arg(long)]
+    tui: bool,
 }
 
 /// Exit codes for non-interactive mode (CI/CD friendly).
@@ -519,6 +525,9 @@ async fn run() -> anyhow::Result<()> {
         } else {
             eprintln!("No input provided. Use `claude \"prompt\"` or pipe via stdin.");
         }
+    } else if cli.tui {
+        // TUI mode: full-screen partitioned terminal UI
+        tui::run_tui(client_handle, engine, cwd).await?;
     } else {
         repl::run(engine, Some(client_handle), cwd).await?;
     }

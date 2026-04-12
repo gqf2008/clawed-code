@@ -55,6 +55,8 @@ unicode-width = "0.2"
 arboard = "3"
 png = "0.17"
 rustyline = { version = "15", features = ["with-file-history"] }
+ratatui = "0.29"
+pulldown-cmark = { version = "0.12", default-features = false, features = ["simd"] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

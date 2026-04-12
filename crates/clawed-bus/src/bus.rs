@@ -348,6 +348,21 @@ impl ClientHandle {
         self.send_request(AgentRequest::Shutdown)
     }
 
+    /// Try to receive the next notification without blocking.
+    ///
+    /// Returns `Ok(Some(event))` if a message is available,
+    /// `Ok(None)` if no messages are pending,
+    /// or `Err(())` if the receiver fell behind (messages were skipped).
+    pub fn try_recv_notification(
+        &mut self,
+    ) -> Result<Option<AgentNotification>, ()> {
+        match self.notify_rx.try_recv() {
+            Ok(event) => Ok(Some(event)),
+            Err(broadcast::error::TryRecvError::Lagged(_)) => Err(()),
+            Err(broadcast::error::TryRecvError::Empty | broadcast::error::TryRecvError::Closed) => Ok(None),
+        }
+    }
+
     /// Create an additional notification subscriber.
     ///
     /// Useful for spawning multiple consumers (e.g., one for display,
@@ -355,6 +370,15 @@ impl ClientHandle {
     #[must_use] 
     pub fn subscribe_notifications(&self) -> broadcast::Receiver<AgentNotification> {
         self._notify_tx.subscribe()
+    }
+
+    /// Create an additional permission-request subscriber.
+    ///
+    /// Useful for spawning a dedicated permission-handling task alongside the
+    /// main notification consumer.
+    #[must_use]
+    pub fn subscribe_permission_requests(&self) -> broadcast::Receiver<PermissionRequest> {
+        self._perm_req_tx.subscribe()
     }
 }
 
