@@ -9,7 +9,7 @@ use serde_json::Value;
 use tracing::{debug, warn};
 use crate::audit::AuditSpan;
 use crate::hooks::{HookDecision, HookEvent, HookRegistry};
-use crate::permissions::PermissionChecker;
+use crate::permissions::{PermissionChecker, PermissionPrompter, TerminalPrompter};
 
 /// Max number of tools that may run concurrently (mirrors TS default of 10).
 const MAX_TOOL_CONCURRENCY: usize = 10;
@@ -19,6 +19,9 @@ pub struct ToolExecutor {
     permission_checker: Arc<PermissionChecker>,
     hooks: Arc<HookRegistry>,
     session_id: String,
+    /// Pluggable permission prompter. Defaults to [`TerminalPrompter`] (REPL).
+    /// Replaced with a bus-based prompter when running inside the ratatui TUI.
+    prompter: std::sync::OnceLock<Arc<dyn PermissionPrompter>>,
 }
 
 impl ToolExecutor {
@@ -28,6 +31,7 @@ impl ToolExecutor {
             permission_checker,
             hooks: Arc::new(HookRegistry::new()),
             session_id: String::new(),
+            prompter: std::sync::OnceLock::new(),
         }
     }
 
@@ -36,12 +40,24 @@ impl ToolExecutor {
         permission_checker: Arc<PermissionChecker>,
         hooks: Arc<HookRegistry>,
     ) -> Self {
-        Self { registry, permission_checker, hooks, session_id: String::new() }
+        Self { registry, permission_checker, hooks, session_id: String::new(), prompter: std::sync::OnceLock::new() }
     }
 
     /// Set the session ID for audit logging.
     pub fn set_session_id(&mut self, id: impl Into<String>) {
         self.session_id = id.into();
+    }
+
+    /// Install an alternative permission prompter (e.g. bus-based for TUI mode).
+    /// Must be called before any tool execution begins.
+    pub fn set_prompter(&self, prompter: Arc<dyn PermissionPrompter>) {
+        let _ = self.prompter.set(prompter);
+    }
+
+    fn prompter(&self) -> &dyn PermissionPrompter {
+        self.prompter
+            .get()
+            .map_or(&TerminalPrompter as &dyn PermissionPrompter, |p| p.as_ref())
     }
 
     pub async fn execute(
@@ -175,17 +191,13 @@ impl ToolExecutor {
                 }
 
                 let desc = format!("{}: {}", tool_name, serde_json::to_string(&input).unwrap_or_default());
-                let tn = tool_name.to_string();
                 let suggestions = perm.suggestions.clone();
                 let perm_timeout = std::time::Duration::from_secs(300); // 5 min default
                 let response = match tokio::time::timeout(
                     perm_timeout,
-                    tokio::task::spawn_blocking(move || {
-                        PermissionChecker::prompt_user(&tn, &desc, &suggestions)
-                    }),
+                    self.prompter().ask_permission(tool_name, &desc, &suggestions),
                 ).await {
-                    Ok(Ok(r)) => r,
-                    Ok(Err(_)) => PermissionResponse::deny(), // spawn panic
+                    Ok(r) => r,
                     Err(_) => {
                         warn!("Permission prompt timed out after {}s for tool '{}'", perm_timeout.as_secs(), tool_name);
                         PermissionResponse::deny()

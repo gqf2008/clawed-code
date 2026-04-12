@@ -1,6 +1,7 @@
 //! Permission checking — rule-based + interactive TUI for tool authorization.
 
 pub mod auto_classifier;
+pub mod bus_prompter;
 pub mod helpers;
 pub mod tui;
 #[cfg(test)]
@@ -9,7 +10,7 @@ mod tests;
 use clawed_core::permissions::{
     DenialState, PermissionBehavior, PermissionDestination,
     PermissionMode, PermissionResponse, PermissionResult, PermissionRule,
-    is_safe_auto_tool,
+    PermissionSuggestion, is_safe_auto_tool,
 };
 use clawed_core::bash_classifier;
 use clawed_core::tool::{Tool, ToolCategory};
@@ -17,6 +18,47 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use helpers::{build_permission_suggestions, input_matches_pattern};
+
+// ── Pluggable permission prompting ──────────────────────────────────────────
+
+/// Trait for asking the user whether a tool invocation should be allowed.
+///
+/// The default implementation ([`TerminalPrompter`]) renders an interactive
+/// arrow-key menu directly in the terminal. The TUI replaces this with a
+/// [`BusPermissionPrompter`](crate::bus_adapter::BusPermissionPrompter) that
+/// routes the request through the event bus so the ratatui UI can handle it.
+#[async_trait::async_trait]
+pub trait PermissionPrompter: Send + Sync {
+    async fn ask_permission(
+        &self,
+        tool_name: &str,
+        description: &str,
+        suggestions: &[PermissionSuggestion],
+    ) -> PermissionResponse;
+}
+
+/// Prompts the user directly in the terminal via [`tui::prompt_user`].
+/// Suitable for REPL mode but **not** for ratatui TUI mode (would corrupt
+/// the alternate screen).
+pub struct TerminalPrompter;
+
+#[async_trait::async_trait]
+impl PermissionPrompter for TerminalPrompter {
+    async fn ask_permission(
+        &self,
+        tool_name: &str,
+        description: &str,
+        suggestions: &[PermissionSuggestion],
+    ) -> PermissionResponse {
+        let tn = tool_name.to_string();
+        let desc = description.to_string();
+        let sugg = suggestions.to_vec();
+        match tokio::task::spawn_blocking(move || tui::prompt_user(&tn, &desc, &sugg)).await {
+            Ok(r) => r,
+            Err(_) => PermissionResponse::deny(),
+        }
+    }
+}
 
 /// Checks tool permissions against configured rules, mode, and session state.
 ///

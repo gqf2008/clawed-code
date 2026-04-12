@@ -254,6 +254,13 @@ impl QueryEngine {
         &self.session_id
     }
 
+    /// Install a bus-based permission prompter so tool permission checks go
+    /// through the event bus instead of directly to the terminal. Call this
+    /// before running any queries when running in TUI or RPC mode.
+    pub fn set_permission_prompter(&self, prompter: Arc<dyn crate::permissions::PermissionPrompter>) {
+        self.executor.set_prompter(prompter);
+    }
+
     /// Run SessionStart hooks — call once at startup.
     pub async fn run_session_start(&self) -> Option<String> {
         if !self.hooks.has_hooks(HookEvent::SessionStart) {

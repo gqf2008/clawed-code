@@ -54,7 +54,7 @@ impl EventBus {
             request_rx,
             request_tx: request_tx.clone(),
             perm_req_tx: perm_req_tx.clone(),
-            perm_resp_rx,
+            perm_resp_rx: Some(perm_resp_rx),
             _perm_resp_tx: perm_resp_tx.clone(),
             core_alive_tx,
         };
@@ -85,7 +85,7 @@ pub struct BusHandle {
     request_rx: mpsc::Receiver<AgentRequest>,
     request_tx: mpsc::Sender<AgentRequest>,
     perm_req_tx: broadcast::Sender<PermissionRequest>,
-    perm_resp_rx: mpsc::Receiver<PermissionResponse>,
+    perm_resp_rx: Option<mpsc::Receiver<PermissionResponse>>,
     /// Kept alive to prevent the mpsc channel from closing.
     /// Only the primary client gets a clone (secondary clients cannot respond).
     _perm_resp_tx: mpsc::Sender<PermissionResponse>,
@@ -157,6 +157,13 @@ impl BusHandle {
         description: &str,
         timeout: std::time::Duration,
     ) -> Option<PermissionResponse> {
+        let perm_resp_rx = match self.perm_resp_rx.as_mut() {
+            Some(rx) => rx,
+            None => {
+                tracing::warn!("Permission response channel was taken; cannot request_permission via BusHandle");
+                return None;
+            }
+        };
         let request_id = Uuid::new_v4().to_string();
         let req = PermissionRequest {
             request_id: request_id.clone(),
@@ -175,7 +182,7 @@ impl BusHandle {
         // Without a timeout, non-interactive clients (Bridge, RPC without
         // permission handler) would hang forever.
         let wait = async {
-            while let Some(resp) = self.perm_resp_rx.recv().await {
+            while let Some(resp) = perm_resp_rx.recv().await {
                 if resp.request_id == request_id {
                     return Some(resp);
                 }
@@ -201,6 +208,25 @@ impl BusHandle {
     #[must_use] 
     pub fn notify_sender(&self) -> broadcast::Sender<AgentNotification> {
         self.notify_tx.clone()
+    }
+
+    /// Clone the permission request sender.
+    ///
+    /// Used by [`BusPermissionPrompter`] to broadcast permission requests to
+    /// UI clients without owning the full `BusHandle`.
+    #[must_use]
+    pub fn perm_req_sender(&self) -> broadcast::Sender<PermissionRequest> {
+        self.perm_req_tx.clone()
+    }
+
+    /// Take the permission response receiver out of this handle.
+    ///
+    /// After calling this, [`request_permission`](Self::request_permission) and
+    /// [`request_permission_with_timeout`](Self::request_permission_with_timeout)
+    /// will return `None` immediately. Use this when an external component (e.g.
+    /// [`BusPermissionPrompter`]) handles the response channel instead.
+    pub fn take_perm_resp_rx(&mut self) -> Option<mpsc::Receiver<PermissionResponse>> {
+        self.perm_resp_rx.take()
     }
 
     /// Create a new `ClientHandle` connected to this bus.

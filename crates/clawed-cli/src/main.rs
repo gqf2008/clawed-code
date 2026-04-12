@@ -391,7 +391,23 @@ async fn run() -> anyhow::Result<()> {
     let engine = Arc::new(engine);
 
     // ── Create Event Bus + AgentCoreAdapter ──────────────────────────────
-    let (bus_handle, client_handle) = clawed_bus::bus::EventBus::new(256);
+    let (mut bus_handle, client_handle) = clawed_bus::bus::EventBus::new(256);
+
+    // When running in TUI mode, route permission prompts through the event bus
+    // so the ratatui UI handles them instead of raw terminal I/O (which would
+    // corrupt the alternate screen).
+    if cli.tui {
+        let perm_req_tx = bus_handle.perm_req_sender();
+        if let Some(perm_resp_rx) = bus_handle.take_perm_resp_rx() {
+            let prompter = std::sync::Arc::new(
+                clawed_agent::permissions::bus_prompter::BusPermissionPrompter::new(
+                    perm_req_tx,
+                    perm_resp_rx,
+                ),
+            );
+            engine.set_permission_prompter(prompter);
+        }
+    }
 
     // Build MCP bus adapter from discovered configs
     let mcp_manager = clawed_mcp::registry::McpManager::new();
