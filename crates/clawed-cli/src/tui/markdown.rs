@@ -165,9 +165,13 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     }
                 }
                 TagEnd::Item => {
-                    // Tight lists (no blank lines) don't wrap in Paragraph,
-                    // so flush here to ensure each item gets its own line.
-                    flush_line(&mut lines, &mut current_spans);
+                    // Flush any remaining spans for tight-list items.
+                    // Loose-list items are already flushed by End(Paragraph);
+                    // only flush here when there are pending spans to avoid a
+                    // double blank line.
+                    if !current_spans.is_empty() {
+                        flush_line(&mut lines, &mut current_spans);
+                    }
                 }
                 TagEnd::Emphasis => {
                     state.italic = false;
@@ -319,28 +323,25 @@ fn render_code_block(lang: &str, code: &str, lines: &mut Vec<Line<'static>>) {
         for src_line in code_trimmed.split('\n') {
             let line_with_nl = format!("{src_line}\n");
             if let Ok(ranges) = highlighter.highlight_line(&line_with_nl, &res.syntax_set) {
-                let spans: Vec<Span<'static>> = ranges
-                    .into_iter()
-                    .map(|(hl_style, text)| {
-                        let fg = Color::Rgb(
-                            hl_style.foreground.r,
-                            hl_style.foreground.g,
-                            hl_style.foreground.b,
-                        );
-                        Span::styled(
-                            format!("\u{2502} {}", text.trim_end_matches('\n')),
-                            Style::default().fg(fg),
-                        )
-                    })
-                    .collect();
-                if spans.is_empty() {
-                    lines.push(Line::from(Span::styled(
-                        format!("\u{2502} {src_line}"),
-                        Style::default().fg(Color::White),
-                    )));
-                } else {
-                    lines.push(Line::from(spans));
-                }
+                // The │ prefix is a single leading span; each subsequent span
+                // is a highlighted token WITHOUT its own prefix.
+                let mut line_spans: Vec<Span<'static>> = vec![
+                    Span::styled("\u{2502} ", Style::default().fg(MUTED)),
+                ];
+                line_spans.extend(ranges.into_iter().filter_map(|(hl_style, text)| {
+                    let t = text.trim_end_matches('\n');
+                    if t.is_empty() {
+                        return None;
+                    }
+                    let fg = Color::Rgb(
+                        hl_style.foreground.r,
+                        hl_style.foreground.g,
+                        hl_style.foreground.b,
+                    );
+                    Some(Span::styled(t.to_string(), Style::default().fg(fg)))
+                }));
+                // If only the prefix span was produced (empty line), still push it.
+                lines.push(Line::from(line_spans));
             } else {
                 lines.push(Line::from(Span::styled(
                     format!("\u{2502} {src_line}"),
@@ -379,17 +380,35 @@ fn likely_markdown(text: &str) -> bool {
     } else {
         text
     };
-    sample.contains("**")
+
+    // Unambiguous inline markers (appear anywhere in text)
+    if sample.contains("**")
         || sample.contains('`')
-        || sample.contains("```")
-        || sample.contains("## ")
-        || sample.contains("# ")
-        || sample.contains("- ")
-        || sample.contains("* ")
-        || sample.contains("> ")
-        || sample.contains("1. ")
-        || sample.contains("[")
-        || sample.contains("---")
+        || sample.contains("~~")
+        || sample.contains("](")  // link [text](url) — not bare [
+    {
+        return true;
+    }
+
+    // Block-level markers that only count at the start of a line
+    sample.lines().any(|line| {
+        let t = line.trim_start();
+        t.starts_with("# ")
+            || t.starts_with("## ")
+            || t.starts_with("### ")
+            || t.starts_with("#### ")
+            || t.starts_with("- ")
+            || t.starts_with("* ")
+            || t.starts_with("+ ")
+            || t.starts_with("> ")
+            || t.starts_with("| ")
+            || t == "---"
+            || t == "***"
+            // Ordered list: one or more digits followed by ". "
+            || t.split_once(". ").is_some_and(|(pre, _)| {
+                !pre.is_empty() && pre.chars().all(char::is_numeric)
+            })
+    })
 }
 
 #[cfg(test)]
