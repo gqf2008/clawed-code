@@ -96,9 +96,16 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
             Event::Start(tag) => match tag {
                 Tag::Heading { level, .. } => {
                     state.heading_level = level as u8;
-                    let prefix = "#".repeat(level as usize);
+                    // Use a visual bar prefix scaled by heading level instead
+                    // of echoing the raw '#' characters.
+                    let prefix = match level as u8 {
+                        1 => "\u{2588} ",  // █ (full block)
+                        2 => "\u{2593} ",  // ▓
+                        3 => "\u{2592} ",  // ▒
+                        _ => "\u{2591} ",  // ░
+                    };
                     current_spans.push(Span::styled(
-                        format!("{prefix} "),
+                        prefix,
                         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
                     ));
                 }
@@ -447,9 +454,10 @@ mod tests {
     fn heading() {
         let lines = render_markdown("## Title\n\nBody text");
         assert!(!lines.is_empty());
-        // First non-empty line should be cyan/bold heading
+        // First span is the visual block prefix (no raw '#' characters)
         let heading = &lines[0];
-        assert!(heading.spans[0].content.contains('#'));
+        assert!(!heading.spans[0].content.contains('#'), "heading should not echo '#' characters");
+        assert!(heading.spans[0].style.fg == Some(Color::Cyan));
     }
 
     #[test]
