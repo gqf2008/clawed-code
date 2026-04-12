@@ -229,8 +229,7 @@ impl App {
                 self.total_turns = turn;
                 self.total_input_tokens += usage.input_tokens;
                 self.total_output_tokens += usage.output_tokens;
-                self.status.thinking = false;
-                self.is_generating = false;
+                self.mark_done();
                 self.push_message(MessageContent::TurnDivider {
                     turn,
                     input_tokens: usage.input_tokens,
@@ -1213,8 +1212,7 @@ pub async fn run_tui(
                     // even if an overlay is open (close overlay + abort together).
                     if key.code == KeyCode::Esc && app.is_generating {
                         let _ = client.abort();
-                        app.status.thinking = false;
-                        app.is_generating = false;
+                        app.mark_done();
                         app.queued_inputs.clear();
                         app.overlay = None;
                         app.push_message(MessageContent::System(
@@ -1290,8 +1288,7 @@ pub async fn run_tui(
                         (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                             if app.is_generating {
                                 let _ = client.abort();
-                                app.status.thinking = false;
-                                app.is_generating = false;
+                                app.mark_done();
                                 app.queued_inputs.clear();
                                 app.push_message(MessageContent::System(
                                     "[Aborted]".to_string(),
@@ -1304,8 +1301,7 @@ pub async fn run_tui(
                         // Esc fallback (when not generating — handled above in early check)
                         (KeyCode::Esc, _) if app.is_generating => {
                             let _ = client.abort();
-                            app.status.thinking = false;
-                            app.is_generating = false;
+                            app.mark_done();
                             app.queued_inputs.clear();
                             app.push_message(MessageContent::System(
                                 "[Aborted]".to_string(),
@@ -1406,8 +1402,7 @@ pub async fn run_tui(
                                     // Slash commands execute silently — no message history echo.
                                     if text == "/abort" {
                                         let _ = client.abort();
-                                        app.status.thinking = false;
-                                        app.is_generating = false;
+                                        app.mark_done();
                                         app.queued_inputs.clear();
                                         app.push_message(MessageContent::System(
                                             "[Aborted]".to_string(),
@@ -1445,8 +1440,7 @@ pub async fn run_tui(
                         }
                         input::InputAction::Abort => {
                             let _ = client.abort();
-                            app.status.thinking = false;
-                            app.is_generating = false;
+                            app.mark_done();
                             app.queued_inputs.clear();
                             app.push_message(MessageContent::System(
                                 "[Aborted]".to_string(),
@@ -1619,8 +1613,9 @@ async fn handle_async_command(
         }
         CommandResult::Retry => {
             if let Some(prompt) = engine.pop_last_turn().await {
-                let preview = if prompt.len() > 60 {
-                    format!("{}…", &prompt[..57])
+                let preview = if prompt.chars().count() > 60 {
+                    let truncated: String = prompt.chars().take(57).collect();
+                    format!("{truncated}…")
                 } else {
                     prompt.clone()
                 };

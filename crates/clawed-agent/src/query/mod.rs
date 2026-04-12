@@ -556,6 +556,16 @@ pub fn query_stream_with_injection(
                                 );
                             }
 
+                            // Re-estimate after pre-clean so compact_conversation
+                            // receives an accurate picture of the trimmed history.
+                            #[allow(unused_variables)]
+                            let current_tokens = if pre_trunc + pre_cleared > 0 {
+                                clawed_core::token_estimation::token_count_with_estimation(&messages)
+                                    + clawed_core::token_estimation::estimate_system_tokens(&config.system_prompt)
+                            } else {
+                                current_tokens
+                            };
+
                             let model = { state.read().await.model.clone() };
                             match compact_conversation(&client, &messages, &model, None).await {
                                 Ok(summary) => {
