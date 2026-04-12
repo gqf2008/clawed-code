@@ -17,6 +17,7 @@ mod overlay;
 mod permission;
 mod status;
 mod taskplan;
+mod textarea;
 
 pub use input::InputWidget;
 
@@ -1065,8 +1066,10 @@ pub async fn run_tui(
         }
     });
 
-    // Initialize ratatui terminal (handles raw mode + alternate screen)
-    let mut terminal = ratatui::init();
+    // Initialize terminal: raw mode + NO alternate screen (matches codex-rs).
+    // Skipping alternate screen improves Chinese IME compatibility on macOS
+    // and lets output persist after exit.
+    crossterm::terminal::enable_raw_mode()?;
 
     // Enable bracketed paste so multi-line paste arrives as Event::Paste(String)
     // instead of individual Key events (which would submit on Enter).
@@ -1083,6 +1086,11 @@ pub async fn run_tui(
                 | crossterm::event::KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
         )
     );
+
+    let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
+    let mut terminal = ratatui::Terminal::new(backend)?;
+    // Clear screen for a clean start
+    terminal.clear()?;
 
     // Detect whether the terminal actually supports keyboard enhancement (for UI hints).
     let keyboard_enhancement_enabled = crossterm::terminal::supports_keyboard_enhancement()
@@ -1377,7 +1385,7 @@ pub async fn run_tui(
     forwarder.abort();
     perm_forwarder.abort();
 
-    // Restore terminal (ratatui handles raw mode + alternate screen)
+    // Restore terminal (no alternate screen to leave)
     let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
     if keyboard_enhancement_enabled {
         let _ = crossterm::execute!(
@@ -1385,7 +1393,12 @@ pub async fn run_tui(
             crossterm::event::PopKeyboardEnhancementFlags
         );
     }
-    ratatui::restore();
+    // Show cursor, clear screen, and disable raw mode
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::cursor::Show,
+    );
+    let _ = crossterm::terminal::disable_raw_mode();
     Ok(())
 }
 
