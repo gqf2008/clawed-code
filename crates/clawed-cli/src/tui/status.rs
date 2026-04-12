@@ -24,6 +24,8 @@ pub struct TuiStatusState {
     pub session_start: Instant,
     /// Spinner frame counter, incremented on each render tick while thinking.
     pub spinner_frame: usize,
+    /// Context window usage percentage (0.0–100.0), updated from SessionStatus.
+    pub context_pct: f64,
 }
 
 impl TuiStatusState {
@@ -35,6 +37,7 @@ impl TuiStatusState {
             thinking: false,
             session_start: Instant::now(),
             spinner_frame: 0,
+            context_pct: 0.0,
         }
     }
 
@@ -113,6 +116,17 @@ pub fn render(
             format!("{total_tokens} tokens")
         };
         spans.push(Span::styled(token_text, dim));
+    }
+
+    // Context window usage
+    if state.context_pct > 0.0 {
+        spans.push(Span::raw("  "));
+        let ctx_style = if state.context_pct >= 80.0 {
+            warn
+        } else {
+            dim
+        };
+        spans.push(Span::styled(format!("{:.0}% ctx", state.context_pct), ctx_style));
     }
 
     // Model info on the right

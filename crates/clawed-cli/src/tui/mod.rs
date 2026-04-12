@@ -148,6 +148,12 @@ impl App {
                 result_preview,
                 ..
             } => {
+                let duration_ms = self
+                    .status
+                    .active_tools
+                    .get(&tool_name)
+                    .map(|t| t.started.elapsed().as_millis() as u64)
+                    .unwrap_or(0);
                 self.status.active_tools.remove(&tool_name);
                 let preview = result_preview.unwrap_or_default();
                 // Store full_result only when preview is substantial enough to warrant collapsing
@@ -161,6 +167,7 @@ impl App {
                     preview,
                     full_result,
                     is_error,
+                    duration_ms,
                 });
             }
             AgentNotification::TurnComplete { turn, usage, .. } => {
@@ -242,6 +249,7 @@ impl App {
                 context_usage_pct,
                 ..
             } => {
+                self.status.context_pct = context_usage_pct;
                 self.push_message(MessageContent::System(format!(
                     "Model: {model} | Turns: {total_turns} | Tokens: {total_input_tokens}\u{2191} {total_output_tokens}\u{2193} | Context: {context_usage_pct:.0}%",
                 )));
@@ -310,6 +318,7 @@ impl App {
                 ));
             }
             AgentNotification::ContextWarning { usage_pct, message } => {
+                self.status.context_pct = usage_pct;
                 self.push_message(MessageContent::System(format!(
                     "\u{26A0} Context {usage_pct:.0}%: {message}",
                 )));
@@ -336,16 +345,31 @@ impl App {
             // Notifications that still don't need visible output
             AgentNotification::ToolUseReady { .. }
             | AgentNotification::ToolSelected { .. }
-            | AgentNotification::AssistantMessage { .. }
-            | AgentNotification::SessionStart { .. }
-            | AgentNotification::AgentProgress { .. }
-            | AgentNotification::SwarmTeamCreated { .. }
+            | AgentNotification::AssistantMessage { .. } => {}
+            // Session start: update model display
+            AgentNotification::SessionStart { model, .. } => {
+                self.model = model;
+            }
+            // Background agent progress
+            AgentNotification::AgentProgress { agent_id, text } => {
+                self.push_message(MessageContent::System(format!(
+                    "  ↳ [{agent_id}] {text}",
+                )));
+            }
+            // Conflict warning for concurrent agents
+            AgentNotification::ConflictDetected { file_path, agents } => {
+                self.push_message(MessageContent::System(format!(
+                    "\u{26A0} Conflict on {file_path} between: {}",
+                    agents.join(", "),
+                )));
+            }
+            // Swarm events — not visible in TUI (background orchestration)
+            AgentNotification::SwarmTeamCreated { .. }
             | AgentNotification::SwarmTeamDeleted { .. }
             | AgentNotification::SwarmAgentSpawned { .. }
             | AgentNotification::SwarmAgentTerminated { .. }
             | AgentNotification::SwarmAgentQuery { .. }
-            | AgentNotification::SwarmAgentReply { .. }
-            | AgentNotification::ConflictDetected { .. } => {}
+            | AgentNotification::SwarmAgentReply { .. } => {}
         }
     }
 
@@ -611,7 +635,7 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
 
     // Collect all lines from all messages
     let all_lines: Vec<Line> = if app.messages.is_empty() {
-        render_welcome_lines(area.width)
+        render_welcome_lines(area.width, &app.model)
     } else {
         app.messages
             .iter()
@@ -798,17 +822,23 @@ fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
     frame.render_widget(list, popup_area);
 }
 
-fn render_welcome_lines(width: u16) -> Vec<Line<'static>> {
-    let model_text = "Clawed Code TUI";
+fn render_welcome_lines(width: u16, model: &str) -> Vec<Line<'static>> {
+    let title = format!("Clawed Code v{}", env!("CARGO_PKG_VERSION"));
+    let model_line = format!("Model: {model}");
     let hints = "Tab: complete  \u{2191}\u{2193}: history  Ctrl+C: abort/quit  /help: commands";
+    let tip = "Tip: Use /compact to free context  \u{2022}  Ctrl+V to paste images";
 
     let border_style = Style::default().fg(Color::Cyan);
     let text_style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+    let model_style = Style::default().fg(Color::Cyan);
     let hint_style = Style::default().fg(Color::DarkGray);
+    let tip_style = Style::default().fg(Color::DarkGray);
 
-    let inner_width = model_text
+    let inner_width = title
         .width()
+        .max(model_line.width())
         .max(hints.width())
+        .max(tip.width())
         .min((width as usize).saturating_sub(4));
     let top = format!("\u{250C}{}\u{2510}", "\u{2500}".repeat(inner_width + 2));
     let bot = format!("\u{2514}{}\u{2518}", "\u{2500}".repeat(inner_width + 2));
@@ -825,12 +855,22 @@ fn render_welcome_lines(width: u16) -> Vec<Line<'static>> {
         Line::styled(top, border_style),
         Line::from(vec![
             Span::styled("\u{2502} ", border_style),
-            Span::styled(center(model_text), text_style),
+            Span::styled(center(&title), text_style),
+            Span::styled(" \u{2502}", border_style),
+        ]),
+        Line::from(vec![
+            Span::styled("\u{2502} ", border_style),
+            Span::styled(center(&model_line), model_style),
             Span::styled(" \u{2502}", border_style),
         ]),
         Line::from(vec![
             Span::styled("\u{2502} ", border_style),
             Span::styled(center(hints), hint_style),
+            Span::styled(" \u{2502}", border_style),
+        ]),
+        Line::from(vec![
+            Span::styled("\u{2502} ", border_style),
+            Span::styled(center(tip), tip_style),
             Span::styled(" \u{2502}", border_style),
         ]),
         Line::styled(bot, border_style),
@@ -1108,6 +1148,9 @@ pub async fn run_tui(
             app.permission = Some(PendingPermission::new(req));
         }
     }
+
+    // Save session before exiting
+    let _ = client.send_request(clawed_bus::events::AgentRequest::SaveSession);
 
     // Persist history to disk
     if let Some(hist_path) = crate::input::history_file_path() {
@@ -1895,7 +1938,7 @@ mod tests {
 
     #[test]
     fn welcome_lines_are_nonempty() {
-        let lines = render_welcome_lines(80);
+        let lines = render_welcome_lines(80, "claude-sonnet-4-20250514");
         assert!(!lines.is_empty());
     }
 

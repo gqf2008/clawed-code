@@ -35,6 +35,7 @@ pub enum MessageContent {
         preview: String,
         full_result: Option<String>,
         is_error: bool,
+        duration_ms: u64,
     },
     TurnDivider {
         turn: u32,
@@ -145,16 +146,22 @@ impl Message {
                 preview,
                 full_result,
                 is_error,
+                duration_ms,
             } => {
                 let (icon, color) = if *is_error {
                     ("\u{2717} ", Color::Red)
                 } else {
                     ("\u{2713} ", Color::Green)
                 };
-                let detail = if *is_error {
-                    format!("{name} failed: {preview}")
+                let dur = if *duration_ms >= 1000 {
+                    format!("{:.1}s", *duration_ms as f64 / 1000.0)
                 } else {
-                    format!("{name} ({} bytes)", preview.len())
+                    format!("{}ms", duration_ms)
+                };
+                let detail = if *is_error {
+                    format!("{name} failed ({dur}): {preview}")
+                } else {
+                    format!("{name} ({dur}, {} bytes)", preview.len())
                 };
                 let mut lines = vec![Line::from(vec![
                     Span::styled(icon.to_string(), Style::default().fg(color)),
@@ -230,6 +237,7 @@ mod tests {
             preview: "exit 1".into(),
             full_result: None,
             is_error: true,
+            duration_ms: 120,
         });
         let lines = msg.to_lines();
         assert_eq!(lines.len(), 1);
@@ -242,6 +250,7 @@ mod tests {
             preview: "hello world".into(),
             full_result: Some("hello world\nline 2".into()),
             is_error: false,
+            duration_ms: 50,
         });
         // Default collapsed = true, should show hint
         let lines = msg.to_lines();
@@ -258,6 +267,7 @@ mod tests {
             preview: "hello".into(),
             full_result: Some("hello\nworld".into()),
             is_error: false,
+            duration_ms: 1500,
         });
         msg.toggle_collapsed();
         assert!(!msg.collapsed);
