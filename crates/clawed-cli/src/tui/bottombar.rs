@@ -7,18 +7,8 @@ use ratatui::{
     Frame,
 };
 
-/// Static hints shown when keyboard enhancement IS available.
-const HINTS_ENHANCED: &[(&str, &str)] = &[
-    ("Tab", "complete"),
-    ("Shift+↵", "newline"),
-    ("↑↓", "history"),
-    ("Ctrl+V", "paste image"),
-    ("Ctrl+O", "thinking"),
-    ("Ctrl+C", "abort/quit"),
-];
-
-/// Static hints shown when keyboard enhancement is NOT available.
-const HINTS_BASIC: &[(&str, &str)] = &[
+/// Static hints for the bottom bar.
+const HINTS: &[(&str, &str)] = &[
     ("Tab", "complete"),
     ("Ctrl+J/N", "newline"),
     ("↑↓", "history"),
@@ -27,12 +17,11 @@ const HINTS_BASIC: &[(&str, &str)] = &[
     ("Ctrl+C", "abort/quit"),
 ];
 
-pub fn render(frame: &mut Frame, area: Rect, enhanced_keys: bool) {
+pub fn render(frame: &mut Frame, area: Rect) {
     let dim = Style::default().fg(MUTED);
     let key_style = Style::default().fg(Color::Gray);
-    let hints = if enhanced_keys { HINTS_ENHANCED } else { HINTS_BASIC };
     let mut spans = Vec::new();
-    for (i, (key, desc)) in hints.iter().enumerate() {
+    for (i, (key, desc)) in HINTS.iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled(" │ ", dim));
         }

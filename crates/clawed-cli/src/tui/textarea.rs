@@ -736,7 +736,7 @@ impl TextArea {
         match gc.prev_boundary(&self.text, 0) {
             Ok(Some(b)) => b,
             Ok(None) => 0,
-            Err(_) => pos.saturating_sub(1),
+            Err(_) => self.clamp_to_char_boundary(pos.saturating_sub(1)),
         }
     }
 
@@ -748,7 +748,7 @@ impl TextArea {
         match gc.next_boundary(&self.text, 0) {
             Ok(Some(b)) => b,
             Ok(None) => self.text.len(),
-            Err(_) => pos.saturating_add(1),
+            Err(_) => self.clamp_to_char_boundary(pos.saturating_add(1)),
         }
     }
 

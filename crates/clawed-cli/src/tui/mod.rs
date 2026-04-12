@@ -73,8 +73,6 @@ struct App {
     pending_images: Vec<ImageAttachment>,
     /// Async command waiting to be executed in the event loop (needs engine access).
     pending_command: Option<crate::commands::CommandResult>,
-    /// Whether the terminal supports kitty keyboard enhancement protocol.
-    enhanced_keys: bool,
     /// Debug mode: log raw key events as system messages.
     key_debug: bool,
 }
@@ -99,7 +97,6 @@ impl App {
             model,
             pending_images: Vec::new(),
             pending_command: None,
-            enhanced_keys: false,
             key_debug: false,
         }
     }
@@ -726,7 +723,7 @@ fn render(frame: &mut Frame, app: &App) {
 
         render_input(frame, input_chunks[0], app);
         if bottom_bar_rows > 0 {
-            bottombar::render(frame, input_chunks[1], app.enhanced_keys);
+            bottombar::render(frame, input_chunks[1]);
         }
 
         // Completion popup (rendered last so it draws on top)
@@ -1097,29 +1094,8 @@ pub async fn run_tui(
     // Clear screen for a clean start
     terminal.clear()?;
 
-    // Detect keyboard enhancement support in background to avoid blocking UI.
-    // `supports_keyboard_enhancement()` has a 2s timeout that stalls startup
-    // on terminals without kitty protocol support (e.g. macOS Terminal.app).
-    let (kb_tx, mut kb_rx) = mpsc::channel::<bool>(1);
-    std::thread::spawn(move || {
-        let supported = crossterm::terminal::supports_keyboard_enhancement()
-            .unwrap_or(false);
-        let _ = kb_tx.blocking_send(supported);
-    });
-
     // Main event loop
     while app.running {
-        // Check if keyboard enhancement detection completed (non-blocking)
-        if let Ok(supported) = kb_rx.try_recv() {
-            app.enhanced_keys = supported;
-            if !supported {
-                app.push_message(MessageContent::System(
-                    "Tip: Your terminal doesn't support enhanced keyboard protocol. \
-                     Use Ctrl+J to insert newlines (Shift+Enter unavailable)."
-                        .to_string(),
-                ));
-            }
-        }
         // Advance spinner when thinking
         if app.status.thinking || !app.status.active_tools.is_empty() {
             app.status.spinner_frame = app.status.spinner_frame.wrapping_add(1);
@@ -1398,14 +1374,14 @@ pub async fn run_tui(
     forwarder.abort();
     perm_forwarder.abort();
 
-    // Restore terminal (no alternate screen to leave)
+    // Restore terminal (no alternate screen to leave).
+    // Always pop keyboard enhancement flags — the push is unconditional, and
+    // popping on terminals that ignored the push is harmless.
     let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
-    if app.enhanced_keys {
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            crossterm::event::PopKeyboardEnhancementFlags
-        );
-    }
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::PopKeyboardEnhancementFlags
+    );
     // Show cursor, clear screen, and disable raw mode
     let _ = crossterm::execute!(
         std::io::stdout(),
