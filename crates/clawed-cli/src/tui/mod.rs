@@ -615,9 +615,7 @@ fn render(frame: &mut Frame, app: &App) {
     } else {
         u16::from(!app.bottom_bar_hidden)
     };
-    let status_rows = u16::from(
-        app.status.should_show() || app.total_input_tokens + app.total_output_tokens > 0,
-    );
+    let status_rows = u16::from(app.status.should_show());
 
     // When permission is active, the input row + hint bar are replaced by
     // a 3-row permission prompt (description + buttons + hints).
