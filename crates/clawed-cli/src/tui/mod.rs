@@ -937,7 +937,7 @@ fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
     );
 
     // Build lines — borderless, with left "│" margin, matching original style
-    let bar_style = Style::default().fg(MUTED);
+    let bar_style = Style::default();
     let items: Vec<ListItem> = matches
         .iter()
         .enumerate()
@@ -947,14 +947,14 @@ fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
             let desc = command_description(cmd);
             let is_selected = i == selected;
             let cmd_style = if is_selected {
-                Style::default().fg(Color::Cyan)
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().add_modifier(Modifier::BOLD)
             };
             let desc_style = if is_selected {
                 Style::default().fg(Color::Cyan)
             } else {
-                Style::default().fg(MUTED)
+                Style::default()
             };
             let padding = " ".repeat(desc_col.saturating_sub(cmd.width()));
             ListItem::new(Line::from(vec![
@@ -1309,10 +1309,6 @@ pub async fn run_tui(
                                     && app.pending_images.is_empty()
                                 {
                                     app.queued_inputs.push(text);
-                                    let n = app.queued_inputs.len();
-                                    app.push_message(MessageContent::System(format!(
-                                        "📥 Queued ({n} pending — will send when LLM finishes)"
-                                    )));
                                     continue;
                                 }
 
