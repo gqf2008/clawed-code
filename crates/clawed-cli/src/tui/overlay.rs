@@ -215,13 +215,13 @@ fn render_selection_list(
             } else if item.is_current {
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
             } else {
-                Style::default() // terminal default — avoids ANSI color remapping issues
+                Style::default().add_modifier(Modifier::BOLD) // bold = bright regardless of palette
             };
 
             let desc_style = if is_sel {
                 Style::default().fg(Color::LightCyan).bg(Color::Blue)
             } else {
-                Style::default().add_modifier(Modifier::DIM) // relative to terminal default
+                Style::default() // normal weight — visually secondary to bold label
             };
 
             let marker_style = if is_sel {
@@ -439,7 +439,7 @@ fn style_info_line(line: &str) -> Line<'static> {
         ]);
     }
 
-    // Command line: starts with '/' — bold command name, dim description
+    // Command line: starts with '/' — bold command name, normal description
     if trimmed.starts_with('/') {
         // Split on first run of 2+ spaces to separate command from description
         if let Some(space_pos) = trimmed.find("  ") {
@@ -449,7 +449,7 @@ fn style_info_line(line: &str) -> Line<'static> {
                 Span::raw(indent),
                 Span::styled(cmd.to_string(), Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw("  "),
-                Span::styled(desc.to_string(), Style::default().add_modifier(Modifier::DIM)),
+                Span::styled(desc.to_string(), Style::default()),
             ]);
         }
         return Line::from(vec![
