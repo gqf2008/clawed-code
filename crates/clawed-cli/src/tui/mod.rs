@@ -342,10 +342,41 @@ impl App {
                     "Session saved: {session_id}",
                 )));
             }
-            // Notifications that still don't need visible output
-            AgentNotification::ToolUseReady { .. }
-            | AgentNotification::ToolSelected { .. }
-            | AgentNotification::AssistantMessage { .. } => {}
+            // Tool input ready — show a compact summary of what's being passed
+            AgentNotification::ToolUseReady { tool_name, input, .. } => {
+                let summary = match input {
+                    serde_json::Value::Object(ref m) => {
+                        m.iter()
+                            .take(3)
+                            .map(|(k, v)| {
+                                let val = match v {
+                                    serde_json::Value::String(s) => {
+                                        if s.len() > 40 {
+                                            format!("\"{}…\"", &s[..37])
+                                        } else {
+                                            format!("\"{s}\"")
+                                        }
+                                    }
+                                    other => {
+                                        let s = other.to_string();
+                                        if s.len() > 40 { format!("{}…", &s[..37]) } else { s }
+                                    }
+                                };
+                                format!("{k}={val}")
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                    _ => input.to_string(),
+                };
+                self.push_message(MessageContent::System(format!(
+                    "  ↳ {tool_name}({summary})",
+                )));
+            }
+            // Tool selected — pre-execution signal (just a brief note)
+            AgentNotification::ToolSelected { .. } => {}
+            // AssistantMessage — full text for logging, already shown via TextDelta
+            AgentNotification::AssistantMessage { .. } => {}
             // Session start: update model display
             AgentNotification::SessionStart { model, .. } => {
                 self.model = model;
@@ -363,13 +394,38 @@ impl App {
                     agents.join(", "),
                 )));
             }
-            // Swarm events — not visible in TUI (background orchestration)
-            AgentNotification::SwarmTeamCreated { .. }
-            | AgentNotification::SwarmTeamDeleted { .. }
-            | AgentNotification::SwarmAgentSpawned { .. }
-            | AgentNotification::SwarmAgentTerminated { .. }
-            | AgentNotification::SwarmAgentQuery { .. }
-            | AgentNotification::SwarmAgentReply { .. } => {}
+            // Swarm lifecycle events
+            AgentNotification::SwarmTeamCreated { team_name, agent_count } => {
+                self.push_message(MessageContent::System(format!(
+                    "\u{1F41D} Swarm team '{team_name}' created ({agent_count} agents)",
+                )));
+            }
+            AgentNotification::SwarmTeamDeleted { team_name } => {
+                self.push_message(MessageContent::System(format!(
+                    "\u{1F41D} Swarm team '{team_name}' deleted",
+                )));
+            }
+            AgentNotification::SwarmAgentSpawned { team_name, agent_id, model } => {
+                self.push_message(MessageContent::System(format!(
+                    "  ↳ [{team_name}] Agent {agent_id} spawned ({model})",
+                )));
+            }
+            AgentNotification::SwarmAgentTerminated { team_name, agent_id } => {
+                self.push_message(MessageContent::System(format!(
+                    "  ↳ [{team_name}] Agent {agent_id} terminated",
+                )));
+            }
+            AgentNotification::SwarmAgentQuery { team_name, agent_id, prompt_preview } => {
+                self.push_message(MessageContent::System(format!(
+                    "  ↳ [{team_name}/{agent_id}] ▶ {prompt_preview}",
+                )));
+            }
+            AgentNotification::SwarmAgentReply { team_name, agent_id, text_preview, is_error } => {
+                let icon = if is_error { "\u{2717}" } else { "\u{2713}" };
+                self.push_message(MessageContent::System(format!(
+                    "  ↳ [{team_name}/{agent_id}] {icon} {text_preview}",
+                )));
+            }
         }
     }
 
