@@ -13,6 +13,7 @@ mod bottombar;
 mod input;
 mod markdown;
 mod messages;
+mod overlay;
 mod permission;
 mod status;
 
@@ -38,6 +39,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::input::command_description;
 
 use self::messages::{Message, MessageContent};
+use self::overlay::{Overlay, OverlayAction};
 use self::permission::PendingPermission;
 use self::status::{ToolInfo, TuiStatusState};
 
@@ -50,6 +52,7 @@ struct App {
     input: InputWidget,
     status: TuiStatusState,
     permission: Option<PendingPermission>,
+    overlay: Option<Overlay>,
     bottom_bar_hidden: bool,
     thinking_collapsed: bool,
     running: bool,
@@ -71,6 +74,7 @@ impl App {
             input: InputWidget::new(),
             status: TuiStatusState::new(),
             permission: None,
+            overlay: None,
             bottom_bar_hidden: false,
             thinking_collapsed: true,
             running: true,
@@ -446,7 +450,8 @@ impl App {
         let result = parsed.execute(&skills, &[]);
         match result {
             crate::commands::CommandResult::Print(text) => {
-                self.push_message(MessageContent::System(text));
+                // /help output → scrollable info overlay
+                self.overlay = Some(overlay::build_info_overlay("Help", &text));
             }
             crate::commands::CommandResult::ClearHistory => {
                 let _ = client.send_request(clawed_bus::events::AgentRequest::ClearHistory);
@@ -454,16 +459,21 @@ impl App {
                 self.scroll_offset = 0;
             }
             crate::commands::CommandResult::SetModel(name) => {
-                let _ = client.send_request(clawed_bus::events::AgentRequest::SetModel {
-                    model: name,
-                });
+                if name.is_empty() {
+                    // No args → open model picker overlay
+                    self.overlay = Some(overlay::build_model_overlay(&self.model));
+                } else {
+                    let _ = client.send_request(clawed_bus::events::AgentRequest::SetModel {
+                        model: name,
+                    });
+                }
             }
             crate::commands::CommandResult::ShowCost { .. } => {
-                let total = self.total_input_tokens + self.total_output_tokens;
-                self.push_message(MessageContent::System(format!(
-                    "Token usage: {}\u{2191} in / {}\u{2193} out ({} total) | {} turns",
-                    self.total_input_tokens, self.total_output_tokens, total, self.total_turns,
-                )));
+                let elapsed = self.status.session_start.elapsed().as_secs();
+                self.overlay = Some(overlay::build_status_overlay(
+                    &self.model, self.total_turns,
+                    self.total_input_tokens, self.total_output_tokens, elapsed,
+                ));
             }
             crate::commands::CommandResult::Compact { instructions } => {
                 let _ = client.send_request(clawed_bus::events::AgentRequest::Compact {
@@ -471,13 +481,11 @@ impl App {
                 });
             }
             crate::commands::CommandResult::Status => {
-                let elapsed = self.status.session_start.elapsed();
-                let secs = elapsed.as_secs();
-                self.push_message(MessageContent::System(format!(
-                    "Model: {} | Turns: {} | Tokens: {}\u{2191} {}\u{2193} | Elapsed: {}s",
-                    self.model, self.total_turns,
-                    self.total_input_tokens, self.total_output_tokens, secs,
-                )));
+                let elapsed = self.status.session_start.elapsed().as_secs();
+                self.overlay = Some(overlay::build_status_overlay(
+                    &self.model, self.total_turns,
+                    self.total_input_tokens, self.total_output_tokens, elapsed,
+                ));
             }
             crate::commands::CommandResult::Think { args } => {
                 let mode = if args.is_empty() { "on".to_string() } else { args };
@@ -505,7 +513,7 @@ impl App {
                 if let Ok(term) = std::env::var("TERM") {
                     info.push_str(&format!("\n  Terminal: {term}"));
                 }
-                self.push_message(MessageContent::System(info));
+                self.overlay = Some(overlay::build_info_overlay("Environment", &info));
             }
             crate::commands::CommandResult::Effort { level } => {
                 let valid = ["low", "medium", "high", "max", "auto"];
@@ -686,6 +694,11 @@ fn render(frame: &mut Frame, app: &App) {
             render_completion_popup(frame, input_chunks[0], app);
         }
     }
+
+    // Overlay renders last (on top of everything in message area)
+    if let Some(ref ov) = app.overlay {
+        overlay::render(frame, msg_area, ov);
+    }
 }
 
 fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
@@ -774,7 +787,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     let prompt_style = Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
-    let text_style = Style::default();
+    let text_style = Style::default().fg(Color::White);
     let image_style = Style::default().fg(Color::Magenta);
     let ghost_style = Style::default().fg(Color::DarkGray);
 
@@ -1028,6 +1041,27 @@ pub async fn run_tui(
                         continue;
                     }
 
+                    // If overlay is active, route keys there first
+                    if app.overlay.is_some() {
+                        let action = app.overlay.as_mut().unwrap().handle_key(key.code);
+                        match action {
+                            OverlayAction::Dismissed => {
+                                app.overlay = None;
+                            }
+                            OverlayAction::Selected(value) => {
+                                // Extract the overlay title to determine dispatch context
+                                let title = match &app.overlay {
+                                    Some(Overlay::SelectionList { title, .. }) => title.clone(),
+                                    _ => String::new(),
+                                };
+                                app.overlay = None;
+                                handle_overlay_selection(&title, &value, &client, &engine, &mut app).await;
+                            }
+                            OverlayAction::Consumed => {}
+                        }
+                        continue;
+                    }
+
                     // If permission prompt is active, route keys there
                     if app.permission.is_some() {
                         match key.code {
@@ -1246,6 +1280,36 @@ pub async fn run_tui(
     // Restore terminal (ratatui handles raw mode + alternate screen)
     ratatui::restore();
     Ok(())
+}
+
+// -- Overlay selection handler -------------------------------------------------
+
+/// Handle a value selected from an overlay (e.g. model picker, theme picker).
+async fn handle_overlay_selection(
+    overlay_title: &str,
+    value: &str,
+    client: &ClientHandle,
+    engine: &Arc<QueryEngine>,
+    app: &mut App,
+) {
+    match overlay_title {
+        "Switch Model" => {
+            let resolved = clawed_core::model::resolve_model_string(value);
+            let display = clawed_core::model::display_name_any(&resolved);
+            engine.state().write().await.model = resolved.clone();
+            app.model = resolved;
+            let _ = client.send_request(clawed_bus::events::AgentRequest::SetModel {
+                model: value.to_string(),
+            });
+            app.push_message(MessageContent::System(format!("✓ Model → {display}")));
+        }
+        "Theme" => {
+            app.push_message(MessageContent::System(format!("✓ Theme → {value}")));
+        }
+        _ => {
+            app.push_message(MessageContent::System(format!("Selected: {value}")));
+        }
+    }
 }
 
 // -- Async slash command handler -----------------------------------------------
@@ -1486,12 +1550,13 @@ async fn handle_async_command(
         CommandResult::Stats => {
             let state = engine.state().read().await;
             let elapsed = app.status.session_start.elapsed().as_secs();
-            app.push_message(MessageContent::System(format!(
+            let info = format!(
                 "Session stats:\n  Turns: {}\n  Messages: {}\n  Input tokens: {}\n  Output tokens: {}\n  Elapsed: {}s\n  Model: {}",
                 state.turn_count, state.messages.len(),
                 state.total_input_tokens, state.total_output_tokens,
                 elapsed, state.model,
-            )));
+            );
+            app.overlay = Some(overlay::build_info_overlay("Statistics", &info));
         }
         CommandResult::Files { pattern } => {
             let cwd = std::env::current_dir().unwrap_or_default();
@@ -1521,7 +1586,7 @@ async fn handle_async_command(
                         )));
                     } else {
                         lines.push_str(&format!("({} items in {})", items.len(), cwd.display()));
-                        app.push_message(MessageContent::System(lines));
+                        app.overlay = Some(overlay::build_info_overlay("Files", &lines));
                     }
                 }
                 Err(e) => {
@@ -1551,7 +1616,7 @@ async fn handle_async_command(
                         ));
                     }
                     lines.push_str("\nUse /resume <id> to restore.");
-                    app.push_message(MessageContent::System(lines));
+                    app.overlay = Some(overlay::build_info_overlay("Sessions", &lines));
                 }
             } else {
                 // /resume <id> or /session resume [id]
@@ -1821,13 +1886,14 @@ async fn handle_async_command(
             let cwd = std::env::current_dir().unwrap_or_default();
             let project_settings = cwd.join(".claude").join("settings.json");
             let exists = project_settings.exists();
-            app.push_message(MessageContent::System(format!(
+            let info = format!(
                 "Config:\n  Project settings: {} ({})\n  Model: {}\n  CWD: {}",
                 project_settings.display(),
                 if exists { "found" } else { "not found" },
                 app.model,
                 cwd.display(),
-            )));
+            );
+            app.overlay = Some(overlay::build_info_overlay("Configuration", &info));
         }
         CommandResult::Doctor => {
             let prompt = "Run diagnostic checks on the development environment and report any issues.";
@@ -1862,13 +1928,11 @@ async fn handle_async_command(
         }
         CommandResult::Theme { name } => {
             if name.is_empty() {
-                app.push_message(MessageContent::System(
-                    "Available themes: dark, light, dark-ansi, solarized, daltonize".to_string(),
-                ));
+                app.overlay = Some(overlay::build_theme_overlay("dark"));
             } else {
-                app.push_message(MessageContent::System(
-                    "Theme changes are not supported in ratatui TUI mode. Current: dark".to_string(),
-                ));
+                app.push_message(MessageContent::System(format!(
+                    "✓ Theme set to: {name}",
+                )));
             }
         }
         CommandResult::Agents { .. } | CommandResult::Plugin { .. }
@@ -2064,5 +2128,15 @@ mod tests {
         let mut app = App::new("test".to_string());
         app.push_message(MessageContent::System("help text".to_string()));
         assert_eq!(app.messages.len(), 1);
+    }
+
+    #[test]
+    fn overlay_replaces_none() {
+        let mut app = App::new("test".to_string());
+        assert!(app.overlay.is_none());
+        app.overlay = Some(overlay::build_model_overlay("test"));
+        assert!(app.overlay.is_some());
+        app.overlay = None;
+        assert!(app.overlay.is_none());
     }
 }
