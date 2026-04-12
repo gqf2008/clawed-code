@@ -51,7 +51,9 @@ impl ToolExecutor {
     /// Install an alternative permission prompter (e.g. bus-based for TUI mode).
     /// Must be called before any tool execution begins.
     pub fn set_prompter(&self, prompter: Arc<dyn PermissionPrompter>) {
-        let _ = self.prompter.set(prompter);
+        if self.prompter.set(prompter).is_err() {
+            warn!("set_prompter called more than once; ignoring");
+        }
     }
 
     fn prompter(&self) -> &dyn PermissionPrompter {

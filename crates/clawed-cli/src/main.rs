@@ -406,6 +406,11 @@ async fn run() -> anyhow::Result<()> {
                 ),
             );
             engine.set_permission_prompter(prompter);
+        } else {
+            tracing::error!(
+                "Failed to obtain permission response channel; \
+                 TUI permission prompts will fall back to raw terminal I/O"
+            );
         }
     }
 

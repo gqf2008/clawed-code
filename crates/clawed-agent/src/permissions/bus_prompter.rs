@@ -53,16 +53,21 @@ impl PermissionPrompter for BusPermissionPrompter {
             description: description.to_string(),
         };
 
-        // Broadcast to all UI clients
-        if self.req_tx.send(req).is_err() {
-            tracing::warn!("No UI client listening for permission requests; auto-denying");
-            return PermissionResponse::deny();
-        }
-
-        // Wait for matching response (5 min timeout)
+        // Hold the lock for the entire send+receive cycle so concurrent
+        // permission requests are serialized. The TUI can only display one
+        // permission dialog at a time; if we broadcast multiple requests
+        // before the first is answered, later ones overwrite `app.permission`
+        // and earlier callers never get a response.
         let timeout = std::time::Duration::from_secs(300);
         let wait = async {
             let mut rx = self.resp_rx.lock().await;
+
+            // Broadcast to all UI clients (inside lock to prevent interleaving)
+            if self.req_tx.send(req).is_err() {
+                tracing::warn!("No UI client listening for permission requests; auto-denying");
+                return None;
+            }
+
             while let Some(resp) = rx.recv().await {
                 if resp.request_id == request_id {
                     return Some(resp);
