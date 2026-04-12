@@ -163,9 +163,11 @@ impl InputWidget {
                 InputAction::Changed
             }
 
-            // Ctrl+J (0x0A) — newline in raw mode (crossterm decodes as Char('j')+CONTROL).
+            // Ctrl+J (0x0A) or Ctrl+M (0x0D) — newline in raw mode.
+            // Crossterm decodes Ctrl+J as Char('j')+CONTROL; Ctrl+M may arrive as
+            // Char('m')+CONTROL with keyboard enhancement enabled.
             // Also handle Ctrl+N as an extra fallback.
-            KeyCode::Char('j' | 'n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('j' | 'm' | 'n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.completion = None;
                 self.insert_newline();
                 InputAction::Changed

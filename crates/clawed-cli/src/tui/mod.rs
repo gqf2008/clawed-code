@@ -1072,24 +1072,21 @@ pub async fn run_tui(
     // instead of individual Key events (which would submit on Enter).
     crossterm::execute!(std::io::stdout(), EnableBracketedPaste)?;
 
-    // Detect keyboard enhancement support (kitty protocol) BEFORE pushing flags.
-    // Without this, Shift+Enter is indistinguishable from plain Enter.
-    let enhanced_keys = crossterm::terminal::supports_keyboard_enhancement()
-        .unwrap_or(false);
-
-    let keyboard_enhancement_enabled = if enhanced_keys {
-        crossterm::execute!(
-            std::io::stdout(),
-            crossterm::event::PushKeyboardEnhancementFlags(
-                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                    | crossterm::event::KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-                    | crossterm::event::KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
-            )
+    // Always push keyboard enhancement flags so modifiers for keys like Enter
+    // are disambiguated (matching codex-rs behavior). Terminals that don't support
+    // the kitty protocol simply ignore the escape sequence.
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::PushKeyboardEnhancementFlags(
+            crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | crossterm::event::KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                | crossterm::event::KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
         )
-        .is_ok()
-    } else {
-        false
-    };
+    );
+
+    // Detect whether the terminal actually supports keyboard enhancement (for UI hints).
+    let keyboard_enhancement_enabled = crossterm::terminal::supports_keyboard_enhancement()
+        .unwrap_or(false);
     app.enhanced_keys = keyboard_enhancement_enabled;
 
     if !keyboard_enhancement_enabled {
