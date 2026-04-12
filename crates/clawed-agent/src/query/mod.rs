@@ -534,6 +534,28 @@ pub fn query_stream_with_injection(
                         };
                         if should_compact {
                             yield AgentEvent::CompactStart;
+
+                            // ── Pre-clean: trim history before sending to Claude ──────────
+                            // This reduces the payload size and prevents the compaction API
+                            // call itself from hitting context limits on very large histories.
+                            let pre_trunc = crate::compact::truncate_large_tool_results(
+                                &mut messages,
+                                crate::compact::MAX_TOOL_RESULT_CHARS / 2,
+                            );
+                            // If context is very full (>90%), also clear stale results.
+                            let high_water = (config.context_window as f64 * 0.90) as u64;
+                            let pre_cleared = if current_tokens >= high_water {
+                                crate::compact::clear_old_tool_results(&mut messages, 3)
+                            } else {
+                                0
+                            };
+                            if pre_trunc + pre_cleared > 0 {
+                                info!(
+                                    "Pre-compact trim: {} tool result(s) truncated, {} cleared",
+                                    pre_trunc, pre_cleared
+                                );
+                            }
+
                             let model = { state.read().await.model.clone() };
                             match compact_conversation(&client, &messages, &model, None).await {
                                 Ok(summary) => {
@@ -561,8 +583,26 @@ pub fn query_stream_with_injection(
                                 Err(e) => {
                                     ac_state.lock().await.record_failure();
                                     warn!("Proactive auto-compact failed: {}", e);
+                                    // ── Emergency micro-compact fallback ──────────────────────
+                                    // Summarization failed (network error, model error, etc.).
+                                    // Aggressively trim the history to prevent unbounded growth
+                                    // while the circuit breaker tracks consecutive failures.
+                                    let emg_snipped = crate::compact::snip_old_messages(&mut messages, 8);
+                                    let emg_trunc = crate::compact::truncate_large_tool_results(
+                                        &mut messages,
+                                        crate::compact::MAX_TOOL_RESULT_CHARS / 4,
+                                    );
+                                    {
+                                        let mut s = state.write().await;
+                                        s.messages = messages.clone();
+                                    }
+                                    warn!(
+                                        "Emergency micro-compact: snipped {} msg(s), truncated {} result(s)",
+                                        emg_snipped, emg_trunc
+                                    );
                                     yield AgentEvent::TextDelta(format!(
-                                        "\n\x1b[33m[Auto-compact failed: {} — continuing…]\x1b[0m\n", e
+                                        "\n\x1b[33m[Auto-compact failed: {} — emergency trim applied]\x1b[0m\n",
+                                        e
                                     ));
                                 }
                             }
