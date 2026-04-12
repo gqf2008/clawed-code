@@ -105,21 +105,21 @@ impl Message {
 
     fn render_lines(&self) -> Vec<Line<'static>> {
         match &self.content {
-            MessageContent::UserInput(text) => vec![
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled(
-                        "> ".to_string(),
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        text.clone(),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                ]),
-            ],
+            MessageContent::UserInput(text) => {
+                let prefix_style = Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD);
+                let text_style = Style::default().add_modifier(Modifier::BOLD);
+                let mut lines = vec![Line::from("")];
+                for (i, part) in text.split('\n').enumerate() {
+                    let prefix = if i == 0 { "> " } else { "  " };
+                    lines.push(Line::from(vec![
+                        Span::styled(prefix.to_string(), prefix_style),
+                        Span::styled(part.to_string(), text_style),
+                    ]));
+                }
+                lines
+            }
             MessageContent::AssistantText(text) => {
                 if text.is_empty() {
                     return vec![];

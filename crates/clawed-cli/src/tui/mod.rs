@@ -815,7 +815,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     let prompt_style = Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
-    let text_style = Style::default().fg(Color::Gray);
+    let text_style = Style::default().fg(Color::DarkGray);
     let image_style = Style::default().fg(Color::Magenta);
     let ghost_style = Style::default().fg(Color::DarkGray);
     let indicator_style = Style::default().fg(Color::DarkGray);
