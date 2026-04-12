@@ -794,10 +794,12 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
         .add_modifier(Modifier::BOLD);
     let image_style = Style::default().fg(Color::Magenta);
     let ghost_style = Style::default().fg(Color::DarkGray);
+    let indicator_style = Style::default().fg(Color::DarkGray);
 
     let display_lines = app.input.display_lines();
     let img_count = app.pending_images.len();
     let is_empty = app.input.buffer().is_empty();
+    let (has_above, has_below) = app.input.scroll_indicators();
 
     let lines: Vec<Line> = display_lines
         .iter()
@@ -827,6 +829,23 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
         .collect();
 
     frame.render_widget(Paragraph::new(lines), area);
+
+    // Render scroll indicators on the right edge
+    if area.width > 3 {
+        let x = area.x + area.width - 1;
+        if has_above {
+            frame.render_widget(
+                Paragraph::new(Span::styled("▲", indicator_style)),
+                Rect::new(x, area.y, 1, 1),
+            );
+        }
+        if has_below && area.height > 1 {
+            frame.render_widget(
+                Paragraph::new(Span::styled("▼", indicator_style)),
+                Rect::new(x, area.y + area.height - 1, 1, 1),
+            );
+        }
+    }
 
     // Position cursor
     let (cursor_row, cursor_col) = app.input.cursor_position();

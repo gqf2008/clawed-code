@@ -27,6 +27,7 @@ struct CompletionState {
 pub struct InputWidget {
     buffer: String,
     cursor: usize, // char index into the flat buffer
+    scroll_offset: usize, // first visible line index (viewport top)
     history: Vec<String>,
     history_idx: usize,
     history_saved: Option<String>, // Buffer snapshot when navigating history
@@ -51,6 +52,7 @@ impl InputWidget {
         Self {
             buffer: String::new(),
             cursor: 0,
+            scroll_offset: 0,
             history: Vec::new(),
             history_idx: 0,
             history_saved: None,
@@ -112,7 +114,7 @@ impl InputWidget {
         self.line_count().clamp(1, MAX_INPUT_ROWS) as u16
     }
 
-    /// Cursor row and column for rendering (0-indexed).
+    /// Cursor row and column for rendering (0-indexed, viewport-relative).
     pub fn cursor_position(&self) -> (usize, usize) {
         if self.completion.is_some() {
             let text = self.display_text();
@@ -122,7 +124,8 @@ impl InputWidget {
         let byte = char_to_byte(&self.buffer, self.cursor);
         let line_start_byte = char_to_byte(&self.buffer, self.cursor - col_char.min(self.cursor));
         let col_width = self.buffer[line_start_byte..byte].width();
-        (row, col_width)
+        // Return viewport-relative row
+        (row.saturating_sub(self.scroll_offset), col_width)
     }
 
     // -- Key handling ----------------------------------------------------------
@@ -136,7 +139,7 @@ impl InputWidget {
             return InputAction::None;
         }
 
-        match key.code {
+        let action = match key.code {
             // Submit (Enter without Shift) or accept completion
             KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
                 if let Some(ref comp) = self.completion {
@@ -145,23 +148,22 @@ impl InputWidget {
                     self.buffer = SLASH_COMMANDS[idx].to_string();
                     self.cursor = self.buffer.chars().count();
                     self.completion = None;
-                    return InputAction::Changed;
-                }
-                self.completion = None;
-                InputAction::Submit
-            }
-
-            // Shift+Enter: insert newline (multi-line mode)
-            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                if self.line_count() < MAX_INPUT_ROWS {
-                    self.completion = None;
-                    let byte = char_to_byte(&self.buffer, self.cursor);
-                    self.buffer.insert(byte, '\n');
-                    self.cursor += 1;
+                    self.scroll_offset = 0;
                     InputAction::Changed
                 } else {
-                    InputAction::None
+                    self.completion = None;
+                    InputAction::Submit
                 }
+            }
+
+            // Shift+Enter: insert newline (multi-line mode, unlimited lines)
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.completion = None;
+                let byte = char_to_byte(&self.buffer, self.cursor);
+                self.buffer.insert(byte, '\n');
+                self.cursor += 1;
+                self.ensure_cursor_visible();
+                InputAction::Changed
             }
 
             // Abort (Ctrl+C)
@@ -218,18 +220,19 @@ impl InputWidget {
                     if comp.selected + 1 < comp.matches.len() {
                         comp.selected += 1;
                     }
-                    return InputAction::Changed;
-                }
-                // Multi-line: if not on the last line, move cursor down
-                let (row, col) = self.cursor_line_col();
-                let spans = self.line_spans();
-                if row + 1 < spans.len() {
-                    let (next_text, next_start) = spans[row + 1];
-                    let next_len = next_text.chars().count();
-                    self.cursor = next_start + col.min(next_len);
                     InputAction::Changed
                 } else {
-                    self.handle_history_down()
+                    // Multi-line: if not on the last line, move cursor down
+                    let (row, col) = self.cursor_line_col();
+                    let spans = self.line_spans();
+                    if row + 1 < spans.len() {
+                        let (next_text, next_start) = spans[row + 1];
+                        let next_len = next_text.chars().count();
+                        self.cursor = next_start + col.min(next_len);
+                        InputAction::Changed
+                    } else {
+                        self.handle_history_down()
+                    }
                 }
             }
 
@@ -238,18 +241,19 @@ impl InputWidget {
                     if comp.selected > 0 {
                         comp.selected -= 1;
                     }
-                    return InputAction::Changed;
-                }
-                // Multi-line: if not on the first line, move cursor up
-                let (row, col) = self.cursor_line_col();
-                if row > 0 {
-                    let spans = self.line_spans();
-                    let (prev_text, prev_start) = spans[row - 1];
-                    let prev_len = prev_text.chars().count();
-                    self.cursor = prev_start + col.min(prev_len);
                     InputAction::Changed
                 } else {
-                    self.handle_history_up()
+                    // Multi-line: if not on the first line, move cursor up
+                    let (row, col) = self.cursor_line_col();
+                    if row > 0 {
+                        let spans = self.line_spans();
+                        let (prev_text, prev_start) = spans[row - 1];
+                        let prev_len = prev_text.chars().count();
+                        self.cursor = prev_start + col.min(prev_len);
+                        InputAction::Changed
+                    } else {
+                        self.handle_history_up()
+                    }
                 }
             }
 
@@ -346,6 +350,7 @@ impl InputWidget {
                 self.completion = None;
                 self.buffer.clear();
                 self.cursor = 0;
+                self.scroll_offset = 0;
                 InputAction::Changed
             }
 
@@ -367,7 +372,11 @@ impl InputWidget {
             }
 
             _ => InputAction::None,
+        };
+        if matches!(action, InputAction::Changed) {
+            self.ensure_cursor_visible();
         }
+        action
     }
 
     /// Get info about the line the cursor is on: (line_text, row, start_char).
@@ -444,15 +453,11 @@ impl InputWidget {
     }
 
     /// Insert a block of text at the cursor position (e.g. from a paste event).
-    /// Newlines in the text create additional lines, capped at `MAX_INPUT_ROWS`.
+    /// Newlines in the text create additional lines (no cap — viewport scrolls).
     pub fn insert_text(&mut self, text: &str) {
         self.completion = None;
         for ch in text.chars() {
             if ch == '\n' || ch == '\r' {
-                // Don't exceed the max line count
-                if self.line_count() >= MAX_INPUT_ROWS {
-                    continue;
-                }
                 let byte = char_to_byte(&self.buffer, self.cursor);
                 self.buffer.insert(byte, '\n');
             } else {
@@ -461,6 +466,7 @@ impl InputWidget {
             }
             self.cursor += 1;
         }
+        self.ensure_cursor_visible();
     }
 
     /// Take the current buffer text for submission.
@@ -471,6 +477,7 @@ impl InputWidget {
         }
         self.buffer.clear();
         self.cursor = 0;
+        self.scroll_offset = 0;
         self.history_saved = None;
         self.completion = None;
         text
@@ -532,12 +539,32 @@ impl InputWidget {
         self.cursor_position().1
     }
 
-    /// Get display lines for multi-line rendering.
+    /// Get display lines for multi-line rendering (viewport-windowed).
     pub fn display_lines(&self) -> Vec<&str> {
         if self.completion.is_some() {
             return vec![self.display_text()];
         }
-        self.buffer.split('\n').collect()
+        let all_lines: Vec<&str> = self.buffer.split('\n').collect();
+        let end = (self.scroll_offset + MAX_INPUT_ROWS).min(all_lines.len());
+        all_lines[self.scroll_offset..end].to_vec()
+    }
+
+    /// Returns (has_lines_above, has_lines_below) for scroll indicators.
+    pub fn scroll_indicators(&self) -> (bool, bool) {
+        let total = self.line_count();
+        let above = self.scroll_offset > 0;
+        let below = self.scroll_offset + MAX_INPUT_ROWS < total;
+        (above, below)
+    }
+
+    /// Adjust `scroll_offset` so the cursor row stays within the visible viewport.
+    fn ensure_cursor_visible(&mut self) {
+        let (cursor_row, _) = self.cursor_line_col();
+        if cursor_row < self.scroll_offset {
+            self.scroll_offset = cursor_row;
+        } else if cursor_row >= self.scroll_offset + MAX_INPUT_ROWS {
+            self.scroll_offset = cursor_row + 1 - MAX_INPUT_ROWS;
+        }
     }
 }
 
@@ -781,17 +808,20 @@ mod tests {
     }
 
     #[test]
-    fn test_max_input_rows_limit() {
+    fn test_unlimited_lines_with_viewport_scroll() {
         let mut w = InputWidget::new();
-        // Insert MAX_INPUT_ROWS - 1 newlines (should succeed)
-        for _ in 0..MAX_INPUT_ROWS - 1 {
+        // Insert more than MAX_INPUT_ROWS lines
+        for _ in 0..MAX_INPUT_ROWS + 3 {
             w.handle_key(key(KeyCode::Char('x')));
             w.handle_key(shift_enter());
         }
-        assert_eq!(w.line_count(), MAX_INPUT_ROWS);
-        // One more should be blocked
-        assert!(matches!(w.handle_key(shift_enter()), InputAction::None));
-        assert_eq!(w.line_count(), MAX_INPUT_ROWS);
+        // Buffer has all lines (no cap)
+        assert_eq!(w.line_count(), MAX_INPUT_ROWS + 4); // +3 newlines + final empty line
+        // Visible rows capped at MAX_INPUT_ROWS
+        assert_eq!(w.visible_rows(), MAX_INPUT_ROWS as u16);
+        // Scroll indicators: cursor is at bottom, so has_above=true
+        let (above, _) = w.scroll_indicators();
+        assert!(above);
     }
 
     #[test]
@@ -845,11 +875,16 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_text_caps_at_max_rows() {
+    fn test_insert_text_unlimited_lines() {
         let mut w = InputWidget::new();
-        // MAX_INPUT_ROWS is 5, so 6+ newlines should be capped
+        // Insert 7 lines — all stored, viewport scrolls
         w.insert_text("1\n2\n3\n4\n5\n6\n7");
-        assert_eq!(w.line_count(), MAX_INPUT_ROWS);
+        assert_eq!(w.line_count(), 7);
+        // Only MAX_INPUT_ROWS visible
+        assert_eq!(w.display_lines().len(), MAX_INPUT_ROWS);
+        // Scroll indicator: lines above viewport
+        let (above, _) = w.scroll_indicators();
+        assert!(above);
     }
 
     #[test]
