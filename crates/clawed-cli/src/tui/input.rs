@@ -140,8 +140,11 @@ impl InputWidget {
         }
 
         let action = match key.code {
-            // Submit (Enter without Shift) or accept completion
-            KeyCode::Enter if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+            // Submit (Enter without Shift/Alt) or accept completion
+            KeyCode::Enter
+                if !key.modifiers.contains(KeyModifiers::SHIFT)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
                 if let Some(ref comp) = self.completion {
                     // Accept completion
                     let idx = comp.matches[comp.selected];
@@ -156,8 +159,23 @@ impl InputWidget {
                 }
             }
 
-            // Shift+Enter: insert newline (multi-line mode, unlimited lines)
-            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            // Shift+Enter or Alt+Enter: insert newline (multi-line mode, unlimited lines)
+            // Alt+Enter works on more terminals than Shift+Enter when keyboard enhancement
+            // is not available (e.g. macOS Terminal.app, basic SSH sessions).
+            KeyCode::Enter
+                if key.modifiers.contains(KeyModifiers::SHIFT)
+                    || key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.completion = None;
+                let byte = char_to_byte(&self.buffer, self.cursor);
+                self.buffer.insert(byte, '\n');
+                self.cursor += 1;
+                self.ensure_cursor_visible();
+                InputAction::Changed
+            }
+
+            // Ctrl+J: alternative newline key (works universally in raw mode)
+            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.completion = None;
                 let byte = char_to_byte(&self.buffer, self.cursor);
                 self.buffer.insert(byte, '\n');

@@ -8,8 +8,8 @@ use ratatui::{
 
 const HINTS: &[(&str, &str)] = &[
     ("Tab", "complete"),
-    ("Shift+\u{21B5}", "newline"),
-    ("\u{2191}\u{2193}", "history"),
+    ("Alt+↵/Ctrl+J", "newline"),
+    ("↑↓", "history"),
     ("Ctrl+V", "paste image"),
     ("Ctrl+O", "thinking"),
     ("Ctrl+C", "abort/quit"),

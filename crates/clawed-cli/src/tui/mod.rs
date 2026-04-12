@@ -816,7 +816,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
     let text_style = Style::default()
-        .fg(Color::Rgb(255, 255, 255))
+        .fg(Color::Indexed(15))
         .add_modifier(Modifier::BOLD);
     let image_style = Style::default().fg(Color::Magenta);
     let ghost_style = Style::default().fg(Color::DarkGray);
@@ -1075,6 +1075,17 @@ pub async fn run_tui(
     // Enable bracketed paste so multi-line paste arrives as Event::Paste(String)
     // instead of individual Key events (which would submit on Enter).
     crossterm::execute!(std::io::stdout(), EnableBracketedPaste)?;
+
+    // Enable keyboard enhancement (kitty protocol) so terminals can distinguish
+    // Shift+Enter from plain Enter. Gracefully ignored on terminals that don't support it.
+    let keyboard_enhancement_enabled = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::PushKeyboardEnhancementFlags(
+            crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | crossterm::event::KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES,
+        )
+    )
+    .is_ok();
 
     // Main event loop
     while app.running {
@@ -1337,6 +1348,12 @@ pub async fn run_tui(
 
     // Restore terminal (ratatui handles raw mode + alternate screen)
     let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
+    if keyboard_enhancement_enabled {
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::event::PopKeyboardEnhancementFlags
+        );
+    }
     ratatui::restore();
     Ok(())
 }
