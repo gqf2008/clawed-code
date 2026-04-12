@@ -33,7 +33,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Clear, List, ListItem, Paragraph, Wrap},
     Frame,
 };
 use tokio::sync::mpsc;
@@ -888,7 +888,7 @@ fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
     }
 
     let selected = app.input.completion_selected();
-    let max_items = 8.min(matches.len());
+    let max_items = 10.min(matches.len());
 
     // Calculate visible window that keeps `selected` in view
     let scroll_offset = if selected >= max_items {
@@ -897,22 +897,29 @@ fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
         0
     };
 
-    // Calculate popup dimensions
+    // Calculate popup dimensions — two-column: "│  /cmd       Description text"
     let max_cmd_width = matches.iter().map(|c| c.width()).max().unwrap_or(4);
-    let popup_width = (max_cmd_width + 30).min(input_area.width as usize);
-    let popup_height = max_items as u16 + 2; // +2 for borders
+    let desc_col = max_cmd_width + 4; // padding between cmd and desc
+    let max_desc_width = matches
+        .iter()
+        .map(|c| command_description(c).width())
+        .max()
+        .unwrap_or(20);
+    let popup_width = (desc_col + max_desc_width + 3).min(input_area.width as usize);
+    let popup_height = max_items as u16;
 
-    // Position popup above input line
+    // Position popup above input line, aligned to the left bar
     let popup_y = input_area.y.saturating_sub(popup_height);
-    let popup_x = input_area.x + 2; // Align with text after "> "
+    let popup_x = input_area.x;
     let popup_area = Rect::new(
-        popup_x.min(input_area.right().saturating_sub(popup_width as u16)),
+        popup_x,
         popup_y,
         popup_width as u16,
         popup_height,
     );
 
-    // Build list items with scrolling window
+    // Build lines — borderless, with left "│" margin, matching original style
+    let bar_style = Style::default().fg(Color::DarkGray);
     let items: Vec<ListItem> = matches
         .iter()
         .enumerate()
@@ -921,44 +928,29 @@ fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
         .map(|(i, cmd)| {
             let desc = command_description(cmd);
             let is_selected = i == selected;
-            let style = if is_selected {
-                Style::default()
-                    .fg(Color::White)
-                    .bg(Color::Blue)
-                    .add_modifier(Modifier::BOLD)
-            } else {
+            let cmd_style = if is_selected {
                 Style::default().fg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::White)
             };
             let desc_style = if is_selected {
-                Style::default().fg(Color::LightCyan).bg(Color::Blue)
+                Style::default().fg(Color::Cyan)
             } else {
                 Style::default().fg(Color::DarkGray)
             };
-            let padding = " ".repeat(max_cmd_width.saturating_sub(cmd.width()));
+            let padding = " ".repeat(desc_col.saturating_sub(cmd.width()));
             ListItem::new(Line::from(vec![
-                Span::styled((*cmd).to_string(), style),
+                Span::styled(" │ ", bar_style),
+                Span::styled(format!("  {cmd}"), cmd_style),
                 Span::raw(padding),
-                Span::styled(format!("  {desc}"), desc_style),
+                Span::styled(desc.to_string(), desc_style),
             ]))
         })
         .collect();
 
-    // Show scroll indicator in title when there are more items
-    let has_more_above = scroll_offset > 0;
-    let has_more_below = scroll_offset + max_items < matches.len();
-    let title = match (has_more_above, has_more_below) {
-        (true, true) => " ↑↓ ",
-        (true, false) => " ↑ ",
-        (false, true) => " ↓ ",
-        (false, false) => "",
-    };
+    let list = List::new(items);
 
-    let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).border_style(
-            Style::default().fg(Color::DarkGray),
-        ).title(title));
-
-    // Clear the area first, then render
+    // Clear the area first, then render (borderless)
     frame.render_widget(Clear, popup_area);
     frame.render_widget(list, popup_area);
 }
