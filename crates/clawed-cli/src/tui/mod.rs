@@ -498,16 +498,16 @@ impl App {
                 // Stored in pending_command for async handling
                 self.pending_command = Some(result);
             }
-            // Commands that submit a prompt to the agent
-            crate::commands::CommandResult::Review { prompt }
-            | crate::commands::CommandResult::Bug { prompt }
-            | crate::commands::CommandResult::Pr { prompt } => {
+            // Commands that submit a prompt to the agent or need engine access
+            crate::commands::CommandResult::Review { ref prompt }
+            | crate::commands::CommandResult::Bug { ref prompt }
+            | crate::commands::CommandResult::Pr { ref prompt } => {
                 if prompt.is_empty() {
                     self.push_message(MessageContent::System(
                         "This command requires a prompt argument.".to_string(),
                     ));
                 } else {
-                    self.pending_command = Some(crate::commands::CommandResult::Review { prompt });
+                    self.pending_command = Some(result);
                 }
             }
             crate::commands::CommandResult::Commit { .. }
