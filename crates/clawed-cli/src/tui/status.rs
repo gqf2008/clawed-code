@@ -22,6 +22,8 @@ pub struct TuiStatusState {
     pub active_agents: HashMap<String, String>,
     pub thinking: bool,
     pub session_start: Instant,
+    /// Spinner frame counter, incremented on each render tick while thinking.
+    pub spinner_frame: usize,
 }
 
 impl TuiStatusState {
@@ -32,6 +34,7 @@ impl TuiStatusState {
             active_agents: HashMap::new(),
             thinking: false,
             session_start: Instant::now(),
+            spinner_frame: 0,
         }
     }
 
@@ -64,8 +67,10 @@ pub fn render(
     let mut spans: Vec<Span> = vec![Span::styled(format!("{mins:02}:{secs:02}"), dim)];
 
     if state.thinking {
+        const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let ch = SPINNER[state.spinner_frame % SPINNER.len()];
         spans.push(Span::raw("  "));
-        spans.push(Span::styled("thinking", tool_style));
+        spans.push(Span::styled(format!("{ch} thinking"), tool_style));
     }
 
     let tool_count = state.active_tools.len();

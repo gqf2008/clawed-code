@@ -58,6 +58,8 @@ struct App {
     total_output_tokens: u64,
     model: String,
     pending_images: Vec<ImageAttachment>,
+    /// Async command waiting to be executed in the event loop (needs engine access).
+    pending_command: Option<crate::commands::CommandResult>,
 }
 
 impl App {
@@ -77,6 +79,7 @@ impl App {
             total_output_tokens: 0,
             model,
             pending_images: Vec::new(),
+            pending_command: None,
         }
     }
 
@@ -230,25 +233,112 @@ impl App {
                     format!("Model: {display_name}"),
                 ));
             }
-            // Notifications that don't produce visible output
+            // Notifications that now produce visible output
+            AgentNotification::SessionStatus {
+                model,
+                total_turns,
+                total_input_tokens,
+                total_output_tokens,
+                context_usage_pct,
+                ..
+            } => {
+                self.push_message(MessageContent::System(format!(
+                    "Model: {model} | Turns: {total_turns} | Tokens: {total_input_tokens}\u{2191} {total_output_tokens}\u{2193} | Context: {context_usage_pct:.0}%",
+                )));
+            }
+            AgentNotification::McpServerConnected { name, tool_count } => {
+                self.push_message(MessageContent::System(format!(
+                    "✓ MCP connected: {name} ({tool_count} tools)",
+                )));
+            }
+            AgentNotification::McpServerDisconnected { name } => {
+                self.push_message(MessageContent::System(format!(
+                    "MCP disconnected: {name}",
+                )));
+            }
+            AgentNotification::McpServerError { name, error } => {
+                self.push_message(MessageContent::System(format!(
+                    "✗ MCP error [{name}]: {error}",
+                )));
+            }
+            AgentNotification::McpServerList { servers } => {
+                if servers.is_empty() {
+                    self.push_message(MessageContent::System(
+                        "No MCP servers connected.".to_string(),
+                    ));
+                } else {
+                    let mut lines = String::from("MCP Servers:\n");
+                    for s in &servers {
+                        let status = if s.connected { "✓" } else { "✗" };
+                        lines.push_str(&format!(
+                            "  {status} {} ({} tools)\n", s.name, s.tool_count,
+                        ));
+                    }
+                    self.push_message(MessageContent::System(lines));
+                }
+            }
+            AgentNotification::ModelList { models } => {
+                let mut lines = String::from("Available models:\n");
+                for m in &models {
+                    lines.push_str(&format!("  {} ({})\n", m.display_name, m.id));
+                }
+                self.push_message(MessageContent::System(lines));
+            }
+            AgentNotification::ToolList { tools } => {
+                let enabled: Vec<_> = tools.iter().filter(|t| t.enabled).collect();
+                let mut lines = format!("Tools ({} enabled):\n", enabled.len());
+                for t in &enabled {
+                    lines.push_str(&format!("  {} — {}\n", t.name, t.description));
+                }
+                self.push_message(MessageContent::System(lines));
+            }
+            AgentNotification::ThinkingChanged { enabled, budget } => {
+                if enabled {
+                    let budget_str = budget.map_or(String::new(), |b| format!(" (budget: {b})"));
+                    self.push_message(MessageContent::System(format!(
+                        "✓ Extended thinking enabled{budget_str}",
+                    )));
+                } else {
+                    self.push_message(MessageContent::System(
+                        "✓ Extended thinking disabled".to_string(),
+                    ));
+                }
+            }
+            AgentNotification::CacheBreakSet => {
+                self.push_message(MessageContent::System(
+                    "✓ Next request will skip prompt cache".to_string(),
+                ));
+            }
+            AgentNotification::ContextWarning { usage_pct, message } => {
+                self.push_message(MessageContent::System(format!(
+                    "\u{26A0} Context {usage_pct:.0}%: {message}",
+                )));
+            }
+            AgentNotification::MemoryExtracted { facts } => {
+                let mut lines = String::from("Memory extracted:\n");
+                for f in &facts {
+                    lines.push_str(&format!("  • {f}\n"));
+                }
+                self.push_message(MessageContent::System(lines));
+            }
+            AgentNotification::HistoryCleared => {
+                self.messages.clear();
+                self.scroll_offset = 0;
+                self.push_message(MessageContent::System(
+                    "Conversation history cleared.".to_string(),
+                ));
+            }
+            AgentNotification::SessionSaved { session_id } => {
+                self.push_message(MessageContent::System(format!(
+                    "Session saved: {session_id}",
+                )));
+            }
+            // Notifications that still don't need visible output
             AgentNotification::ToolUseReady { .. }
             | AgentNotification::ToolSelected { .. }
             | AgentNotification::AssistantMessage { .. }
             | AgentNotification::SessionStart { .. }
-            | AgentNotification::SessionStatus { .. }
-            | AgentNotification::SessionSaved { .. }
-            | AgentNotification::HistoryCleared
-            | AgentNotification::ContextWarning { .. }
-            | AgentNotification::MemoryExtracted { .. }
             | AgentNotification::AgentProgress { .. }
-            | AgentNotification::McpServerConnected { .. }
-            | AgentNotification::McpServerDisconnected { .. }
-            | AgentNotification::McpServerError { .. }
-            | AgentNotification::McpServerList { .. }
-            | AgentNotification::ModelList { .. }
-            | AgentNotification::ToolList { .. }
-            | AgentNotification::ThinkingChanged { .. }
-            | AgentNotification::CacheBreakSet
             | AgentNotification::SwarmTeamCreated { .. }
             | AgentNotification::SwarmTeamDeleted { .. }
             | AgentNotification::SwarmAgentSpawned { .. }
@@ -260,75 +350,173 @@ impl App {
     }
 
     fn handle_slash_command(&mut self, client: &ClientHandle, cmd: &str) {
-        match cmd {
-            "/help" => {
-                self.push_message(MessageContent::System(
-                    concat!(
-                        "Available commands:\n",
-                        "  /help        Show this help\n",
-                        "  /clear       Clear the output\n",
-                        "  /compact     Compact the context\n",
-                        "  /status      Show session info\n",
-                        "  /model       Show current model\n",
-                        "  /sessions    List saved sessions\n",
-                        "  /resume      Resume latest session\n",
-                        "  /resume <id> Resume specific session\n",
-                        "  /exit        Quit TUI\n",
-                        "  /abort       Abort current operation\n",
-                        "\n",
-                        "  Key bindings:\n",
-                        "  Tab          Command completion\n",
-                        "  Shift+Enter  Insert newline\n",
-                        "  Up/Down      History / cursor navigation\n",
-                        "  Shift+Up/Dn  Scroll back/forward\n",
-                        "  PageUp/Dn    Scroll 10 lines\n",
-                        "  Ctrl+V       Paste clipboard image\n",
-                        "  Ctrl+O       Toggle thinking blocks\n",
-                        "  Ctrl+E       Expand/collapse tool result\n",
-                        "  Ctrl+T       Toggle bottom bar\n",
-                        "  Ctrl+L       Clear output\n",
-                        "  Ctrl+C       Abort / Quit\n",
-                        "  Esc          Abort / Quit"
-                    ).to_string(),
-                ));
+        let skills = clawed_core::skills::get_skills(
+            &std::env::current_dir().unwrap_or_default(),
+        );
+        let parsed = match crate::commands::SlashCommand::parse(cmd, &skills) {
+            Some(p) => p,
+            None => return,
+        };
+        let result = parsed.execute(&skills, &[]);
+        match result {
+            crate::commands::CommandResult::Print(text) => {
+                self.push_message(MessageContent::System(text));
             }
-            "/clear" | "/history" => {
+            crate::commands::CommandResult::ClearHistory => {
+                let _ = client.send_request(clawed_bus::events::AgentRequest::ClearHistory);
                 self.messages.clear();
                 self.scroll_offset = 0;
             }
-            "/compact" => {
-                let _ = client
-                    .send_request(clawed_bus::events::AgentRequest::Compact { instructions: None });
+            crate::commands::CommandResult::SetModel(name) => {
+                let _ = client.send_request(clawed_bus::events::AgentRequest::SetModel {
+                    model: name,
+                });
             }
-            "/status" => {
+            crate::commands::CommandResult::ShowCost { .. } => {
+                let total = self.total_input_tokens + self.total_output_tokens;
+                self.push_message(MessageContent::System(format!(
+                    "Token usage: {}\u{2191} in / {}\u{2193} out ({} total) | {} turns",
+                    self.total_input_tokens, self.total_output_tokens, total, self.total_turns,
+                )));
+            }
+            crate::commands::CommandResult::Compact { instructions } => {
+                let _ = client.send_request(clawed_bus::events::AgentRequest::Compact {
+                    instructions,
+                });
+            }
+            crate::commands::CommandResult::Status => {
                 let elapsed = self.status.session_start.elapsed();
                 let secs = elapsed.as_secs();
                 self.push_message(MessageContent::System(format!(
                     "Model: {} | Turns: {} | Tokens: {}\u{2191} {}\u{2193} | Elapsed: {}s",
-                    self.model,
-                    self.total_turns,
-                    self.total_input_tokens,
-                    self.total_output_tokens,
-                    secs,
+                    self.model, self.total_turns,
+                    self.total_input_tokens, self.total_output_tokens, secs,
                 )));
             }
-            "/model" => {
+            crate::commands::CommandResult::Think { args } => {
+                let mode = if args.is_empty() { "on".to_string() } else { args };
+                let _ = client.send_request(clawed_bus::events::AgentRequest::SetThinking { mode });
+            }
+            crate::commands::CommandResult::BreakCache => {
+                let _ = client.send_request(clawed_bus::events::AgentRequest::BreakCache);
+            }
+            crate::commands::CommandResult::Mcp { .. } => {
+                let _ = client.send_request(clawed_bus::events::AgentRequest::McpListServers);
+            }
+            crate::commands::CommandResult::Env => {
+                let cwd = std::env::current_dir().unwrap_or_default();
+                let mut info = format!(
+                    "Environment\n  OS: {} / {}\n  CWD: {}\n  Version: v{}\n  Model: {}",
+                    std::env::consts::OS,
+                    std::env::consts::ARCH,
+                    cwd.display(),
+                    env!("CARGO_PKG_VERSION"),
+                    self.model,
+                );
+                if let Ok(shell) = std::env::var("SHELL").or_else(|_| std::env::var("COMSPEC")) {
+                    info.push_str(&format!("\n  Shell: {shell}"));
+                }
+                if let Ok(term) = std::env::var("TERM") {
+                    info.push_str(&format!("\n  Terminal: {term}"));
+                }
+                self.push_message(MessageContent::System(info));
+            }
+            crate::commands::CommandResult::Effort { level } => {
+                let valid = ["low", "medium", "high", "max", "auto"];
+                if level.is_empty() {
+                    self.push_message(MessageContent::System(format!(
+                        "Current effort: auto\nOptions: {}", valid.join(", "),
+                    )));
+                } else if valid.contains(&level.to_lowercase().as_str()) {
+                    self.push_message(MessageContent::System(format!(
+                        "✓ Effort set to: {}", level.to_lowercase(),
+                    )));
+                } else {
+                    self.push_message(MessageContent::System(format!(
+                        "Invalid effort: '{level}'. Options: {}", valid.join(", "),
+                    )));
+                }
+            }
+            crate::commands::CommandResult::Tag { name } => {
+                if name.is_empty() {
+                    self.push_message(MessageContent::System(
+                        "Usage: /tag <name>".to_string(),
+                    ));
+                } else {
+                    self.push_message(MessageContent::System(format!(
+                        "✓ Tagged session: {name}",
+                    )));
+                }
+            }
+            crate::commands::CommandResult::Stickers => {
                 self.push_message(MessageContent::System(
-                    format!("Current model: {}", self.model),
+                    "Sticker page: https://www.stickermule.com/claudecode".to_string(),
                 ));
             }
-            "/abort" => {
-                let _ = client.abort();
-                self.status.thinking = false;
-                self.push_message(MessageContent::System("[Aborted]".to_string()));
+            crate::commands::CommandResult::Vim { .. } => {
+                self.push_message(MessageContent::System(
+                    "Vim mode is not supported in TUI.".to_string(),
+                ));
             }
-            "/exit" | "/quit" => {
+            crate::commands::CommandResult::Exit => {
                 self.running = false;
             }
-            other => {
-                self.push_message(MessageContent::System(
-                    format!("Unknown command: {other}. Type /help for commands."),
-                ));
+            // Commands that need async engine access — handled in the event loop
+            // via TuiCommand enum variants. For now, mark them as needing engine.
+            crate::commands::CommandResult::Diff
+            | crate::commands::CommandResult::Undo
+            | crate::commands::CommandResult::Retry
+            | crate::commands::CommandResult::Copy
+            | crate::commands::CommandResult::Share
+            | crate::commands::CommandResult::Rename { .. }
+            | crate::commands::CommandResult::Summary
+            | crate::commands::CommandResult::Export { .. }
+            | crate::commands::CommandResult::Context
+            | crate::commands::CommandResult::Fast { .. }
+            | crate::commands::CommandResult::Rewind { .. }
+            | crate::commands::CommandResult::AddDir { .. }
+            | crate::commands::CommandResult::Files { .. }
+            | crate::commands::CommandResult::Session { .. }
+            | crate::commands::CommandResult::Stats
+            | crate::commands::CommandResult::Image { .. }
+            | crate::commands::CommandResult::Feedback { .. }
+            | crate::commands::CommandResult::ReleaseNotes
+            | crate::commands::CommandResult::Memory { .. }
+            | crate::commands::CommandResult::Permissions { .. }
+            | crate::commands::CommandResult::Config
+            | crate::commands::CommandResult::Login
+            | crate::commands::CommandResult::Logout
+            | crate::commands::CommandResult::ReloadContext
+            | crate::commands::CommandResult::Doctor
+            | crate::commands::CommandResult::Init
+            | crate::commands::CommandResult::Plan { .. }
+            | crate::commands::CommandResult::Theme { .. }
+            | crate::commands::CommandResult::Agents { .. }
+            | crate::commands::CommandResult::Plugin { .. }
+            | crate::commands::CommandResult::RunPluginCommand { .. }
+            | crate::commands::CommandResult::RunSkill { .. } => {
+                // Stored in pending_command for async handling
+                self.pending_command = Some(result);
+            }
+            // Commands that submit a prompt to the agent
+            crate::commands::CommandResult::Review { prompt }
+            | crate::commands::CommandResult::Bug { prompt }
+            | crate::commands::CommandResult::Pr { prompt } => {
+                if prompt.is_empty() {
+                    self.push_message(MessageContent::System(
+                        "This command requires a prompt argument.".to_string(),
+                    ));
+                } else {
+                    self.pending_command = Some(crate::commands::CommandResult::Review { prompt });
+                }
+            }
+            crate::commands::CommandResult::Commit { .. }
+            | crate::commands::CommandResult::CommitPushPr { .. }
+            | crate::commands::CommandResult::PrComments { .. }
+            | crate::commands::CommandResult::Branch { .. }
+            | crate::commands::CommandResult::Search { .. }
+            | crate::commands::CommandResult::History { .. } => {
+                self.pending_command = Some(result);
             }
         }
     }
@@ -504,18 +692,23 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
         .add_modifier(Modifier::BOLD);
     let text_style = Style::default();
     let image_style = Style::default().fg(Color::Magenta);
+    let ghost_style = Style::default().fg(Color::DarkGray);
 
     let display_lines = app.input.display_lines();
     let img_count = app.pending_images.len();
+    let is_empty = app.input.buffer().is_empty();
+
     let lines: Vec<Line> = display_lines
         .iter()
         .enumerate()
         .map(|(i, line_text)| {
             if i == 0 {
-                let mut spans = vec![
-                    Span::styled("> ", prompt_style),
-                    Span::styled((*line_text).to_string(), text_style),
-                ];
+                let mut spans = vec![Span::styled("> ", prompt_style)];
+                if is_empty {
+                    spans.push(Span::styled("Message Claude...", ghost_style));
+                } else {
+                    spans.push(Span::styled((*line_text).to_string(), text_style));
+                }
                 if img_count > 0 {
                     spans.push(Span::styled(
                         format!(" 📎{img_count}"),
@@ -701,6 +894,11 @@ pub async fn run_tui(
 
     // Main event loop
     while app.running {
+        // Advance spinner when thinking
+        if app.status.thinking || !app.status.active_tools.is_empty() {
+            app.status.spinner_frame = app.status.spinner_frame.wrapping_add(1);
+        }
+
         // Render
         terminal.draw(|frame| render(frame, &app))?;
 
@@ -847,70 +1045,22 @@ pub async fn run_tui(
                                 app.push_message(MessageContent::UserInput(display));
 
                                 if text.starts_with('/') {
-                                    if text == "/sessions" {
-                                        let sessions = clawed_core::session::list_sessions();
-                                        if sessions.is_empty() {
-                                            app.push_message(MessageContent::System(
-                                                "No saved sessions.".to_string(),
-                                            ));
-                                        } else {
-                                            let mut lines = String::from("Recent sessions:\n");
-                                            for (i, s) in sessions.iter().take(10).enumerate() {
-                                                let title = s.custom_title.as_deref()
-                                                    .or(s.last_prompt.as_deref())
-                                                    .unwrap_or(&s.title);
-                                                let age = chrono::Utc::now()
-                                                    .signed_duration_since(s.updated_at);
-                                                let age_str = format_duration(age);
-                                                lines.push_str(&format!(
-                                                    "  {}: {} ({}, {} turns, {})\n",
-                                                    i + 1, title, s.id, s.turn_count, age_str,
-                                                ));
-                                            }
-                                            lines.push_str("\nUse /resume <id> to restore.");
-                                            app.push_message(MessageContent::System(lines));
-                                        }
-                                    } else if text == "/resume" {
-                                        // Resume latest session
-                                        let sessions = clawed_core::session::list_sessions();
-                                        if let Some(latest) = sessions.first() {
-                                            let sid = latest.id.clone();
-                                            match engine.restore_session(&sid).await {
-                                                Ok(title) => {
-                                                    app.push_message(MessageContent::System(
-                                                        format!("Resumed session: {title}"),
-                                                    ));
-                                                    replay_session_messages(&engine, &mut app).await;
-                                                }
-                                                Err(e) => {
-                                                    app.push_message(MessageContent::System(
-                                                        format!("Resume failed: {e}"),
-                                                    ));
-                                                }
-                                            }
-                                        } else {
-                                            app.push_message(MessageContent::System(
-                                                "No sessions to resume.".to_string(),
-                                            ));
-                                        }
-                                    } else if let Some(sid) = text.strip_prefix("/resume ") {
-                                        let sid = sid.trim();
-                                        match engine.restore_session(sid).await {
-                                            Ok(title) => {
-                                                app.push_message(MessageContent::System(
-                                                    format!("Resumed session: {title}"),
-                                                ));
-                                                replay_session_messages(&engine, &mut app).await;
-                                            }
-                                            Err(e) => {
-                                                app.push_message(MessageContent::System(
-                                                    format!("Resume failed: {e}"),
-                                                ));
-                                            }
-                                        }
+                                    // /abort is special — always handle directly
+                                    if text == "/abort" {
+                                        let _ = client.abort();
+                                        app.status.thinking = false;
+                                        app.push_message(MessageContent::System(
+                                            "[Aborted]".to_string(),
+                                        ));
                                     } else {
                                         let client_ref = &client;
                                         app.handle_slash_command(client_ref, &text);
+                                        // Process async commands that need engine access
+                                        if let Some(cmd) = app.pending_command.take() {
+                                            handle_async_command(
+                                                cmd, &engine, &client, &mut app,
+                                            ).await;
+                                        }
                                     }
                                     app.pending_images.clear();
                                 } else {
@@ -975,6 +1125,658 @@ pub async fn run_tui(
     // Restore terminal (ratatui handles raw mode + alternate screen)
     ratatui::restore();
     Ok(())
+}
+
+// -- Async slash command handler -----------------------------------------------
+
+/// Handle `CommandResult` variants that need `async` engine access.
+async fn handle_async_command(
+    cmd: crate::commands::CommandResult,
+    engine: &Arc<QueryEngine>,
+    client: &ClientHandle,
+    app: &mut App,
+) {
+    use crate::commands::CommandResult;
+    use clawed_core::message::{ContentBlock, Message as CoreMsg};
+
+    match cmd {
+        CommandResult::Diff => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            match std::process::Command::new("git")
+                .args(["diff", "--stat", "--no-color"])
+                .current_dir(&cwd)
+                .output()
+            {
+                Ok(out) => {
+                    let text = String::from_utf8_lossy(&out.stdout);
+                    if text.trim().is_empty() {
+                        app.push_message(MessageContent::System(
+                            "No uncommitted changes.".to_string(),
+                        ));
+                    } else {
+                        app.push_message(MessageContent::System(text.to_string()));
+                    }
+                }
+                Err(e) => {
+                    app.push_message(MessageContent::System(format!("git diff failed: {e}")));
+                }
+            }
+        }
+        CommandResult::Undo => {
+            let removed = engine.rewind_turns(1).await;
+            if removed.0 == 0 {
+                app.push_message(MessageContent::System("Nothing to undo.".to_string()));
+            } else {
+                app.push_message(MessageContent::System(format!(
+                    "✓ Undid 1 turn ({} messages remaining)", removed.1,
+                )));
+            }
+        }
+        CommandResult::Rewind { turns } => {
+            let n: usize = turns.parse().unwrap_or(1).max(1);
+            let (removed, remaining) = engine.rewind_turns(n).await;
+            if removed == 0 {
+                app.push_message(MessageContent::System("Nothing to rewind.".to_string()));
+            } else {
+                app.push_message(MessageContent::System(format!(
+                    "✓ Rewound {removed} turn(s) ({remaining} messages remaining)",
+                )));
+            }
+        }
+        CommandResult::Retry => {
+            if let Some(prompt) = engine.pop_last_turn().await {
+                let preview = if prompt.len() > 60 {
+                    format!("{}…", &prompt[..57])
+                } else {
+                    prompt.clone()
+                };
+                app.push_message(MessageContent::System(format!(
+                    "Retrying: {preview}",
+                )));
+                let _ = client.submit(&prompt);
+                app.status.thinking = true;
+            } else {
+                app.push_message(MessageContent::System(
+                    "No previous prompt to retry.".to_string(),
+                ));
+            }
+        }
+        CommandResult::Copy => {
+            let state = engine.state().read().await;
+            let text = state.messages.iter().rev().find_map(|m| {
+                if let CoreMsg::Assistant(a) = m {
+                    a.content.iter().find_map(|b| {
+                        if let ContentBlock::Text { text } = b {
+                            Some(text.clone())
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                }
+            });
+            drop(state);
+            if let Some(text) = text {
+                match arboard::Clipboard::new().and_then(|mut c| c.set_text(&text)) {
+                    Ok(()) => {
+                        app.push_message(MessageContent::System(format!(
+                            "✓ Copied to clipboard ({} chars)", text.len(),
+                        )));
+                    }
+                    Err(e) => {
+                        app.push_message(MessageContent::System(format!("Copy failed: {e}")));
+                    }
+                }
+            } else {
+                app.push_message(MessageContent::System(
+                    "No assistant response to copy.".to_string(),
+                ));
+            }
+        }
+        CommandResult::Share => {
+            let state = engine.state().read().await;
+            let mut md = String::from("# Clawed Code Session\n\n");
+            for msg in &state.messages {
+                match msg {
+                    CoreMsg::User(u) => {
+                        md.push_str("## User\n\n");
+                        for block in &u.content {
+                            if let ContentBlock::Text { text } = block {
+                                md.push_str(text);
+                                md.push_str("\n\n");
+                            }
+                        }
+                    }
+                    CoreMsg::Assistant(a) => {
+                        md.push_str("## Assistant\n\n");
+                        for block in &a.content {
+                            if let ContentBlock::Text { text } = block {
+                                md.push_str(text);
+                                md.push_str("\n\n");
+                            }
+                        }
+                    }
+                    CoreMsg::System(_) => {}
+                }
+            }
+            drop(state);
+            let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
+            let filename = format!("claude-session-{ts}.md");
+            match std::fs::write(&filename, &md) {
+                Ok(()) => {
+                    app.push_message(MessageContent::System(format!(
+                        "✓ Session exported to {filename} ({} bytes)", md.len(),
+                    )));
+                }
+                Err(e) => {
+                    app.push_message(MessageContent::System(format!("Export failed: {e}")));
+                }
+            }
+        }
+        CommandResult::Export { format: fmt } => {
+            let state = engine.state().read().await;
+            let mut content = String::new();
+            for msg in &state.messages {
+                match msg {
+                    CoreMsg::User(u) => {
+                        content.push_str("USER: ");
+                        for block in &u.content {
+                            if let ContentBlock::Text { text } = block {
+                                content.push_str(text);
+                            }
+                        }
+                        content.push('\n');
+                    }
+                    CoreMsg::Assistant(a) => {
+                        content.push_str("ASSISTANT: ");
+                        for block in &a.content {
+                            if let ContentBlock::Text { text } = block {
+                                content.push_str(text);
+                            }
+                        }
+                        content.push('\n');
+                    }
+                    CoreMsg::System(s) => {
+                        content.push_str(&format!("SYSTEM: {}\n", s.message));
+                    }
+                }
+            }
+            drop(state);
+            let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
+            let ext = if fmt == "json" { "json" } else { "md" };
+            let filename = format!("session-export-{ts}.{ext}");
+            match std::fs::write(&filename, &content) {
+                Ok(()) => {
+                    app.push_message(MessageContent::System(format!(
+                        "✓ Exported to {filename}",
+                    )));
+                }
+                Err(e) => {
+                    app.push_message(MessageContent::System(format!("Export failed: {e}")));
+                }
+            }
+        }
+        CommandResult::Rename { name } => {
+            if name.is_empty() {
+                app.push_message(MessageContent::System("Usage: /rename <new name>".to_string()));
+            } else {
+                match engine.rename_session(&name).await {
+                    Ok(()) => {
+                        app.push_message(MessageContent::System(format!(
+                            "✓ Session renamed to '{name}'",
+                        )));
+                    }
+                    Err(e) => {
+                        app.push_message(MessageContent::System(format!("Rename failed: {e}")));
+                    }
+                }
+            }
+        }
+        CommandResult::Fast { toggle } => {
+            let state = engine.state();
+            let current = state.read().await.model.clone();
+            let fast_model = clawed_core::model::small_fast_model();
+            if toggle.eq_ignore_ascii_case("off") {
+                let default = clawed_core::model::resolve_model_string("sonnet");
+                state.write().await.model = default.clone();
+                app.model = default.clone();
+                app.push_message(MessageContent::System(format!(
+                    "✓ Switched to: {}", clawed_core::model::display_name_any(&default),
+                )));
+            } else if current == fast_model {
+                let default = clawed_core::model::resolve_model_string("sonnet");
+                state.write().await.model = default.clone();
+                app.model = default.clone();
+                app.push_message(MessageContent::System(format!(
+                    "✓ Fast mode off → {}", clawed_core::model::display_name_any(&default),
+                )));
+            } else {
+                state.write().await.model = fast_model.clone();
+                app.model = fast_model.clone();
+                app.push_message(MessageContent::System(format!(
+                    "✓ Fast mode on → {}", clawed_core::model::display_name_any(&fast_model),
+                )));
+            }
+        }
+        CommandResult::Context => {
+            let _ = client.send_request(clawed_bus::events::AgentRequest::GetStatus);
+        }
+        CommandResult::Stats => {
+            let state = engine.state().read().await;
+            let elapsed = app.status.session_start.elapsed().as_secs();
+            app.push_message(MessageContent::System(format!(
+                "Session stats:\n  Turns: {}\n  Messages: {}\n  Input tokens: {}\n  Output tokens: {}\n  Elapsed: {}s\n  Model: {}",
+                state.turn_count, state.messages.len(),
+                state.total_input_tokens, state.total_output_tokens,
+                elapsed, state.model,
+            )));
+        }
+        CommandResult::Files { pattern } => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            match std::fs::read_dir(&cwd) {
+                Ok(entries) => {
+                    let mut items: Vec<_> = entries
+                        .flatten()
+                        .filter(|e| {
+                            pattern.is_empty()
+                                || e.file_name().to_string_lossy().contains(pattern.as_str())
+                        })
+                        .collect();
+                    items.sort_by_key(std::fs::DirEntry::file_name);
+                    let mut lines = String::new();
+                    for entry in &items {
+                        let name = entry.file_name();
+                        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                        if is_dir {
+                            lines.push_str(&format!("  {}/\n", name.to_string_lossy()));
+                        } else {
+                            lines.push_str(&format!("  {}\n", name.to_string_lossy()));
+                        }
+                    }
+                    if items.is_empty() {
+                        app.push_message(MessageContent::System(format!(
+                            "No files matching '{pattern}'",
+                        )));
+                    } else {
+                        lines.push_str(&format!("({} items in {})", items.len(), cwd.display()));
+                        app.push_message(MessageContent::System(lines));
+                    }
+                }
+                Err(e) => {
+                    app.push_message(MessageContent::System(format!(
+                        "Cannot read directory: {e}",
+                    )));
+                }
+            }
+        }
+        CommandResult::Session { sub } => {
+            // /session or /resume — handle session listing and resume
+            let sessions = clawed_core::session::list_sessions();
+            if sub.is_empty() || sub == "list" {
+                if sessions.is_empty() {
+                    app.push_message(MessageContent::System("No saved sessions.".to_string()));
+                } else {
+                    let mut lines = String::from("Recent sessions:\n");
+                    for (i, s) in sessions.iter().take(10).enumerate() {
+                        let title = s.custom_title.as_deref()
+                            .or(s.last_prompt.as_deref())
+                            .unwrap_or(&s.title);
+                        let age = chrono::Utc::now().signed_duration_since(s.updated_at);
+                        let age_str = format_duration(age);
+                        lines.push_str(&format!(
+                            "  {}: {} ({}, {} turns, {})\n",
+                            i + 1, title, s.id, s.turn_count, age_str,
+                        ));
+                    }
+                    lines.push_str("\nUse /resume <id> to restore.");
+                    app.push_message(MessageContent::System(lines));
+                }
+            } else {
+                // /resume <id> or /session resume [id]
+                let sid = sub.trim();
+                let target_id = if sid.is_empty() || sid == "latest" {
+                    sessions.first().map(|s| s.id.clone())
+                } else {
+                    Some(sid.to_string())
+                };
+                if let Some(id) = target_id {
+                    match engine.restore_session(&id).await {
+                        Ok(title) => {
+                            app.push_message(MessageContent::System(format!(
+                                "Resumed session: {title}",
+                            )));
+                            replay_session_messages(engine, app).await;
+                        }
+                        Err(e) => {
+                            app.push_message(MessageContent::System(format!(
+                                "Resume failed: {e}",
+                            )));
+                        }
+                    }
+                } else {
+                    app.push_message(MessageContent::System(
+                        "No sessions to resume.".to_string(),
+                    ));
+                }
+            }
+        }
+        CommandResult::Image { path } => {
+            if path.is_empty() {
+                app.push_message(MessageContent::System(
+                    "Usage: /image <path>  (or Ctrl+V to paste from clipboard)".to_string(),
+                ));
+            } else {
+                let cwd = std::env::current_dir().unwrap_or_default();
+                let img_path = std::path::Path::new(&path);
+                let img_path = if img_path.is_relative() {
+                    cwd.join(img_path)
+                } else {
+                    img_path.to_path_buf()
+                };
+                match clawed_core::image::read_image_file(&img_path) {
+                    Ok(ContentBlock::Image { source }) => {
+                        app.pending_images.push(ImageAttachment {
+                            data: source.data,
+                            media_type: source.media_type,
+                        });
+                        app.push_message(MessageContent::System(format!(
+                            "✓ Image queued: {} ({} pending)",
+                            img_path.file_name().unwrap_or_default().to_string_lossy(),
+                            app.pending_images.len(),
+                        )));
+                    }
+                    Err(e) => {
+                        app.push_message(MessageContent::System(format!("Image error: {e}")));
+                    }
+                    Ok(_) => {
+                        app.push_message(MessageContent::System(
+                            "Unexpected content block from image read.".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+        CommandResult::Feedback { text } => {
+            let feedback_path = dirs::home_dir()
+                .map(|h| h.join(".claude").join("feedback.log"))
+                .unwrap_or_else(|| std::path::PathBuf::from("feedback.log"));
+            if let Some(parent) = feedback_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+            let entry = format!("[{timestamp}] {text}\n");
+            match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&feedback_path)
+            {
+                Ok(mut f) => {
+                    use std::io::Write;
+                    let _ = f.write_all(entry.as_bytes());
+                    app.push_message(MessageContent::System(format!(
+                        "✓ Feedback saved to {}", feedback_path.display(),
+                    )));
+                }
+                Err(e) => {
+                    app.push_message(MessageContent::System(format!(
+                        "Could not save feedback: {e}",
+                    )));
+                }
+            }
+        }
+        CommandResult::ReleaseNotes => {
+            app.push_message(MessageContent::System(format!(
+                "Clawed Code v{}\n\nRecent changes:\n  • Full ratatui TUI with double-buffered rendering\n  • Markdown + syntect code highlighting\n  • Multi-line input, collapsible thinking/tool results\n  • Permission prompts, session resume, image paste\n  • 55+ slash commands, 52+ tools",
+                env!("CARGO_PKG_VERSION"),
+            )));
+        }
+        CommandResult::Memory { sub } => {
+            crate::repl_commands::handle_memory_command(
+                &sub,
+                &std::env::current_dir().unwrap_or_default(),
+            );
+            app.push_message(MessageContent::System(
+                "Memory command executed (see terminal output).".to_string(),
+            ));
+        }
+        // Commands that submit a prompt to the agent
+        CommandResult::Review { prompt }
+        | CommandResult::Bug { prompt }
+        | CommandResult::Pr { prompt } => {
+            if !prompt.is_empty() {
+                let _ = client.submit(&prompt);
+                app.status.thinking = true;
+            }
+        }
+        CommandResult::Commit { message } => {
+            let prompt = if message.is_empty() {
+                "Review the staged changes and create a commit with an appropriate message.".to_string()
+            } else {
+                format!("Create a commit with message: {message}")
+            };
+            let _ = client.submit(&prompt);
+            app.status.thinking = true;
+        }
+        CommandResult::CommitPushPr { message } => {
+            let prompt = if message.is_empty() {
+                "Commit staged changes, push, and create a PR with appropriate title and description.".to_string()
+            } else {
+                format!("Commit with message '{message}', push, and create a PR.")
+            };
+            let _ = client.submit(&prompt);
+            app.status.thinking = true;
+        }
+        CommandResult::Search { query } => {
+            if query.is_empty() {
+                app.push_message(MessageContent::System(
+                    "Usage: /search <query>".to_string(),
+                ));
+            } else {
+                let state = engine.state().read().await;
+                let mut results = Vec::new();
+                for (i, msg) in state.messages.iter().enumerate() {
+                    let text = match msg {
+                        CoreMsg::User(u) => u.content.iter().find_map(|b| {
+                            if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
+                        }),
+                        CoreMsg::Assistant(a) => a.content.iter().find_map(|b| {
+                            if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
+                        }),
+                        CoreMsg::System(s) => Some(s.message.as_str()),
+                    };
+                    if let Some(text) = text {
+                        if text.to_lowercase().contains(&query.to_lowercase()) {
+                            let preview: String = text.chars().take(80).collect();
+                            results.push(format!("  [{}] {}", i, preview));
+                        }
+                    }
+                }
+                drop(state);
+                if results.is_empty() {
+                    app.push_message(MessageContent::System(format!(
+                        "No results for '{query}'",
+                    )));
+                } else {
+                    let mut out = format!("Search results for '{query}':\n");
+                    for r in results.iter().take(20) {
+                        out.push_str(r);
+                        out.push('\n');
+                    }
+                    app.push_message(MessageContent::System(out));
+                }
+            }
+        }
+        CommandResult::History { page } => {
+            let state = engine.state().read().await;
+            let per_page = 10;
+            let start = (page.saturating_sub(1)) * per_page;
+            let total = state.messages.len();
+            let end = total.min(start + per_page);
+            let mut out = format!("History (page {page}, {total} messages total):\n");
+            for (i, msg) in state.messages.iter().enumerate().skip(start).take(end - start) {
+                let role = match msg {
+                    CoreMsg::User(_) => "user",
+                    CoreMsg::Assistant(_) => "assistant",
+                    CoreMsg::System(_) => "system",
+                };
+                out.push_str(&format!("  [{i}] {role}\n"));
+            }
+            drop(state);
+            app.push_message(MessageContent::System(out));
+        }
+        CommandResult::PrComments { pr_number } => {
+            if pr_number == 0 {
+                app.push_message(MessageContent::System(
+                    "Usage: /pr-comments <PR#>".to_string(),
+                ));
+            } else {
+                let prompt = format!("Fetch and address review comments for PR #{pr_number}.");
+                let _ = client.submit(&prompt);
+                app.status.thinking = true;
+            }
+        }
+        CommandResult::Branch { name } => {
+            if name.is_empty() {
+                app.push_message(MessageContent::System(
+                    "Usage: /branch <name>".to_string(),
+                ));
+            } else {
+                app.push_message(MessageContent::System(
+                    "Branch conversations are not yet supported in TUI. Use --session-id to create separate sessions.".to_string(),
+                ));
+            }
+        }
+        CommandResult::AddDir { path } => {
+            if path.is_empty() {
+                app.push_message(MessageContent::System("Usage: /add-dir <path>".to_string()));
+            } else {
+                let cwd = std::env::current_dir().unwrap_or_default();
+                let dir_path = std::path::Path::new(&path);
+                let dir_path = if dir_path.is_relative() { cwd.join(dir_path) } else { dir_path.to_path_buf() };
+                if !dir_path.is_dir() {
+                    app.push_message(MessageContent::System(format!(
+                        "Directory not found: {}", dir_path.display(),
+                    )));
+                } else {
+                    let mut ctx = format!("<context source=\"{}\">\n", dir_path.display());
+                    let mut file_count = 0u32;
+                    if let Ok(entries) = std::fs::read_dir(&dir_path) {
+                        for entry in entries.flatten() {
+                            let p = entry.path();
+                            if p.is_file() {
+                                if let Ok(content) = std::fs::read_to_string(&p) {
+                                    let name = p.file_name().unwrap_or_default().to_string_lossy();
+                                    ctx.push_str(&format!("--- {name} ---\n{}\n\n", content.trim()));
+                                    file_count += 1;
+                                }
+                            }
+                        }
+                    }
+                    ctx.push_str("</context>");
+                    engine.update_system_prompt_context(&ctx).await;
+                    app.push_message(MessageContent::System(format!(
+                        "✓ Added {file_count} file(s) from {}", dir_path.display(),
+                    )));
+                }
+            }
+        }
+        CommandResult::Summary => {
+            let prompt = "Provide a brief summary of our conversation so far.";
+            let _ = client.submit(prompt);
+            app.status.thinking = true;
+        }
+        // Commands that are not meaningfully different in TUI
+        CommandResult::Permissions { mode } => {
+            if mode.is_empty() {
+                app.push_message(MessageContent::System(
+                    "Permission mode: default\n  Set with: /permissions <default|bypass|acceptEdits|plan>".to_string(),
+                ));
+            } else {
+                app.push_message(MessageContent::System(format!(
+                    "Permission mode set to: {mode}",
+                )));
+            }
+        }
+        CommandResult::Config => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let project_settings = cwd.join(".claude").join("settings.json");
+            let exists = project_settings.exists();
+            app.push_message(MessageContent::System(format!(
+                "Config:\n  Project settings: {} ({})\n  Model: {}\n  CWD: {}",
+                project_settings.display(),
+                if exists { "found" } else { "not found" },
+                app.model,
+                cwd.display(),
+            )));
+        }
+        CommandResult::Doctor => {
+            let prompt = "Run diagnostic checks on the development environment and report any issues.";
+            let _ = client.submit(prompt);
+            app.status.thinking = true;
+        }
+        CommandResult::Init => {
+            let prompt = "Create a CLAUDE.md file for this project with build commands, architecture, and conventions.";
+            let _ = client.submit(prompt);
+            app.status.thinking = true;
+        }
+        CommandResult::Plan { args } => {
+            if args.is_empty() {
+                app.push_message(MessageContent::System(
+                    "Usage: /plan <description>  — Generate an implementation plan".to_string(),
+                ));
+            } else {
+                let prompt = format!("Create a detailed implementation plan for: {args}");
+                let _ = client.submit(&prompt);
+                app.status.thinking = true;
+            }
+        }
+        CommandResult::Login | CommandResult::Logout => {
+            app.push_message(MessageContent::System(
+                "Auth commands require a terminal restart. Use --api-key or set ANTHROPIC_API_KEY.".to_string(),
+            ));
+        }
+        CommandResult::ReloadContext => {
+            app.push_message(MessageContent::System(
+                "Context reloaded on next submission.".to_string(),
+            ));
+        }
+        CommandResult::Theme { name } => {
+            if name.is_empty() {
+                app.push_message(MessageContent::System(
+                    "Available themes: dark, light, dark-ansi, solarized, daltonize".to_string(),
+                ));
+            } else {
+                app.push_message(MessageContent::System(
+                    "Theme changes are not supported in ratatui TUI mode. Current: dark".to_string(),
+                ));
+            }
+        }
+        CommandResult::Agents { .. } | CommandResult::Plugin { .. }
+        | CommandResult::RunPluginCommand { .. } | CommandResult::RunSkill { .. } => {
+            app.push_message(MessageContent::System(
+                "This command is not yet available in TUI mode.".to_string(),
+            ));
+        }
+        // These are handled synchronously in handle_slash_command
+        CommandResult::Print(_)
+        | CommandResult::ClearHistory
+        | CommandResult::SetModel(_)
+        | CommandResult::ShowCost { .. }
+        | CommandResult::Compact { .. }
+        | CommandResult::Status
+        | CommandResult::Think { .. }
+        | CommandResult::BreakCache
+        | CommandResult::Mcp { .. }
+        | CommandResult::Env
+        | CommandResult::Effort { .. }
+        | CommandResult::Tag { .. }
+        | CommandResult::Stickers
+        | CommandResult::Vim { .. }
+        | CommandResult::Exit => {
+            // Should not reach here — these are handled in handle_slash_command
+        }
+    }
 }
 
 // -- Clipboard image support --------------------------------------------------
