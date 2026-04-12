@@ -6,7 +6,7 @@
 //! -- separator --
 //! 00:05  thinking  bash (00:02)  model  (status, when active)
 //! > user input here_
-//! Tab: complete  Up/Down: history  Esc: quit  (hint bar, toggleable)
+//! Tab: complete  Ctrl+J: newline  Ctrl+C: abort/quit  (hint bar, toggleable)
 //! ```
 
 mod bottombar;
@@ -67,6 +67,8 @@ struct App {
     pending_images: Vec<ImageAttachment>,
     /// Async command waiting to be executed in the event loop (needs engine access).
     pending_command: Option<crate::commands::CommandResult>,
+    /// Whether the terminal supports kitty keyboard enhancement protocol.
+    enhanced_keys: bool,
 }
 
 impl App {
@@ -89,6 +91,7 @@ impl App {
             model,
             pending_images: Vec::new(),
             pending_command: None,
+            enhanced_keys: false,
         }
     }
 
@@ -714,7 +717,7 @@ fn render(frame: &mut Frame, app: &App) {
 
         render_input(frame, input_chunks[0], app);
         if bottom_bar_rows > 0 {
-            bottombar::render(frame, input_chunks[1]);
+            bottombar::render(frame, input_chunks[1], app.enhanced_keys);
         }
 
         // Completion popup (rendered last so it draws on top)
@@ -1074,16 +1077,33 @@ pub async fn run_tui(
     // instead of individual Key events (which would submit on Enter).
     crossterm::execute!(std::io::stdout(), EnableBracketedPaste)?;
 
-    // Enable keyboard enhancement (kitty protocol) so terminals can distinguish
-    // Shift+Enter from plain Enter. Gracefully ignored on terminals that don't support it.
-    let keyboard_enhancement_enabled = crossterm::execute!(
-        std::io::stdout(),
-        crossterm::event::PushKeyboardEnhancementFlags(
-            crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                | crossterm::event::KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES,
+    // Detect keyboard enhancement support (kitty protocol) BEFORE pushing flags.
+    // Without this, Shift+Enter is indistinguishable from plain Enter.
+    let enhanced_keys = crossterm::terminal::supports_keyboard_enhancement()
+        .unwrap_or(false);
+
+    let keyboard_enhancement_enabled = if enhanced_keys {
+        crossterm::execute!(
+            std::io::stdout(),
+            crossterm::event::PushKeyboardEnhancementFlags(
+                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | crossterm::event::KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                    | crossterm::event::KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
+            )
         )
-    )
-    .is_ok();
+        .is_ok()
+    } else {
+        false
+    };
+    app.enhanced_keys = keyboard_enhancement_enabled;
+
+    if !keyboard_enhancement_enabled {
+        app.push_message(MessageContent::System(
+            "Tip: Your terminal doesn't support enhanced keyboard protocol. \
+             Use Ctrl+J to insert newlines (Shift+Enter unavailable)."
+                .to_string(),
+        ));
+    }
 
     // Main event loop
     while app.running {
@@ -1177,6 +1197,15 @@ pub async fn run_tui(
                             } else {
                                 app.running = false;
                             }
+                            continue;
+                        }
+                        // Esc while thinking → abort current task (not quit)
+                        (KeyCode::Esc, _) if app.status.thinking => {
+                            let _ = client.abort();
+                            app.status.thinking = false;
+                            app.push_message(MessageContent::System(
+                                "[Aborted]".to_string(),
+                            ));
                             continue;
                         }
                         (KeyCode::Char('t'), KeyModifiers::CONTROL) => {
@@ -1295,9 +1324,6 @@ pub async fn run_tui(
                                 "[Aborted]".to_string(),
                             ));
                         }
-                        input::InputAction::Quit => {
-                            app.running = false;
-                        }
                         input::InputAction::Changed | input::InputAction::None => {}
                     }
                 }
@@ -1305,8 +1331,8 @@ pub async fn run_tui(
                     // ratatui handles resize automatically on next draw
                 }
                 Event::Paste(text) => {
-                    // Normalize CR to LF (many terminals convert newlines to \r on paste)
-                    let text = text.replace('\r', "\n");
+                    // Strip CR so \r\n becomes \n (insert_text handles bare \r too)
+                    let text = text.replace('\r', "");
                     app.input.insert_text(&text);
                 }
                 _ => {} // Mouse, Focus -- ignored

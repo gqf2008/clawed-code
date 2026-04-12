@@ -38,8 +38,11 @@
 # Set your API key
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# Start an interactive REPL session
+# Start the interactive TUI (default)
 clawed
+
+# Use the legacy line-oriented REPL
+clawed --repl
 
 # One-shot query (non-interactive)
 clawed "explain this codebase"
@@ -91,10 +94,11 @@ clawed --completions powershell >> $PROFILE
 
 ## Usage
 
-### Interactive REPL
+### Interactive TUI (default)
 
 ```bash
 clawed                         # Start with default model
+clawed --repl                  # Use the legacy line-oriented REPL
 clawed -m opus                 # Use Claude Opus
 clawed --resume                # Resume last session
 clawed --session-id <uuid>     # Resume a specific session
@@ -149,6 +153,8 @@ clawed --output-format stream-json "explain this file" | jq .
 | `--base-url` | | | Custom API endpoint URL |
 | `--verbose` | `-v` | `false` | Enable debug logging |
 | `--timeout` | | `0` (none) | Global session timeout in seconds |
+| `--repl` | | `false` | Use the legacy line-oriented REPL instead of the default TUI |
+| `--tui` | | `false` | Force TUI mode explicitly (compatibility flag) |
 | `--init` | | `false` | Initialize project configuration |
 | `--list-sessions` | | | List all sessions and exit |
 | `--search-sessions` | | | Search sessions by keyword and exit |

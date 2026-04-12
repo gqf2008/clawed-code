@@ -219,6 +219,17 @@ mod tests {
     }
 
     #[test]
+    fn multiline_user_input_renders_multiple_lines() {
+        let msg = Message::new(MessageContent::UserInput("hello\nworld".into()));
+        let lines = msg.to_lines();
+        assert_eq!(lines.len(), 3);
+        let first: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
+        let second: String = lines[2].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(first, "> hello");
+        assert_eq!(second, "  world");
+    }
+
+    #[test]
     fn empty_assistant_text() {
         let msg = Message::new(MessageContent::AssistantText(String::new()));
         assert!(msg.to_lines().is_empty());

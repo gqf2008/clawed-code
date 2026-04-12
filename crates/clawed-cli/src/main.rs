@@ -22,7 +22,7 @@ use tracing_subscriber::EnvFilter;
 #[command(name = "clawed", version, about = "Clawed Code — AI coding assistant (Rust)")]
 struct Cli {
     /// Initial prompt — run non-interactively and exit.
-    /// If omitted, starts an interactive REPL session
+    /// If omitted, starts an interactive TUI session by default
     prompt: Option<String>,
 
     /// API key for authentication.
@@ -184,9 +184,14 @@ struct Cli {
     #[arg(long, default_value = "0")]
     timeout: u64,
 
+    /// Force the legacy line-oriented REPL instead of the default TUI.
+    /// Only applies when no prompt or stdin input is provided.
+    #[arg(long, conflicts_with = "tui")]
+    repl: bool,
+
     /// Enable full-screen TUI mode with partitioned layout.
-    /// Provides a live status bar, scrollable output zone, and persistent input dock.
-    #[arg(long)]
+    /// Kept for compatibility; interactive startup already defaults to TUI.
+    #[arg(long, conflicts_with = "repl")]
     tui: bool,
 }
 
@@ -218,6 +223,8 @@ async fn main() {
 
 async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    let stdin_is_tty = std::io::IsTerminal::is_terminal(&std::io::stdin());
+    let use_tui = should_use_tui(&cli, stdin_is_tty);
 
     // ── Handle --completions: generate shell completions and exit ────────
     if let Some(shell) = cli.completions {
@@ -396,7 +403,7 @@ async fn run() -> anyhow::Result<()> {
     // When running in TUI mode, route permission prompts through the event bus
     // so the ratatui UI handles them instead of raw terminal I/O (which would
     // corrupt the alternate screen).
-    if cli.tui {
+    if use_tui {
         let perm_req_tx = bus_handle.perm_req_sender();
         if let Some(perm_resp_rx) = bus_handle.take_perm_resp_rx() {
             let prompter = std::sync::Arc::new(
@@ -471,7 +478,7 @@ async fn run() -> anyhow::Result<()> {
 
     if let Some(prompt) = cli.prompt {
         // Combine explicit prompt with any piped stdin
-        let full_prompt = if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        let full_prompt = if !stdin_is_tty {
             let mut stdin_buf = String::new();
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut stdin_buf)?;
             if stdin_buf.is_empty() {
@@ -524,7 +531,7 @@ async fn run() -> anyhow::Result<()> {
         };
 
         run_with_timeout(task, cli.timeout).await?;
-    } else if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+    } else if !stdin_is_tty {
         // Stdin-only mode: read from pipe with no explicit prompt
         let mut stdin_buf = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut stdin_buf)?;
@@ -546,7 +553,7 @@ async fn run() -> anyhow::Result<()> {
         } else {
             eprintln!("No input provided. Use `claude \"prompt\"` or pipe via stdin.");
         }
-    } else if cli.tui {
+    } else if use_tui {
         // TUI mode: full-screen partitioned terminal UI
         tui::run_tui(client_handle, engine, cwd).await?;
     } else {
@@ -554,6 +561,10 @@ async fn run() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn should_use_tui(cli: &Cli, stdin_is_tty: bool) -> bool {
+    cli.prompt.is_none() && stdin_is_tty && (cli.tui || !cli.repl)
 }
 
 /// Run a future with an optional global timeout.
@@ -598,6 +609,8 @@ mod tests {
         assert!(!cli.coordinator);
         assert!(!cli.thinking);
         assert!(!cli.init);
+        assert!(!cli.repl);
+        assert!(!cli.tui);
     }
 
     #[test]
@@ -685,5 +698,23 @@ mod tests {
     fn test_cli_defaults_list_sessions_false() {
         let cli = Cli::try_parse_from(["claude"]).unwrap();
         assert!(!cli.list_sessions);
+    }
+
+    #[test]
+    fn test_default_interactive_mode_is_tui() {
+        let cli = Cli::try_parse_from(["claude"]).unwrap();
+        assert!(should_use_tui(&cli, true));
+    }
+
+    #[test]
+    fn test_repl_flag_disables_default_tui() {
+        let cli = Cli::try_parse_from(["claude", "--repl"]).unwrap();
+        assert!(!should_use_tui(&cli, true));
+    }
+
+    #[test]
+    fn test_no_tui_when_stdin_is_not_tty() {
+        let cli = Cli::try_parse_from(["claude"]).unwrap();
+        assert!(!should_use_tui(&cli, false));
     }
 }

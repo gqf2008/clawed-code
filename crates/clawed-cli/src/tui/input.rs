@@ -2,7 +2,7 @@
 //!
 //! Provides a multi-line input with:
 //! - UTF-8-aware cursor management
-//! - Multi-line editing (Shift+Enter inserts newline, up to MAX_INPUT_ROWS)
+//! - Multi-line editing (modified Enter/Ctrl+J insert newline)
 //! - Basic editing (Backspace, Delete, Ctrl+A/E/W/U, left/right arrows)
 //! - History navigation (Up/Down when at first/last line)
 //! - Slash command completion (Tab)
@@ -38,7 +38,6 @@ pub enum InputAction {
     None,
     Submit,
     Abort,
-    Quit,
     Changed,
 }
 
@@ -140,11 +139,8 @@ impl InputWidget {
         }
 
         let action = match key.code {
-            // Submit (Enter without Shift/Alt) or accept completion
-            KeyCode::Enter
-                if !key.modifiers.contains(KeyModifiers::SHIFT)
-                    && !key.modifiers.contains(KeyModifiers::ALT) =>
-            {
+            // Submit on plain Enter, or accept completion.
+            KeyCode::Enter if key.modifiers == KeyModifiers::NONE => {
                 if let Some(ref comp) = self.completion {
                     // Accept completion
                     let idx = comp.matches[comp.selected];
@@ -159,13 +155,9 @@ impl InputWidget {
                 }
             }
 
-            // Shift+Enter or Alt+Enter: insert newline (multi-line mode, unlimited lines)
-            // Alt+Enter works on more terminals than Shift+Enter when keyboard enhancement
-            // is not available (e.g. macOS Terminal.app, basic SSH sessions).
-            KeyCode::Enter
-                if key.modifiers.contains(KeyModifiers::SHIFT)
-                    || key.modifiers.contains(KeyModifiers::ALT) =>
-            {
+            // Any modified Enter inserts a newline. With keyboard enhancement
+            // enabled, Shift+Enter arrives here; Alt+Enter also works as a fallback.
+            KeyCode::Enter => {
                 self.completion = None;
                 let byte = char_to_byte(&self.buffer, self.cursor);
                 self.buffer.insert(byte, '\n');
@@ -189,8 +181,20 @@ impl InputWidget {
                 InputAction::Abort
             }
 
-            // Quit (Esc)
-            KeyCode::Esc => InputAction::Quit,
+            // Esc: dismiss completion → clear input → no-op (never quits).
+            KeyCode::Esc => {
+                if self.completion.is_some() {
+                    self.completion = None;
+                    InputAction::Changed
+                } else if !self.buffer.is_empty() {
+                    self.buffer.clear();
+                    self.cursor = 0;
+                    self.scroll_offset = 0;
+                    InputAction::Changed
+                } else {
+                    InputAction::None
+                }
+            }
 
             // Tab completion
             KeyCode::Tab => {
@@ -602,6 +606,10 @@ mod tests {
         KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)
     }
 
+    fn alt_enter() -> KeyEvent {
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)
+    }
+
     #[test]
     fn test_type_text() {
         let mut w = InputWidget::new();
@@ -688,12 +696,46 @@ mod tests {
     }
 
     #[test]
-    fn test_escape_quit() {
+    fn test_escape_clears_input_not_quit() {
         let mut w = InputWidget::new();
+        // ESC with empty buffer → no-op
         assert!(matches!(
             w.handle_key(key(KeyCode::Esc)),
-            InputAction::Quit
+            InputAction::None
         ));
+
+        // Type something, then ESC → clears buffer
+        w.handle_key(key(KeyCode::Char('h')));
+        w.handle_key(key(KeyCode::Char('i')));
+        assert_eq!(w.buffer(), "hi");
+        assert!(matches!(
+            w.handle_key(key(KeyCode::Esc)),
+            InputAction::Changed
+        ));
+        assert_eq!(w.buffer(), "");
+    }
+
+    #[test]
+    fn test_escape_dismisses_completion_first() {
+        let mut w = InputWidget::new();
+        // Type "/" to trigger completion popup
+        w.handle_key(key(KeyCode::Char('/')));
+        assert!(w.in_completion());
+
+        // ESC should dismiss completion but keep buffer
+        assert!(matches!(
+            w.handle_key(key(KeyCode::Esc)),
+            InputAction::Changed
+        ));
+        assert!(!w.in_completion());
+        assert_eq!(w.buffer(), "/");
+
+        // Second ESC clears the buffer
+        assert!(matches!(
+            w.handle_key(key(KeyCode::Esc)),
+            InputAction::Changed
+        ));
+        assert_eq!(w.buffer(), "");
     }
 
     #[test]
@@ -778,6 +820,15 @@ mod tests {
         assert_eq!(w.buffer(), "line1\nline2");
         assert_eq!(w.line_count(), 2);
         assert_eq!(w.visible_rows(), 2);
+    }
+
+    #[test]
+    fn test_alt_enter_newline() {
+        let mut w = InputWidget::new();
+        w.insert_text("line1");
+        assert!(matches!(w.handle_key(alt_enter()), InputAction::Changed));
+        w.insert_text("line2");
+        assert_eq!(w.buffer(), "line1\nline2");
     }
 
     #[test]
