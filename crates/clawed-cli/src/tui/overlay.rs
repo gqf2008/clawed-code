@@ -370,11 +370,42 @@ pub fn build_theme_overlay(current_theme: &str) -> Overlay {
     }
 }
 
+/// Strip ANSI/VT100 escape sequences from a string.
+/// The help text is generated with ANSI codes for REPL mode; we must remove
+/// them before passing the text to ratatui which manages styling itself.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                // skip CSI parameters and intermediate bytes until final byte
+                for c in chars.by_ref() {
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            // other escape sequences: just skip the ESC
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// Build an info panel overlay from a title and multi-line text.
+///
+/// Applies ratatui styling per line:
+/// - Lines with no leading whitespace → section header (Cyan Bold)
+/// - Lines starting with `/` after indent → command name (White) + description (Muted)
+/// - Lines starting with `•` after indent → tip text (Muted)
+/// - Everything else → terminal default
 pub fn build_info_overlay(title: &str, text: &str) -> Overlay {
     let lines: Vec<Line<'static>> = text
         .lines()
-        .map(|l| Line::styled(l.to_string(), Style::default().fg(Color::White)))
+        .map(|l| style_info_line(&strip_ansi(l)))
         .collect();
 
     Overlay::InfoPanel {
@@ -382,6 +413,60 @@ pub fn build_info_overlay(title: &str, text: &str) -> Overlay {
         lines,
         scroll_offset: 0,
     }
+}
+
+fn style_info_line(line: &str) -> Line<'static> {
+    if line.is_empty() {
+        return Line::from("");
+    }
+
+    let trimmed = line.trim_start();
+    let indent_len = line.len() - trimmed.len();
+    let indent = " ".repeat(indent_len);
+
+    // Section header: no leading whitespace
+    if indent_len == 0 {
+        return Line::styled(
+            line.to_string(),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        );
+    }
+
+    // Tip line: starts with bullet
+    if trimmed.starts_with('•') {
+        return Line::from(vec![
+            Span::raw(indent),
+            Span::styled(trimmed.to_string(), Style::default().fg(MUTED)),
+        ]);
+    }
+
+    // Command line: starts with '/'
+    if trimmed.starts_with('/') {
+        // Split on first run of 2+ spaces to separate command from description
+        if let Some(space_pos) = trimmed.find("  ") {
+            let cmd = &trimmed[..space_pos];
+            let desc = trimmed[space_pos..].trim_start();
+            return Line::from(vec![
+                Span::raw(indent),
+                Span::styled(
+                    cmd.to_string(),
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(desc.to_string(), Style::default().fg(MUTED)),
+            ]);
+        }
+        return Line::from(vec![
+            Span::raw(indent),
+            Span::styled(
+                trimmed.to_string(),
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            ),
+        ]);
+    }
+
+    // Default
+    Line::styled(line.to_string(), Style::default())
 }
 
 /// Build a styled info panel from pre-rendered ratatui Lines.
