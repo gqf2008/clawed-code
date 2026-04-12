@@ -19,7 +19,7 @@ const HINTS_ENHANCED: &[(&str, &str)] = &[
 /// Static hints shown when keyboard enhancement is NOT available.
 const HINTS_BASIC: &[(&str, &str)] = &[
     ("Tab", "complete"),
-    ("Ctrl+J", "newline"),
+    ("Ctrl+J/N", "newline"),
     ("↑↓", "history"),
     ("Ctrl+V", "paste image"),
     ("Ctrl+O", "thinking"),

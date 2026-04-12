@@ -69,6 +69,8 @@ struct App {
     pending_command: Option<crate::commands::CommandResult>,
     /// Whether the terminal supports kitty keyboard enhancement protocol.
     enhanced_keys: bool,
+    /// Debug mode: log raw key events as system messages.
+    key_debug: bool,
 }
 
 impl App {
@@ -92,6 +94,7 @@ impl App {
             pending_images: Vec::new(),
             pending_command: None,
             enhanced_keys: false,
+            key_debug: false,
         }
     }
 
@@ -1092,7 +1095,7 @@ pub async fn run_tui(
     if !keyboard_enhancement_enabled {
         app.push_message(MessageContent::System(
             "Tip: Your terminal doesn't support enhanced keyboard protocol. \
-             Use Ctrl+J to insert newlines (Shift+Enter unavailable)."
+             Use Ctrl+J or Ctrl+N to insert newlines (Shift+Enter unavailable)."
                 .to_string(),
         ));
     }
@@ -1113,6 +1116,13 @@ pub async fn run_tui(
                 Event::Key(key) => {
                     if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
                         continue;
+                    }
+
+                    // Key debug mode: log raw key events
+                    if app.key_debug {
+                        app.push_message(MessageContent::System(
+                            format!("KEY: code={:?} mod={:?} kind={:?}", key.code, key.modifiers, key.kind),
+                        ));
                     }
 
                     // If overlay is active, route keys there first
@@ -1229,6 +1239,14 @@ pub async fn run_tui(
                         (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
                             app.messages.clear();
                             app.scroll_offset = 0;
+                            continue;
+                        }
+                        // Toggle key debug mode
+                        (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                            app.key_debug = !app.key_debug;
+                            app.push_message(MessageContent::System(
+                                format!("Key debug: {}", if app.key_debug { "ON" } else { "OFF" }),
+                            ));
                             continue;
                         }
                         // Scroll back

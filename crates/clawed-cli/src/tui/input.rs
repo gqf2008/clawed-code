@@ -159,20 +159,22 @@ impl InputWidget {
             // enabled, Shift+Enter arrives here; Alt+Enter also works as a fallback.
             KeyCode::Enter => {
                 self.completion = None;
-                let byte = char_to_byte(&self.buffer, self.cursor);
-                self.buffer.insert(byte, '\n');
-                self.cursor += 1;
-                self.ensure_cursor_visible();
+                self.insert_newline();
                 InputAction::Changed
             }
 
-            // Ctrl+J: alternative newline key (works universally in raw mode)
-            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Ctrl+J (0x0A) — newline in raw mode (crossterm decodes as Char('j')+CONTROL).
+            // Also handle Ctrl+N as an extra fallback.
+            KeyCode::Char('j' | 'n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.completion = None;
-                let byte = char_to_byte(&self.buffer, self.cursor);
-                self.buffer.insert(byte, '\n');
-                self.cursor += 1;
-                self.ensure_cursor_visible();
+                self.insert_newline();
+                InputAction::Changed
+            }
+
+            // Some terminals/crossterm versions may report Ctrl+J as Char('\n').
+            KeyCode::Char('\n') => {
+                self.completion = None;
+                self.insert_newline();
                 InputAction::Changed
             }
 
@@ -407,6 +409,14 @@ impl InputWidget {
         let (row, _) = self.cursor_line_col();
         let (line_text, start) = spans[row];
         (line_text.to_string(), row, start)
+    }
+
+    /// Insert a newline character at the cursor position.
+    fn insert_newline(&mut self) {
+        let byte = char_to_byte(&self.buffer, self.cursor);
+        self.buffer.insert(byte, '\n');
+        self.cursor += 1;
+        self.ensure_cursor_visible();
     }
 
     fn handle_history_up(&mut self) -> InputAction {
