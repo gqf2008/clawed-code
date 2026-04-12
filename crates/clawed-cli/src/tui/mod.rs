@@ -2005,9 +2005,9 @@ async fn handle_async_command(
             app.overlay = Some(overlay::build_info_overlay("Configuration", &info));
         }
         CommandResult::Doctor => {
-            let prompt = "Run diagnostic checks on the development environment and report any issues.";
-            let _ = client.submit(prompt);
-            app.status.thinking = true;
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let doctor_overlay = overlay::build_doctor_overlay(engine, &cwd).await;
+            app.overlay = Some(doctor_overlay);
         }
         CommandResult::Init => {
             let prompt = "Create a CLAUDE.md file for this project with build commands, architecture, and conventions.";

@@ -520,6 +520,267 @@ pub fn build_status_overlay(
     }
 }
 
+/// Run local environment diagnostics and build an InfoPanel overlay.
+pub async fn build_doctor_overlay(
+    engine: &clawed_agent::engine::QueryEngine,
+    cwd: &std::path::Path,
+) -> Overlay {
+    let ok = Style::default().fg(Color::Green);
+    let warn = Style::default().fg(Color::Yellow);
+    let err = Style::default().fg(Color::Red);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let label = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+
+    let mut lines: Vec<Line<'static>> = vec![Line::from("")];
+    let mut warnings = 0u32;
+    let mut errors = 0u32;
+
+    macro_rules! row {
+        ($icon:expr, $style:expr, $msg:expr) => {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled($icon, $style),
+                Span::raw(" "),
+                Span::raw($msg),
+            ]));
+        };
+    }
+
+    // 1. API key
+    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+        row!("✓", ok, "ANTHROPIC_API_KEY configured");
+    } else {
+        row!("✗", err, "ANTHROPIC_API_KEY not set");
+        errors += 1;
+    }
+
+    // Parallel tool checks
+    let cwd_owned = cwd.to_path_buf();
+    let (git_ver, git_repo, rg_ver, node_ver) = tokio::join!(
+        tokio::task::spawn_blocking(|| {
+            std::process::Command::new("git").arg("--version").output()
+        }),
+        tokio::task::spawn_blocking(move || {
+            std::process::Command::new("git")
+                .args(["rev-parse", "--is-inside-work-tree"])
+                .current_dir(&cwd_owned)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        }),
+        tokio::task::spawn_blocking(|| {
+            std::process::Command::new("rg").arg("--version").output()
+        }),
+        tokio::task::spawn_blocking(|| {
+            std::process::Command::new("node").arg("--version").output()
+        }),
+    );
+
+    // 2. Git version
+    match git_ver.ok().and_then(|r| r.ok()) {
+        Some(out) if out.status.success() => {
+            let ver = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            row!("✓", ok, ver);
+        }
+        _ => {
+            row!("✗", err, "git not found in PATH");
+            errors += 1;
+        }
+    }
+
+    // 3. Git repo
+    if git_repo.unwrap_or(false) {
+        row!("✓", ok, "Inside git repository");
+    } else {
+        row!("⚠", warn, "Not inside a git repository");
+        warnings += 1;
+    }
+
+    // 4. CLAUDE.md
+    let claude_md = cwd.join("CLAUDE.md");
+    if claude_md.exists() {
+        let size = std::fs::metadata(&claude_md).map(|m| m.len()).unwrap_or(0);
+        row!("✓", ok, format!("CLAUDE.md found ({size} bytes)"));
+    } else {
+        row!("⚠", warn, "No CLAUDE.md — run /init to create one");
+        warnings += 1;
+    }
+
+    // 5. .claude/rules/
+    let rules_dir = cwd.join(".claude").join("rules");
+    if rules_dir.is_dir() {
+        let count = std::fs::read_dir(&rules_dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
+            .count();
+        if count > 0 {
+            row!("✓", ok, format!(".claude/rules/: {count} rule file(s)"));
+        } else {
+            row!("·", dim, ".claude/rules/ exists (empty)");
+        }
+    }
+
+    // 6. .claude/skills/
+    let skills_dir = cwd.join(".claude").join("skills");
+    if skills_dir.is_dir() {
+        let count = std::fs::read_dir(&skills_dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
+            .count();
+        if count > 0 {
+            row!("✓", ok, format!(".claude/skills/: {count} skill(s)"));
+        } else {
+            row!("·", dim, ".claude/skills/ exists (empty)");
+        }
+    }
+
+    // 7. Memory files
+    let mem_files = clawed_core::memory::list_memory_files(cwd);
+    if !mem_files.is_empty() {
+        row!("✓", ok, format!("{} memory file(s)", mem_files.len()));
+    }
+
+    // 8. Sessions
+    let sessions = clawed_core::session::list_sessions();
+    if !sessions.is_empty() {
+        let latest_age = clawed_core::session::format_age(&sessions[0].updated_at);
+        row!(
+            "✓",
+            ok,
+            format!("{} saved session(s), latest: {latest_age}", sessions.len())
+        );
+    }
+
+    // 9. Settings
+    let loaded = clawed_core::config::Settings::load_merged(cwd);
+    if loaded.layers.is_empty() {
+        row!("·", dim, "Using default settings (no config files found)");
+    } else {
+        let sources: Vec<String> = loaded.sources.iter().map(|s| s.to_string()).collect();
+        row!("✓", ok, format!("Settings: {}", sources.join(", ")));
+    }
+
+    // 10. Ripgrep
+    match rg_ver.ok().and_then(|r| r.ok()) {
+        Some(out) if out.status.success() => {
+            let ver = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .to_string();
+            row!("✓", ok, ver);
+        }
+        _ => {
+            row!("⚠", warn, "ripgrep (rg) not found — GrepTool may not work");
+            warnings += 1;
+        }
+    }
+
+    // 11. Node.js
+    match node_ver.ok().and_then(|r| r.ok()) {
+        Some(out) if out.status.success() => {
+            let ver = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            row!("✓", ok, format!("Node.js {ver}"));
+        }
+        _ => {
+            row!("·", dim, "Node.js not found (optional, for MCP servers)");
+        }
+    }
+
+    // 12. Model + engine info
+    {
+        let s = engine.state().read().await;
+        let display = clawed_core::model::display_name_any(&s.model);
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("  Model:       ", label),
+            Span::raw(format!("{display} ({})", s.model)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Permission:  ", label),
+            Span::raw(format!("{:?}", s.permission_mode)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Tools:       ", label),
+            Span::raw(format!("{} registered", engine.tool_count())),
+        ]));
+        if let Some(pct) = engine.context_usage_percent().await {
+            lines.push(Line::from(vec![
+                Span::styled("  Context:     ", label),
+                Span::raw(format!("{pct}%")),
+            ]));
+        }
+    }
+
+    // 13. MCP config
+    let mcp_config = cwd.join(".claude").join("mcp.json");
+    if mcp_config.exists() {
+        if let Ok(content) = std::fs::read_to_string(&mcp_config) {
+            match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(val) => {
+                    let count = val
+                        .get("mcpServers")
+                        .and_then(|s| s.as_object())
+                        .map(|o| o.len())
+                        .unwrap_or(0);
+                    row!("✓", ok, format!("MCP config: {count} server(s)"));
+                }
+                Err(_) => {
+                    row!("⚠", warn, ".claude/mcp.json: invalid JSON");
+                    warnings += 1;
+                }
+            }
+        }
+    }
+
+    // 14. Custom provider env vars
+    if let Ok(base_url) = std::env::var("ANTHROPIC_BASE_URL") {
+        lines.push(Line::from(vec![
+            Span::styled("  Base URL:    ", label),
+            Span::raw(base_url),
+        ]));
+    }
+    if let Ok(provider) = std::env::var("CLAUDE_CODE_PROVIDER") {
+        lines.push(Line::from(vec![
+            Span::styled("  Provider:    ", label),
+            Span::raw(provider),
+        ]));
+    }
+
+    // Summary
+    lines.push(Line::from(""));
+    if errors == 0 && warnings == 0 {
+        lines.push(Line::from(vec![Span::styled(
+            "  🎉 All checks passed!",
+            ok.add_modifier(Modifier::BOLD),
+        )]));
+    } else {
+        if errors > 0 {
+            lines.push(Line::from(vec![Span::styled(
+                format!("  ✗ {errors} error(s)"),
+                err.add_modifier(Modifier::BOLD),
+            )]));
+        }
+        if warnings > 0 {
+            lines.push(Line::from(vec![Span::styled(
+                format!("  ⚠ {warnings} warning(s)"),
+                warn.add_modifier(Modifier::BOLD),
+            )]));
+        }
+    }
+    lines.push(Line::from(""));
+
+    Overlay::InfoPanel {
+        title: "Doctor".to_string(),
+        lines,
+        scroll_offset: 0,
+    }
+}
+
 fn format_elapsed(secs: u64) -> String {
     if secs < 60 {
         format!("{secs}s")
