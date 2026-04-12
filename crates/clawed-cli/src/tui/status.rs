@@ -59,6 +59,7 @@ pub fn render(
     model: &str,
     total_input_tokens: u64,
     total_output_tokens: u64,
+    queued_count: usize,
 ) {
     let dim = Style::default().fg(MUTED);
     let warn = Style::default().fg(Color::Yellow);
@@ -75,6 +76,14 @@ pub fn render(
         let ch = SPINNER[state.spinner_frame % SPINNER.len()];
         spans.push(Span::raw("  "));
         spans.push(Span::styled(format!("{ch} thinking"), tool_style));
+
+        if queued_count > 0 {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(
+                format!("📥 {queued_count} queued"),
+                Style::default().fg(Color::Yellow),
+            ));
+        }
     }
 
     let tool_count = state.active_tools.len();

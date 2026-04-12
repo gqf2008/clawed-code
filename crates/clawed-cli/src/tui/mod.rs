@@ -75,6 +75,8 @@ struct App {
     pending_command: Option<crate::commands::CommandResult>,
     /// Debug mode: log raw key events as system messages.
     key_debug: bool,
+    /// Inputs queued while LLM is generating; merged and submitted on TurnComplete.
+    queued_inputs: Vec<String>,
 }
 
 impl App {
@@ -98,6 +100,7 @@ impl App {
             pending_images: Vec::new(),
             pending_command: None,
             key_debug: false,
+            queued_inputs: Vec::new(),
         }
     }
 
@@ -138,7 +141,8 @@ impl App {
         self.push_message(MessageContent::ThinkingText(text.to_string()));
     }
 
-    fn handle_notification(&mut self, notification: AgentNotification) {
+    /// Returns Some(merged_text) if queued inputs should be submitted after this notification.
+    fn handle_notification(&mut self, notification: AgentNotification) -> Option<String> {
         match notification {
             AgentNotification::TextDelta { text } => {
                 self.status.thinking = false;
@@ -210,6 +214,12 @@ impl App {
                     input_tokens: usage.input_tokens,
                     output_tokens: usage.output_tokens,
                 });
+                // Drain queue: merge all pending inputs and submit as one message
+                if !self.queued_inputs.is_empty() {
+                    let merged = self.queued_inputs.join("\n\n");
+                    self.queued_inputs.clear();
+                    return Some(merged);
+                }
             }
             AgentNotification::TurnStart { turn } => {
                 self.status.thinking = true;
@@ -466,6 +476,7 @@ impl App {
                 )));
             }
         }
+        None
     }
 
     fn handle_slash_command(&mut self, client: &ClientHandle, cmd: &str) {
@@ -701,6 +712,7 @@ fn render(frame: &mut Frame, app: &App) {
             &app.model,
             app.total_input_tokens,
             app.total_output_tokens,
+            app.queued_inputs.len(),
         );
     }
 
@@ -1289,6 +1301,21 @@ pub async fn run_tui(
                                 } else {
                                     format!("{text} [+{} image(s)]", app.pending_images.len())
                                 };
+
+                                // While LLM is generating, queue plain text inputs
+                                // (slash commands and /abort are always handled immediately)
+                                if app.status.thinking
+                                    && !text.starts_with('/')
+                                    && app.pending_images.is_empty()
+                                {
+                                    app.queued_inputs.push(text);
+                                    let n = app.queued_inputs.len();
+                                    app.push_message(MessageContent::System(format!(
+                                        "📥 Queued ({n} pending — will send when LLM finishes)"
+                                    )));
+                                    continue;
+                                }
+
                                 app.push_message(MessageContent::UserInput(display));
 
                                 if text.starts_with('/') {
@@ -1296,6 +1323,7 @@ pub async fn run_tui(
                                     if text == "/abort" {
                                         let _ = client.abort();
                                         app.status.thinking = false;
+                                        app.queued_inputs.clear();
                                         app.push_message(MessageContent::System(
                                             "[Aborted]".to_string(),
                                         ));
@@ -1324,6 +1352,7 @@ pub async fn run_tui(
                         input::InputAction::Abort => {
                             let _ = client.abort();
                             app.status.thinking = false;
+                            app.queued_inputs.clear();
                             app.push_message(MessageContent::System(
                                 "[Aborted]".to_string(),
                             ));
@@ -1345,7 +1374,12 @@ pub async fn run_tui(
 
         // Drain notification channel
         while let Ok(notification) = notify_rx.try_recv() {
-            app.handle_notification(notification);
+            if let Some(merged) = app.handle_notification(notification) {
+                // Queued inputs from while LLM was generating — submit as one message
+                app.push_message(MessageContent::UserInput(merged.clone()));
+                let _ = client.submit(&merged);
+                app.status.thinking = true;
+            }
         }
 
         // Check for incoming permission requests
