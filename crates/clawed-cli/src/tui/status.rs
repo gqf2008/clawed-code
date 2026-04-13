@@ -52,14 +52,12 @@ impl TuiStatusState {
 }
 
 /// Render the status bar into the given area.
+/// Shows only dynamic content: elapsed time, spinner, tools, shells, agents.
+/// Static info (model, tokens, ctx%, queue count) is now in the separator line.
 pub fn render(
     frame: &mut Frame,
     area: Rect,
     state: &TuiStatusState,
-    model: &str,
-    total_input_tokens: u64,
-    total_output_tokens: u64,
-    queued_count: usize,
 ) {
     let dim = Style::default().fg(MUTED);
     let warn = Style::default().fg(Color::Yellow);
@@ -76,14 +74,6 @@ pub fn render(
         let ch = SPINNER[state.spinner_frame % SPINNER.len()];
         spans.push(Span::raw("  "));
         spans.push(Span::styled(format!("{ch} thinking"), tool_style));
-
-        if queued_count > 0 {
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(
-                format!("📥 {queued_count} queued"),
-                Style::default().fg(Color::Yellow),
-            ));
-        }
     }
 
     let tool_count = state.active_tools.len();
@@ -115,33 +105,6 @@ pub fn render(
         spans.push(Span::raw("  "));
         spans.push(Span::styled(format!("{agent_count} agent{s}"), warn));
     }
-
-    // Token usage
-    let total_tokens = total_input_tokens + total_output_tokens;
-    if total_tokens > 0 {
-        spans.push(Span::raw("  "));
-        let token_text = if total_tokens >= 1000 {
-            format!("{:.1}k tokens", total_tokens as f64 / 1000.0)
-        } else {
-            format!("{total_tokens} tokens")
-        };
-        spans.push(Span::styled(token_text, dim));
-    }
-
-    // Context window usage
-    if state.context_pct > 0.0 {
-        spans.push(Span::raw("  "));
-        let ctx_style = if state.context_pct >= 80.0 {
-            warn
-        } else {
-            dim
-        };
-        spans.push(Span::styled(format!("{:.0}% ctx", state.context_pct), ctx_style));
-    }
-
-    // Model info on the right
-    spans.push(Span::raw("  "));
-    spans.push(Span::styled(model.to_string(), dim));
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }

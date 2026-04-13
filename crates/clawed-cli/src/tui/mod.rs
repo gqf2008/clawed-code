@@ -3,10 +3,13 @@
 //! Layout:
 //! ```text
 //! Messages (scrollable)
-//! -- separator --
-//! 00:05  thinking  bash (00:02)  model  (status, when active)
+//! ── claude-3.5 │ turn 3 │ 4096↑ 1024↓ │ 80% ctx │ 📥2 ──  (separator + static info)
+//! ⠹ thinking  Bash (00:03)  2 agents                         (dynamic status, only when active)
+//! ▸ queued message 1                                          (queue items, only when queued)
+//! ▸ queued message 2
+//! ──────────────────────────────────────────────────────────  (input separator, always)
 //! > user input here_
-//! Tab: complete  Ctrl+J: newline  Ctrl+C: abort/quit  (hint bar, toggleable)
+//! Tab: complete  Ctrl+J: newline  Ctrl+C: abort/quit          (hint bar, toggleable)
 //! ```
 
 mod bottombar;
@@ -715,6 +718,7 @@ fn render(frame: &mut Frame, app: &App) {
     } else {
         u16::from(!app.bottom_bar_hidden)
     };
+    // Dynamic status (spinner, tools, agents) — only shown when active.
     let status_rows = u16::from(app.status.should_show());
     let task_plan_rows = app.task_plan.render_height();
 
@@ -727,19 +731,25 @@ fn render(frame: &mut Frame, app: &App) {
         input_rows + bottom_bar_rows
     };
 
-    // Dedicated queue banner: 1 header row + 1 row per queued message (capped at 6)
+    // Queue items: 1 row per queued message (capped at 5), no header row.
+    // Queue count is shown inside the separator line instead.
     let queue_rows = if has_permission || app.queued_inputs.is_empty() {
         0
     } else {
-        (1 + app.queued_inputs.len()).min(6) as u16
+        app.queued_inputs.len().min(5) as u16
     };
+
+    // Input separator is always shown (separates queue/status from input box).
+    // Suppress it when permission prompt is active (it has its own layout).
+    let input_sep_rows = u16::from(!has_permission);
 
     let constraints = [
         Constraint::Min(1),                       // messages
         Constraint::Length(task_plan_rows),        // task plan (0 if empty)
-        Constraint::Length(1),                     // separator
-        Constraint::Length(status_rows),           // status (0 or 1)
-        Constraint::Length(queue_rows),            // queue banner (0 or 1)
+        Constraint::Length(1),                     // separator (with static info)
+        Constraint::Length(status_rows),           // dynamic status (0 or 1)
+        Constraint::Length(queue_rows),            // queue items (0 or n)
+        Constraint::Length(input_sep_rows),        // input separator (always 1, except perm)
         Constraint::Length(footer_rows),           // input/permission footer
     ];
 
@@ -749,7 +759,8 @@ fn render(frame: &mut Frame, app: &App) {
     let sep_area = chunks[2];
     let status_area = chunks[3];
     let queue_area = chunks[4];
-    let footer_area = chunks[5];
+    let input_sep_area = chunks[5];
+    let footer_area = chunks[6];
 
     render_messages(frame, msg_area, app);
 
@@ -757,22 +768,22 @@ fn render(frame: &mut Frame, app: &App) {
         taskplan::render(frame, task_area, &app.task_plan);
     }
 
-    render_separator(frame, sep_area, app.scroll_offset);
+    render_separator(frame, sep_area, app.scroll_offset, app);
 
     if status_rows > 0 {
         status::render(
             frame,
             status_area,
             &app.status,
-            &app.model,
-            app.total_input_tokens,
-            app.total_output_tokens,
-            app.queued_inputs.len(),
         );
     }
 
     if queue_rows > 0 {
         render_queue_banner(frame, queue_area, &app.queued_inputs);
+    }
+
+    if input_sep_rows > 0 && !has_permission {
+        render_input_separator(frame, input_sep_area);
     }
 
     if let Some(ref perm) = app.permission {
@@ -863,27 +874,13 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_queue_banner(frame: &mut Frame, area: Rect, queued: &[String]) {
-    let count = queued.len();
-    let s = if count == 1 { "" } else { "s" };
-    let header = Line::from(vec![
-        Span::styled(
-            format!("  📥 {count} message{s} queued — will be sent when LLM finishes"),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "  [Esc / Ctrl+C to cancel]",
-            Style::default().fg(Color::Yellow),
-        ),
-    ]);
-
-    // One line per queued message, truncated to fit the available width
-    let max_text_width = (area.width as usize).saturating_sub(7); // "  N│ " prefix
-    let msg_lines: Vec<Line> = queued
+    // One line per queued message with ▸ prefix, truncated to available width.
+    // "  ▸ " = 4 chars prefix
+    let max_text_width = (area.width as usize).saturating_sub(4);
+    let lines: Vec<Line> = queued
         .iter()
-        .enumerate()
-        .take(area.height.saturating_sub(1) as usize) // don't exceed area height
-        .map(|(i, msg)| {
-            // Show only the first line of multi-line messages
+        .take(area.height as usize)
+        .map(|msg| {
             let first_line = msg.lines().next().unwrap_or(msg.as_str());
             let truncated: String = if first_line.chars().count() > max_text_width {
                 first_line.chars().take(max_text_width.saturating_sub(1)).collect::<String>() + "…"
@@ -891,46 +888,129 @@ fn render_queue_banner(frame: &mut Frame, area: Rect, queued: &[String]) {
                 first_line.to_string()
             };
             Line::from(vec![
-                Span::styled(
-                    format!("  {}│ ", i + 1),
-                    Style::default().fg(Color::Yellow),
-                ),
+                Span::styled("  \u{25B8} ", Style::default().fg(Color::Yellow)),
                 Span::styled(truncated, Style::default().fg(Color::Yellow)),
             ])
         })
         .collect();
-
-    let mut lines = vec![header];
-    lines.extend(msg_lines);
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize) {
-    if scroll_offset > 0 {
-        // Show scroll indicator
-        let indicator = format!(" \u{2191} {scroll_offset} lines up ");
-        let pad_len = (area.width as usize).saturating_sub(indicator.len());
-        let left = pad_len / 2;
-        let right = pad_len - left;
-        let line = Line::from(vec![
-            Span::styled(
-                "\u{2500}".repeat(left),
-                Style::default().fg(MUTED),
-            ),
-            Span::styled(
-                indicator,
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "\u{2500}".repeat(right),
-                Style::default().fg(MUTED),
-            ),
-        ]);
-        frame.render_widget(Paragraph::new(line), area);
+/// Thin separator always rendered directly above the input box.
+fn render_input_separator(frame: &mut Frame, area: Rect) {
+    let sep = "\u{2500}".repeat(area.width as usize);
+    frame.render_widget(
+        Paragraph::new(Line::styled(sep, Style::default().fg(MUTED))),
+        area,
+    );
+}
+
+fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &App) {
+    let width = area.width as usize;
+    let dim = Style::default().fg(MUTED);
+    let hi = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+
+    // Build the info string embedded in the separator.
+    // Format: " model │ turn N │ Xk↑ Yk↓ │ Z% ctx │ 📥N "
+    let mut info_parts: Vec<String> = Vec::new();
+
+    // Shorten model name: strip provider prefix and date suffix for brevity.
+    let short_model = shorten_model_name(&app.model);
+    if !short_model.is_empty() {
+        info_parts.push(short_model);
+    }
+
+    if app.total_turns > 0 {
+        info_parts.push(format!("turn {}", app.total_turns));
+    }
+
+    let total_tokens = app.total_input_tokens + app.total_output_tokens;
+    if total_tokens > 0 {
+        info_parts.push(format!(
+            "{}{}",
+            fmt_tokens(app.total_input_tokens),
+            fmt_tokens(app.total_output_tokens),
+        ));
+    }
+
+    if app.status.context_pct > 0.0 {
+        info_parts.push(format!("{:.0}% ctx", app.status.context_pct));
+    }
+
+    if !app.queued_inputs.is_empty() {
+        info_parts.push(format!("\u{1F4E5}{}", app.queued_inputs.len()));
+    }
+
+    let info = if info_parts.is_empty() {
+        String::new()
     } else {
-        let sep = "\u{2500}".repeat(area.width as usize);
-        let line = Line::styled(sep, Style::default().fg(MUTED));
-        frame.render_widget(Paragraph::new(line), area);
+        format!(" {} ", info_parts.join(" \u{2502} "))
+    };
+
+    // Scroll indicator on the right when scrolled up.
+    let scroll = if scroll_offset > 0 {
+        format!(" \u{2191}{scroll_offset} ")
+    } else {
+        String::new()
+    };
+
+    let info_w = info.width();
+    let scroll_w = scroll.width();
+    let content_w = info_w + scroll_w;
+    let dashes = width.saturating_sub(content_w);
+    let left = dashes / 2;
+    let right = dashes - left;
+
+    let mut spans = vec![
+        Span::styled("\u{2500}".repeat(left), dim),
+        Span::styled(info, dim),
+    ];
+    if scroll_w > 0 {
+        spans.push(Span::styled("\u{2500}".repeat(right.saturating_sub(scroll_w)), dim));
+        spans.push(Span::styled(scroll, hi));
+        // fill remaining
+        let used = left + info_w + right.saturating_sub(scroll_w) + scroll_w;
+        let fill = width.saturating_sub(used);
+        if fill > 0 {
+            spans.push(Span::styled("\u{2500}".repeat(fill), dim));
+        }
+    } else {
+        spans.push(Span::styled("\u{2500}".repeat(right), dim));
+    }
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// Shorten a model identifier for display in the separator.
+/// e.g. "claude-3-5-sonnet-20241022" → "claude-3.5-sonnet"
+///      "gpt-4o-mini"               → "gpt-4o-mini"
+fn shorten_model_name(model: &str) -> String {
+    // Strip known date suffix patterns like "-20241022" or "-2024-10-22"
+    let without_date = {
+        let mut s = model;
+        // trailing 8-digit date
+        if s.len() > 9 {
+            let tail = &s[s.len() - 9..];
+            if tail.starts_with('-') && tail[1..].chars().all(|c| c.is_ascii_digit()) {
+                s = &s[..s.len() - 9];
+            }
+        }
+        s
+    };
+    // Cap at 28 chars
+    if without_date.chars().count() > 28 {
+        without_date.chars().take(27).collect::<String>() + "…"
+    } else {
+        without_date.to_string()
+    }
+}
+
+/// Format a token count compactly: ≥1000 → "1.2k↑", else "512↑".
+fn fmt_tokens(n: u64) -> String {
+    if n >= 1_000 {
+        format!("{:.0}k", n as f64 / 1000.0)
+    } else {
+        n.to_string()
     }
 }
 
