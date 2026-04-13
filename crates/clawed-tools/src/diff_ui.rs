@@ -3,14 +3,32 @@
 //! Uses `similar` for unified diff computation and `syntect` for language-aware
 //! syntax highlighting within changed/context lines. Outputs ANSI-colored text
 //! to stderr so it does not interfere with Claude's response stream.
+//!
+//! When TUI mode is active (ratatui manages the terminal), all stderr output
+//! is suppressed to prevent layout corruption.
 
 use similar::{ChangeTag, TextDiff};
 use std::io::Write;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 use syntect::util::as_24_bit_terminal_escaped;
+
+/// When true, `print_diff` and `print_create_diff` become no-ops because the
+/// TUI owns the terminal and raw stderr writes would corrupt ratatui's state.
+static TUI_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Call once at TUI startup to suppress all diff stderr output.
+pub fn set_tui_mode(enabled: bool) {
+    TUI_MODE.store(enabled, Ordering::Relaxed);
+}
+
+/// Returns true if diff stderr output is suppressed (TUI mode active).
+pub fn is_tui_mode() -> bool {
+    TUI_MODE.load(Ordering::Relaxed)
+}
 
 const CONTEXT_LINES: usize = 3;
 
@@ -81,7 +99,11 @@ fn syntax_for_path(label: &str) -> Option<&'static SyntaxReference> {
 
 /// Print a colored unified diff between `old` and `new` to stderr.
 /// `label` is typically the file path shown in the diff header.
+/// No-op when TUI mode is active (ratatui manages the terminal).
 pub fn print_diff(label: &str, old: &str, new: &str) {
+    if is_tui_mode() {
+        return;
+    }
     let diff = TextDiff::from_lines(old, new);
 
     if diff.ratio() == 1.0 {
@@ -168,7 +190,11 @@ pub fn print_diff(label: &str, old: &str, new: &str) {
 }
 
 /// Print a "created file" diff (all lines added) with syntax highlighting.
+/// No-op when TUI mode is active (ratatui manages the terminal).
 pub fn print_create_diff(label: &str, content: &str) {
+    if is_tui_mode() {
+        return;
+    }
     let res = SyntaxRes::get();
     let syntax = syntax_for_path(label);
     let theme = &res.ts.themes["base16-ocean.dark"];

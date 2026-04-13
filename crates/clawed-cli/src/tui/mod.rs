@@ -93,6 +93,10 @@ struct App {
     /// TextDelta/ThinkingDelta received in this window belong to the previous
     /// (aborted) stream and must be discarded to avoid bleed-in.
     expecting_turn_start: bool,
+    /// Track overlay/permission visibility from the previous frame to detect
+    /// structural layout transitions that need a full terminal clear.
+    last_had_overlay: bool,
+    last_had_permission: bool,
 }
 
 impl App {
@@ -120,6 +124,8 @@ impl App {
             queued_inputs: Vec::new(),
             is_generating: false,
             expecting_turn_start: false,
+            last_had_overlay: false,
+            last_had_permission: false,
         }
     }
 
@@ -128,9 +134,6 @@ impl App {
         if self.auto_scroll {
             self.scroll_offset = 0;
         }
-        // Force a full terminal clear on the next draw so no ghost cells remain
-        // from the previous layout (no alternate screen, so ratatui diff can miss cells).
-        self.needs_full_clear = true;
     }
 
     /// Mark that the LLM is now generating a response.
@@ -1312,11 +1315,24 @@ pub async fn run_tui(
     // Clear screen for a clean start
     terminal.clear()?;
 
+    // Suppress diff_ui stderr output in TUI mode to prevent ratatui corruption.
+    clawed_tools::diff_ui::set_tui_mode(true);
+
     // Main event loop
     while app.running {
         // Advance spinner whenever generating (covers thinking, text streaming, tool execution)
         if app.status.is_generating || !app.status.active_tools.is_empty() {
             app.status.spinner_frame = app.status.spinner_frame.wrapping_add(1);
+        }
+
+        // Detect structural layout transitions (overlay/permission appear/disappear)
+        // that require a full clear to avoid ghost cells from the previous layout.
+        let cur_overlay = app.overlay.is_some();
+        let cur_permission = app.permission.is_some();
+        if cur_overlay != app.last_had_overlay || cur_permission != app.last_had_permission {
+            app.needs_full_clear = true;
+            app.last_had_overlay = cur_overlay;
+            app.last_had_permission = cur_permission;
         }
 
         // If content changed, fully clear the terminal before drawing to eliminate
@@ -1394,7 +1410,6 @@ pub async fn run_tui(
                             }
                             KeyCode::Enter => {
                                 if let Some(perm) = app.permission.take() {
-                                    app.needs_full_clear = true;
                                     let resp = perm.to_response();
                                     let label = if resp.granted {
                                         if resp.remember { "Allowed (always)" } else { "Allowed" }
@@ -1409,7 +1424,6 @@ pub async fn run_tui(
                             }
                             KeyCode::Esc => {
                                 if let Some(perm) = app.permission.take() {
-                                    app.needs_full_clear = true;
                                     let resp = perm.deny_response();
                                     app.push_message(MessageContent::System(
                                         format!("Denied: {} — {}", perm.request.tool_name, perm.request.description),
@@ -1630,7 +1644,6 @@ pub async fn run_tui(
                 req.tool_name, req.description,
             )));
             app.permission = Some(PendingPermission::new(req));
-            app.needs_full_clear = true;
         }
     }
 
@@ -1649,6 +1662,9 @@ pub async fn run_tui(
     // Abort the forwarder tasks
     forwarder.abort();
     perm_forwarder.abort();
+
+    // Re-enable diff_ui stderr output for non-TUI usage after exit.
+    clawed_tools::diff_ui::set_tui_mode(false);
 
     // Restore terminal (no alternate screen to leave).
     // Always pop keyboard enhancement flags — the push is unconditional, and
