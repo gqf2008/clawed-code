@@ -933,9 +933,8 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
     // --- Right side: dynamic status spans (elapsed, spinner, tools, shells, agents) ---
     let status_spans = status::build_spans(&app.status);
 
-    // Measure right side width so we can right-align it.
+    // Both sides are left-aligned: measure total to truncate info if needed.
     let status_w: usize = status_spans.iter().map(|s| s.content.width()).sum();
-    let status_gap = if status_w > 0 { 2usize } else { 0 }; // 2-space gap before status
 
     // Scroll indicator on the left when scrolled up.
     let mut spans: Vec<Span> = Vec::new();
@@ -947,10 +946,10 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         spans.push(Span::styled(s, hi));
     }
 
-    // Info text left-aligned, truncated so it doesn't collide with status.
+    // Info text, truncated so info + status fit within terminal width.
     if !info_parts.is_empty() {
         let info = format!(" {} ", info_parts.join(" \u{2502} "));
-        let available = width.saturating_sub(left_used + status_w + status_gap);
+        let available = width.saturating_sub(left_used + status_w);
         let info = if info.width() > available {
             let mut t = String::new();
             for ch in info.chars() {
@@ -964,16 +963,11 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         } else {
             info
         };
-        left_used += info.width();
         spans.push(Span::styled(info, dim));
     }
 
-    // Pad to push status to the right edge.
+    // Dynamic status follows immediately (left-aligned).
     if status_w > 0 {
-        let pad = width.saturating_sub(left_used + status_w);
-        if pad > 0 {
-            spans.push(Span::raw(" ".repeat(pad)));
-        }
         spans.extend(status_spans);
     }
 
