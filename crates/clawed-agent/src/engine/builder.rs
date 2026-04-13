@@ -370,10 +370,11 @@ impl QueryEngineBuilder {
         let sub_registry = Arc::new(ToolRegistry::with_defaults());
 
         // ── Coordinator mode setup ───────────────────────────────────────────
-        let (agent_tracker, notification_rx, coord_cancel_tokens, coord_agent_channels) = if self.coordinator_mode {
+        let (agent_tracker, notification_rx, coord_cancel_tokens, coord_agent_channels, agent_notif_tx, agent_notif_rx) = if self.coordinator_mode {
             let (tracker, rx) = AgentTracker::new();
             let agent_channels: AgentChannelMap = Arc::new(RwLock::new(HashMap::new()));
             let cancel_tokens: CancelTokenMap = Arc::new(RwLock::new(HashMap::new()));
+            let (notif_tx, notif_rx) = tokio::sync::mpsc::unbounded_channel::<clawed_bus::AgentNotification>();
 
             registry.register(SendMessageTool {
                 tracker: tracker.clone(),
@@ -389,9 +390,11 @@ impl QueryEngineBuilder {
                 Some(tokio::sync::Mutex::new(rx)),
                 Some(cancel_tokens),
                 Some(agent_channels),
+                Some(notif_tx),
+                Some(tokio::sync::Mutex::new(notif_rx)),
             )
         } else {
-            (None, None, None, None)
+            (None, None, None, None, None, None)
         };
 
         let dispatch_tool = DispatchAgentTool {
@@ -409,6 +412,7 @@ impl QueryEngineBuilder {
             agent_tracker,
             cancel_tokens: coord_cancel_tokens.clone(),
             agent_channels: coord_agent_channels.clone(),
+            agent_notif_tx,
         };
         registry.register(dispatch_tool);
 
@@ -465,6 +469,7 @@ impl QueryEngineBuilder {
             context_window: effective_context_window,
             break_cache_next: AtomicBool::new(false),
             thinking_override: std::sync::Mutex::new(ThinkingOverride::UseDefault),
+            agent_notif_rx,
         }
     }
 }

@@ -1,315 +1,163 @@
 # clawed-bus Crate 深度评审
 
-> 评审日期：2026-04-09
-> 评审范围：`crates/clawed-bus/` 全部源码（3 个文件）
+> 评审日期：2026-04-13
+> 评审范围：`crates/clawed-bus/` 全部源码
 
 ## 架构概览
 
-该 crate 是一个轻量级、零依赖的事件总线层，通过 typed channel 解耦 Agent Core 和 UI 层。
+`clawed-bus` 是 Agent Core 与 UI 层之间的解耦消息总线，提供两类通信通道：
 
-```
-┌──────────────────────┐          tokio channels          ┌──────────────────────┐
-│  Agent Core           │◄──── mpsc (AgentRequest) ──────│  UI Client            │
-│  BusHandle            │──── broadcast (Notification) ──►│  ClientHandle         │
-│                       │◄──── broadcast (PermissionReq) ─│                       │
-│                       │──── mpsc (PermissionResp) ─────►│                       │
-└──────────────────────┘                                  └──────────────────────┘
-```
+- **广播通道 (broadcast)**：`AgentNotification`、`PermissionRequest` —— 1:N 发布订阅
+- **点对点通道 (mpsc)**：`AgentRequest`、`PermissionResponse` —— N:1 / 1:1 带背压
 
-**依赖**：仅 `serde`, `serde_json`, `tokio`, `tracing`, `uuid`, `thiserror` — 无外部 HTTP/网络依赖
+总线工厂 `EventBus::new()` 产出一对 `BusHandle`（Agent Core 持有）和 `ClientHandle`（UI 持有），通过 tokio channels 连接。设计清晰，职责分离得当。
 
-### 模块结构
+## 模块结构
 
-| 模块 | 大小 | 职责 |
-|------|------|------|
-| `events.rs` | 17.6KB | 事件/请求/响应类型定义 |
-| `bus.rs` | 21.3KB | 事件总线实现 |
-| `lib.rs` | 1.9KB | 模块导出 |
-
----
+| 模块 | 行数 | 大小 | 职责 |
+|------|------|------|------|
+| `lib.rs` | 49 | 1.8KB | 模块导出、顶层文档、架构图 |
+| `bus.rs` | 707 | 25.2KB | `EventBus` 工厂、`BusHandle`、`ClientHandle`、`SendError`、15 个测试 |
+| `events.rs` | 695 | 21.4KB | 所有事件类型定义（`AgentNotification` 35 变体、`AgentRequest` 20 变体、`PermissionRequest/Response`、辅助类型）、8 个测试 |
+| **合计** | **1,451** | **48.4KB** | |
 
 ## 优点
 
-### 1. 信道拓扑设计清晰（bus.rs:7-14）
-
-```text
-AgentNotification:  Core ──broadcast──→ Client(s)  (1:N, lossy on slow receivers)
-AgentRequest:       Client ──mpsc────→ Core        (N:1, backpressure via bounded)
-PermissionRequest:  Core ──broadcast──→ Client(s)  (1:N, first responder wins)
-PermissionResponse: Client ──mpsc────→ Core        (1:1, paired with request)
-```
-
-- 四种信道各有明确的语义：通知是广播（可丢失）、请求是 mpsc（保证送达）、权限请求是广播（多 UI 竞争响应）、权限响应是 mpsc（一对一配对）
-- 使用 `broadcast::Sender` 作为 `_notify_tx` 和 `_perm_req_tx` 字段持有者，防止所有发送者丢失时接收端误报 `Closed`
-
-### 2. 类型定义完整且一致（events.rs）
-
-- `AgentNotification` 覆盖完整生命周期：
-  - 流式内容：`TextDelta`, `ThinkingDelta`
-  - 工具生命周期：`ToolUseStart`, `ToolUseReady`, `ToolUseComplete`
-  - 回合生命周期：`TurnStart`, `TurnComplete`, `AssistantMessage`
-  - 会话生命周期：`SessionStart`, `SessionEnd`, `SessionSaved`, `SessionStatus`
-  - 上下文管理：`ContextWarning`, `CompactStart`, `CompactComplete`
-  - 子代理生命周期：`AgentSpawned`, `AgentProgress`, `AgentComplete`
-  - MCP 生命周期：`McpServerConnected`, `McpServerDisconnected`, `McpServerError`
-  - 记忆系统：`MemoryExtracted`
-- `AgentRequest` 涵盖所有用户操作：Submit, Abort, PermissionResponse, Compact, SetModel, SlashCommand, SendAgentMessage, StopAgent, McpConnect/Disconnect/List, Shutdown, SaveSession, GetStatus, ClearHistory, LoadSession, ListModels, ListTools
-
-### 3. 序列化设计面向跨进程（events.rs）
-
-- 所有类型 `#[derive(Serialize, Deserialize)]`，支持 JSON-RPC 序列化
-- `#[serde(tag = "type")]` 用于 `AgentNotification`（discriminated union）
-- `#[serde(tag = "method", content = "params")]` 用于 `AgentRequest`（JSON-RPC 风格）
-- `#[serde(rename_all = "lowercase")]` 用于 `RiskLevel`
-- `#[serde(rename_all = "snake_case")]` 用于 `ErrorCode`
-- 完整的序列化往返测试覆盖所有变体
-
-### 4. 权限请求超时保护（bus.rs:132-178）
-
-```rust
-pub async fn request_permission_with_timeout(
-    &mut self,
-    tool_name: &str,
-    input: serde_json::Value,
-    risk_level: RiskLevel,
-    description: &str,
-    timeout: std::time::Duration,
-) -> Option<PermissionResponse>
-```
-
-- 默认 30 秒超时
-- 超时自动视为拒绝（`None` = deny）
-- 不匹配的 `request_id` 会 `tracing::warn!` 记录
-- 支持非交互式客户端（RPC/Bridge）场景
-
-### 5. 滞后容忍设计（bus.rs:245-256, 269-279）
-
-```rust
-pub async fn recv_notification(&mut self) -> Option<AgentNotification> {
-    loop {
-        match self.notify_rx.recv().await {
-            Ok(event) => return Some(event),
-            Err(broadcast::error::RecvError::Lagged(n)) => {
-                tracing::warn!("Client lagged by {} notifications, catching up", n);
-                continue; // 跳过中间消息，继续接收最新
-            }
-            Err(broadcast::error::RecvError::Closed) => return None,
-        }
-    }
-}
-```
-
-- 广播通道慢速接收者自动跳过中间消息，不会崩溃
-- 有 `warn!` 日志帮助诊断性能问题
-
-### 6. 多客户端支持（bus.rs:192-201）
-
-```rust
-pub fn new_client(&self) -> ClientHandle
-```
-
-- 通过 `subscribe()` 创建额外客户端
-- 所有客户端接收通知（广播）
-- 所有客户端共享同一个请求通道（mpsc）
-- 权限请求广播给所有客户端，第一个响应者获胜
-
-### 7. 测试覆盖全面
-
-| 测试 | 覆盖场景 |
-|------|----------|
-| `basic_notification_flow` | 基础通知收发 |
-| `request_flow` | 请求流转 |
-| `permission_request_response` | 权限请求/响应配对 |
-| `abort_signal` | 中止信号 |
-| `shutdown_signal` | 关闭信号 |
-| `multiple_subscribers` | 多订阅者 |
-| `disconnected_send_error` | 断开连接错误处理 |
-| `submit_convenience` | 便捷方法 |
-| `try_recv_empty` / `try_recv_with_pending` | 非阻塞接收 |
-| `high_throughput_notifications` | 500 条消息高吞吐 |
-| `agent_lifecycle_events` | 子代理生命周期 |
-| `permission_request_timeout_auto_denies` | 超时自动拒绝 |
-| `permission_response_within_timeout` | 超时内响应 |
-| `notification_serialization_roundtrip` | 所有通知变体序列化 |
-| `request_serialization_roundtrip` | 所有请求变体序列化 |
-
-### 8. 极简依赖，无外部系统
-
-- 仅依赖 `tokio::sync`（broadcast, mpsc），不需要网络、数据库或文件系统
-- 这个 crate 是纯内存中的事件分发层，测试快速、确定性高
-
----
+1. **清晰的拓扑设计** — `bus.rs:9-14` 的 ASCII 文档精确描述了 4 种通道的方向性和语义（broadcast vs mpsc, 1:N vs N:1）。
+2. **Core alive watch 机制** — `bus.rs:50` 的 `watch::channel(true)` 配合 `Drop`（`bus.rs:96-99`）使客户端能可靠检测 Core 断连。
+3. **二次客户端防伪造** — `bus.rs:240-249` 中 `new_client()` 创建的二级客户端 `perm_resp_tx: None`，阻止了未授权客户端响应权限请求。
+4. **Lagged 消息优雅处理** — `bus.rs:293-313` 和 `bus.rs:327-347` 中 `recv_notification` / `recv_permission_request` 使用 `tokio::select!` 同时监听消息和 core_alive，且在 Lagged 时自动跳过继续。
+5. **权限请求超时保护** — `bus.rs:197` 使用 `tokio::time::timeout` 避免非交互式客户端永久阻塞。
+6. **全面的事件类型覆盖** — `events.rs` 涵盖流式内容、工具生命周期、会话生命周期、子代理、MCP、Swarm 等完整场景，且都支持 serde 序列化。
+7. **测试覆盖良好** — 23 个测试全部通过，涵盖基本流、权限超时、多订阅者、断连检测等高价值场景。
 
 ## 问题与隐患
 
-### P1 — 可能导致消息丢失或 hang
+### P0 — 严重
 
-#### 1. `request_permission_with_timeout()` 消费了不匹配的响应（bus.rs:157-167）
+**P0-1: 权限响应竞态条件 — 非预期响应被吞没**
+- 文件：`bus.rs:184-195`
+- 问题：`request_permission_with_timeout` 中的等待循环遍历所有 `perm_resp_rx.recv()` 响应，对不匹配的 `request_id` 仅打印 warn（`bus.rs:189-192`）然后继续。**如果两个并发权限请求同时发出**，响应 A 可能在等待请求 B 的循环中被收到并被丢弃（因为 `request_id` 不匹配），导致请求 B 永远等不到自己的响应直到超时。
+- 根因：单个共享的 `mpsc::Receiver<PermissionResponse>` 无法区分不同请求的响应。
+- 影响：多工具并行调用权限检查时，响应可能错位丢失。
 
-```rust
-while let Some(resp) = self.perm_resp_rx.recv().await {
-    if resp.request_id == request_id {
-        return Some(resp);
-    }
-    tracing::warn!(
-        "Received permission response for unknown request: {}",
-        resp.request_id
-    );
-}
-```
+**P0-2: 广播通道不保证消息可达性**
+- 文件：`bus.rs:46`（notifications），`bus.rs:48`（permission requests）
+- 问题：`PermissionRequest` 使用 `broadcast::channel`（`bus.rs:48`），当接收者落后时消息会被跳过。虽然对 notification 来说是合理的（`bus.rs:11` 标注 "lossy"），但对 permission request 来说丢失消息是致命的 — UI 客户端可能错过权限弹窗，导致用户永远看不到请求。
+- 建议：permission request 应该使用 mpsc 或 request/response 配对机制，而非 broadcast。
 
-**问题**：如果有多个并发的权限请求，`perm_resp_rx` 是 mpsc 通道，**这个循环会消费掉所有不匹配的响应**，导致其他权限请求永远收不到响应。
+### P1 — 重要
 
-**示例场景**：
-1. 并发请求权限 A（request_id = "a"）和权限 B（request_id = "b"）
-2. 等待 A 的循环先运行
-3. B 的响应先到达，被 A 的循环消费掉并 warn
-4. A 等待超时，B 的响应永久丢失
+**P1-1: `try_recv_notification` 返回 `Result<..., ()>` 反模式**
+- 文件：`bus.rs:394-402`
+- 问题：Clippy 已警告（`result_unit_err`），`Result<Option<T>, ()>` 的 `Err(())` 语义不清晰。调用者无法区分"落后跳过消息"和"其他错误"。
+- 当前 Clippy 警告：
+  ```
+  warning: this returns a `Result<_, ()>`
+  ```
+- 修复：定义一个专用 `TryRecvError` 枚举，或返回 `Option<Result<AgentNotification, LaggedError>>`。
 
-**修复建议**：不应该在循环中消费不匹配的响应。应该使用 `tokio::select!` 或使用独立的 per-request 通道（用 `oneshot::Sender` 配对），而非单通道轮询。
+**P1-2: `EventBus` 是单元结构体，`new` 方法不符合惯例**
+- 文件：`bus.rs:25,36-37`
+- 问题：`EventBus` 是空结构体（unit struct），`new` 不返回 `Self`（`clippy::new_ret_no_self` 被显式 `#[allow]` 压制）。这表明 `EventBus` 实际上是一个命名空间，而非类型。
+- 建议：直接暴露 `fn new_bus(capacity: usize) -> (BusHandle, ClientHandle)` 作为自由函数，或改名为 `BusFactory`。
 
-#### 2. `EventBus::new()` 返回 `ClientHandle` 持有 `_notify_tx`，阻止 `Closed` 传播（bus.rs:55）
+**P1-3: `PermissionResponse` 在 `AgentRequest` 中冗余定义**
+- 文件：`events.rs:255-261`（`AgentRequest::PermissionResponse`） vs `bus.rs:185-187`（直接通过 mpsc 发送 `PermissionResponse`）
+- 问题：存在两条权限响应路径：`AgentRequest::PermissionResponse`（走 request mpsc）和 `PermissionResponse` struct（走 perm_resp mpsc）。两条路径语义重叠但代码不互通。`AgentRequest::PermissionResponse` 变体在实际使用中是否与 `perm_resp_tx` 通道有关联？如果 UI 通过 `submit(AgentRequest::PermissionResponse {...})` 发送响应，`BusHandle::request_permission` 收不到，因为它监听的是 `perm_resp_rx` 而非 `request_rx`。
+- 影响：两种机制并存容易误用，开发者可能选了错误的路径。
 
-```rust
-let client = ClientHandle {
-    notify_rx,
-    _notify_tx: notify_tx.clone(),  // 保持发送者存活
-    ...
-};
-```
+**P1-4: `send_request` 使用 `try_send` 而非 `send`**
+- 文件：`bus.rs:316-320`
+- 问题：`send_request` 使用 `try_send`，当 channel 满时直接返回 `DISCONNECTED` 错误。但这与 channel 实际是否断开无关 — 满队列也会返回同样的错误，误导调用者认为连接已断开。
+- 建议：区分 `Full` 和 `Disconnected` 错误，或改用异步 `send().await`。
 
-`ClientHandle` 持有 `_notify_tx` 是为了防止所有发送者丢失时接收端误报 `Closed`。但这意味着即使 `BusHandle` 被 drop，通知通道永远不会 `Closed` —— 接收者会永远等待。
+**P1-5: 无 `Send + Sync` trait bounds**
+- 文件：`bus.rs:83-93`, `bus.rs:272-284`
+- 问题：`BusHandle` 和 `ClientHandle` 未显式标注 `impl Send` / `impl Sync`。虽然 tokio 的 channel 类型默认是 `Send` 的，这些 struct 也应该自动实现 `Send`，但缺少显式 trait bound 意味着如果未来添加非 `Send` 字段会静默失去跨线程发送能力。建议添加 `static_assertions::assert_impl_all!` 或显式 `impl Send` 来保证。
 
-这在 `disconnected_send_error` 测试中暴露了问题（bus.rs:453-462）——测试注释承认了 channel 语义的微妙性。
+### P2 — 建议改进
 
-**影响**：UI 客户端无法可靠检测 Agent Core 断开。
+**P2-1: `ImageAttachment` 缺少 `Default` 实现**
+- 文件：`events.rs:374-380`
+- 问题：`submit` 方法中 images 硬编码为 `vec![]`（`bus.rs:363`），而 `ImageAttachment` 没有 `Default`，无法用 `..Default::default()` 语法。虽然当前影响不大，但 `UsageInfo` 有 `Default`（`events.rs:363`）而 `ImageAttachment` 没有，不一致。
 
-#### 3. `subscribe_requests()` 返回空的 dummy 接收器（bus.rs:209-220）
+**P2-2: `context_usage_pct` 精度未验证**
+- 文件：`events.rs:89`
+- 问题：`SessionStatus::context_usage_pct` 使用 `f64`，但没有任何文档说明取值范围（0.0-1.0？0-100？）。UI 侧消费时需要猜测。
 
-```rust
-pub fn subscribe_requests(&self) -> mpsc::UnboundedReceiver<AgentRequest> {
-    let (_tx, rx) = mpsc::unbounded_channel();
-    rx  // 永远不会收到任何东西
-}
-```
+**P2-3: `RiskLevel` 缺少 Critical 级别**
+- 文件：`events.rs:406-412`
+- 问题：当前只有 Low/Medium/High，对于 `rm -rf /` 这类操作没有更高警示级别。`bus.rs:669` 测试中用 `RiskLevel::High` 标记 `rm -rf /`，但 "High" 不足以表达灾难性风险。
 
-这是一个占位实现，**永远无法工作**。注释解释了原因（mpsc 不支持 subscribe），但暴露了一个空函数给调用方是危险的。
+**P2-4: 测试中 `drop(_bus)` 命名误导**
+- 文件：`bus.rs:558-569`
+- 问题：变量名为 `_bus`（下划线前缀在 Rust 中表示"有意忽略"），但测试中确实使用了它。应命名为 `bus`。
 
-**修复建议**：标记为 `#[doc(hidden)]` 或直接删除，或返回 `Option::None` / `Result::Err`。
+**P2-5: `ErrorCode::InternalError` 文档暗示 panic**
+- 文件：`events.rs:428`
+- 问题：`/// Internal error (bug, panic, etc.)` — panic 不应该作为"可恢复错误"通过事件总线传播。如果系统到了 panic 状态，event bus 通常已经不可用了。
 
-### P2 — 设计/代码质量问题
+**P2-6: `AgentNotification` 混合了事件和响应**
+- 文件：`events.rs:17-233`
+- 问题：`AgentNotification` 枚举同时包含纯事件（`TextDelta`、`ToolUseStart`）和请求响应（`SessionStatus`、`ModelList`、`ToolList`、`McpServerList`）。这两种语义不同的消息混在一个类型中，消费者需要 exhaustive match 处理所有变体，即使只关心其中几种。
+- 建议：拆分为 `AgentEvent`（纯推送）和 `AgentQueryResponse`（请求响应）。
 
-#### 4. `AgentNotification` 枚举过大（events.rs:17-166）
+### P3 — 小问题
 
-50+ 变体的单枚举，违反单一职责原则。应该按领域拆分为：
+**P3-1: `submit` 和 `submit_with_images` 存在代码重复**
+- 文件：`bus.rs:360-377`
+- 问题：`submit` 应内部调用 `submit_with_images` 而非反过来。当前 `submit` 构建 `AgentRequest::Submit` 与 `submit_with_images` 重复。
 
-```rust
-pub enum AgentNotification {
-    Content(ContentNotification),   // TextDelta, ThinkingDelta
-    Tool(ToolNotification),         // ToolUseStart, ToolUseReady, ToolUseComplete
-    Turn(TurnNotification),         // TurnStart, TurnComplete, AssistantMessage
-    Session(SessionNotification),   // SessionStart, SessionEnd, ...
-    Context(ContextNotification),   // ContextWarning, CompactStart, ...
-    Agent(AgentNotification_),      // AgentSpawned, AgentProgress, ...
-    Mcp(McpNotification),           // McpServerConnected, ...
-    Error(ErrorCode, String),
-}
-```
+**P3-2: `serde(default)` 不一致**
+- 文件：`events.rs`
+- `AgentRequest::Submit.images` 有 `#[serde(default)]`（line 247）
+- `AgentRequest::McpConnect.env` 有 `#[serde(default)]`（line 291）
+- 但 `PermissionResponse.remember` 有 `#[serde(default)]`（line 260）而 `UsageInfo.cache_read_tokens` 也有（line 368）
+- `ImageAttachment` 和 `McpServerInfo` 等 struct 的字段没有 `#[serde(default)]`，如果 JSON 缺少字段则反序列化失败。作为"protocol layer"，应对缺失字段更宽容。
 
-#### 5. `AgentRequest` 使用 `#[serde(tag = "method", content = "params")]` 但某些变体不需要参数
+**P3-3: `lib.rs` 的 doc test 被忽略**
+- 文件：`lib.rs:31-43`
+- 问题：`cargo test` 显示 `test crates/clawed-bus/src/lib.rs - (line 31) ... ignored`。被标记为 `ignore` 的 doc test 永远不会运行，容易过时。
 
-```rust
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "method", content = "params")]
-pub enum AgentRequest {
-    Abort,              // 无参 → 序列化为 {"method":"Abort","params":null}
-    Shutdown,           // 同上
-    McpListServers,     // 同上
-    Submit { text, images },  // 有参 → {"method":"Submit","params":{"text":"...","images":[]}}
-    ...
-}
-```
+**P3-4: 缺少 `clap` / CLI 集成**
+- 文件：`Cargo.toml`
+- 问题：`test-utils` feature 只暴露了 `subscribe_requests` 测试工具（`bus.rs:258-263`），但测试工具本身在 `any(test, feature = "test-utils")` 条件下可用，实际 `test-utils` feature 没有启用任何额外依赖。这个 feature 的存在价值不明确。
 
-无参变体的 `params` 会是 `null`。对于 JSON-RPC 来说可以接受，但不如 `#[serde(tag = "method")]` + `#[serde(skip_serializing_if = "Option::is_none")]` 干净。
+**P3-5: 硬编码魔法数字**
+- 文件：`bus.rs:40-44`
+- `REQUEST_QUEUE_CAP: 1024`、`PERM_RESP_QUEUE_CAP: 256`、`MIN_CRITICAL_CAP: 256` 作为局部常量定义在 `new()` 内部。应该提升到 struct 级别或文档中说明选择这些数字的依据。
 
-#### 6. 所有请求/响应都使用 `Clone`
-
-`AgentRequest` 和 `AgentNotification` 都 `#[derive(Clone)]`，在大 payload 场景下（如包含大文件的 `Submit` 或大结果的 `ToolUseComplete`）复制成本高。
-
-**修复建议**：考虑使用 `Arc` 包装大字段，或在不需要 clone 的场景下使用 `Arc<Self>`。
-
-#### 7. `RiskLevel` 只有三个级别，粒度不够
-
-```rust
-pub enum RiskLevel {
-    Low,
-    Medium,
-    High,
-}
-```
-
-对于实际权限检查来说，`rm -rf /` 和 `ls` 都是 `High`，无法区分。应该允许更细粒度的风险评估或与 `PermissionChecker` 的规则系统联动。
-
-#### 8. 缺少背压控制
-
-通知通道使用 `broadcast::channel(capacity)`，慢速接收者会收到 `Lagged` 错误并丢弃消息。对于关键事件（如 `ToolUseComplete`、`TurnComplete`），消息丢失可能导致 UI 状态不一致。
-
-**修复建议**：区分关键事件（保证送达）和非关键事件（可丢弃），或使用两个不同 channel。
-
-#### 9. `SendError` 没有携带原因
-
-```rust
-#[derive(Debug, Clone, thiserror::Error)]
-#[error("Bus disconnected: the other end has been dropped")]
-pub struct SendError;
-```
-
-错误类型是单元结构，无法区分是 receiver 端还是 sender 端断开，也无法区分是 request 通道还是 notification 通道。
-
----
+**P3-6: `SendError` 实现 `thiserror::Error` 但未使用 `thiserror` 的优势**
+- 文件：`bus.rs:426-433`
+- 问题：`SendError` 手动实现了 `DISCONNECTED` 常量等价物，但 `thiserror` 的 derive 完全足够了。当前写法 `#[error("...")]` 配手动 `const DISCONNECTED` 略显冗余。
 
 ## 代码质量评估
 
 | 维度 | 评分 | 说明 |
 |------|------|------|
-| API 设计 | ⭐⭐⭐⭐⭐ | 简洁、类型安全、语义清晰 |
-| 类型设计 | ⭐⭐⭐⭐ | 事件枚举覆盖全面，但 `AgentNotification` 过大 |
-| 测试覆盖 | ⭐⭐⭐⭐⭐ | 所有场景都有测试，包括边界情况 |
-| 序列化 | ⭐⭐⭐⭐⭐ | JSON-RPC 兼容，双向测试完整 |
-| 代码组织 | ⭐⭐⭐⭐ | 3 个文件，结构清晰 |
-| 错误处理 | ⭐⭐⭐ | `SendError` 缺乏上下文，权限请求消费 bug |
-| 文档 | ⭐⭐⭐⭐⭐ | 模块级文档 + 架构图 + 代码注释优秀 |
-| 性能 | ⭐⭐⭐ | 大 payload Clone 成本高，无背压控制 |
-
----
+| 错误处理 | 6/10 | `SendError` 无法区分 Full vs Disconnected；`Result<_, ()>` 反模式（P1-1）；权限响应被静默吞没（P0-1） |
+| 异步设计 | 7/10 | `tokio::select!` 正确使用，超时保护到位；但广播 channel 用于 permission request 不合理（P0-2） |
+| 测试覆盖 | 8/10 | 23 个测试覆盖主要路径，但缺少并发权限请求测试、多客户端竞争测试、channel 满时行为测试 |
+| 命名 | 8/10 | 整体命名清晰；`EventBus` 是单元结构体不妥（P1-2）；`_bus` 变量名误导（P2-4） |
+| 文档 | 7/10 | 顶层架构图优秀；但 `context_usage_pct` 等字段缺少范围说明（P2-2）；doc test 被忽略（P3-3） |
+| 模块组织 | 6/10 | `events.rs` 695 行承载 35+20 个枚举变体 + 6 个 struct + 3 个 enum + Display impls，过于膨胀；事件与响应混在同一枚举（P2-6） |
+| 安全性 | 6/10 | 二次客户端防伪造设计优秀；但权限响应通道共享导致可能的请求/响应错位（P0-1）；权限请求走 broadcast 可能丢失（P0-2） |
+| 序列化 | 8/10 | 内部标记枚举（`#[serde(tag = "type")]` 和 `#[serde(tag = "method", content = "params")]`）适合 JSON-RPC；但部分字段缺少 `#[serde(default)]`（P3-2） |
 
 ## 修复建议汇总
 
-| 优先级 | 问题 | 位置 | 建议 |
-|--------|------|------|------|
-| P1 | 并发权限请求响应互相消费 | bus.rs:157 | 使用 `oneshot::Sender` 配对或 `tokio::select!` |
-| P1 | `ClientHandle` 持有 `_notify_tx` 阻止 Closed 传播 | bus.rs:55 | 考虑在 bus 层添加心跳或显式 ping 检测 |
-| P1 | `subscribe_requests()` 返回空 dummy | bus.rs:209 | 标记 `#[doc(hidden)]` 或删除 |
-| P2 | `AgentNotification` 枚举过大（50+ 变体） | events.rs:17 | 按领域拆分为子枚举 |
-| P2 | `SendError` 缺乏错误上下文 | bus.rs:321 | 添加原因枚举字段 |
-| P2 | 关键事件可能被 Lagged 丢弃 | bus.rs:249 | 区分关键/非关键通道 |
-| P2 | 大 payload Clone 成本高 | events.rs | 考虑 `Arc` 包装大字段 |
-| P3 | `RiskLevel` 粒度过粗 | events.rs:330 | 增加更多级别或允许自定义 |
-
----
-
-## 总体评价
-
-这是一个**设计精巧、简洁高效的事件总线**，是整个项目中最干净的 crate。它的核心优势在于：
-
-1. **信道拓扑设计正确**：四种信道（广播通知、mpsc 请求、广播权限请求、mpsc 权限响应）各司其职，语义明确
-2. **序列化面向 JSON-RPC**：所有类型可直接跨进程序列化，为未来的 RPC 扩展做好准备
-3. **测试质量高**：覆盖了正常路径、边界情况、超时、断开连接等场景
-4. **依赖极少**：纯 tokio channel 抽象，无外部系统依赖，测试快速且确定性高
-
-主要改进空间在于：
-- **并发权限请求的响应消费 bug** 是最严重的缺陷，多任务并发时会导致响应丢失
-- `AgentNotification` 枚举可以按领域拆分以提高可维护性
-- 缺少关键事件的保证送达机制
-
-总体而言，这是一个生产就绪的高质量 crate，唯一的 P1 bug 需要尽快修复。
+| 优先级 | 问题 | 修复方案 | 预估工作量 |
+|--------|------|----------|------------|
+| P0 | P0-1: 权限响应竞态 | 为每个权限请求创建独立的 oneshot channel，将 `Sender` 放入 `PermissionRequest` 随广播发出，UI 直接通过 oneshot 回应 | 中 |
+| P0 | P0-2: permission request 走 broadcast | 将 `perm_req_tx/perm_req_rx` 改为 mpsc，或至少在 broadcast 之外增加 guaranteed delivery 机制 | 中 |
+| P1 | P1-1: `Result<..., ()>` | 定义 `pub enum TryRecvError { Lagged(u64), Closed }` | 小 |
+| P1 | P1-2: `EventBus` 单元结构体 | 改为自由函数 `fn new_bus(...)` 或重命名为 `BusFactory` | 小 |
+| P1 | P1-3: 双重权限响应路径 | 明确 `AgentRequest::PermissionResponse` 的用途，或移除其中一条路径 | 中 |
+| P1 | P1-4: `try_send` 误报断开 | 返回区分 `Full` / `Disconnected` 的错误类型 | 小 |
+| P1 | P1-5: 缺少 `Send` 保障 | 添加 `const _: () = { fn _assert_send<T: Send>() {} fn _() { _assert_send::<BusHandle>(); _assert_send::<ClientHandle>(); } };` | 小 |
+| P2 | P2-1: `ImageAttachment` 缺 Default | 添加 `#[derive(Default)]` 或手动实现 | 小 |
+| P2 | P2-3: `RiskLevel` 缺 Critical | 添加 `Critical` 变体（向后兼容，需更新 Display） | 小 |
+| P2 | P2-6: 事件与响应混杂 | 拆分为 `AgentEvent` 和 `AgentQueryResponse` 两个枚举 | 大 |
+| P3 | P3-1: `submit` 重复代码 | 让 `submit` 调用 `self.submit_with_images(text, vec![])` | 小 |
+| P3 | P3-5: 魔法数字 | 提升为 `const` 关联常量或 `static`，添加注释说明选择理由 | 小 |

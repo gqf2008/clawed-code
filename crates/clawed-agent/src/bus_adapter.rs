@@ -444,6 +444,11 @@ impl AgentCoreAdapter {
 
             let bus = self.bus.lock().await;
             bus.notify(notification);
+
+            // Forward any AgentSpawned/AgentComplete/AgentTerminated emitted by background sub-agents
+            for agent_notif in self.engine.drain_agent_notifications() {
+                bus.notify(agent_notif);
+            }
         }
 
         debug!("Stream ended for turn {}", turn);

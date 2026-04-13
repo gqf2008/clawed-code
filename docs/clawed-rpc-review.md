@@ -1,319 +1,346 @@
 # clawed-rpc Crate 深度评审
 
-> 评审日期：2026-04-09
-> 评审范围：`crates/clawed-rpc/` 全部源码（8 个文件，77.1KB）
+> 评审日期：2026-04-13
+> 评审范围：`crates/clawed-rpc/` 全部源码（9 个文件，2567 行）
 
 ## 架构概览
 
-该 crate 实现了 JSON-RPC 2.0 服务器，将 Agent Core 能力暴露给外部客户端（IDE 扩展、Web UI）。支持 stdio 和 TCP 两种传输方式。
+clawed-rpc 实现了一个 JSON-RPC 2.0 服务端，用于将 Agent Core 能力暴露给外部客户端（IDE/Web）。架构层次清晰：
 
 ```
-                          JSON-RPC 2.0
-   ┌──────────┐    ┌─────────────────────┐    ┌───────────┐
-   │  Client   │───▶│  Transport (stdio/  │───▶│ RpcSession│
-   │(IDE/Web)  │◀───│   TCP)              │◀───│           │
-   └──────────┘    └─────────────────────┘    └─────┬─────┘
-                                                     │ ClientHandle
-                                              ┌──────┴──────┐
-                                              │  Event Bus   │
-                                              └─────────────┘
+Transport (trait) → StdioTransport / TcpTransport
+                        ↓
+                   RpcSession (per-connection state)
+                        ↓
+                   RpcServer (multi-transport orchestration)
+                        ↓
+                   EventBus ↔ Agent
 ```
 
-### 模块结构
+协议层定义完整的 JSON-RPC 2.0 消息类型（Request/Response/Notification/RawMessage），方法层（methods.rs）负责 JSON-RPC 方法与内部 AgentRequest/AgentNotification 的双向路由映射。
 
-| 模块 | 大小 | 职责 |
-|------|------|------|
-| `methods.rs` | 21.9KB | 方法路由：JSON-RPC ↔ AgentRequest/Notification |
-| `protocol.rs` | 17.9KB | JSON-RPC 2.0 消息类型 |
-| `session.rs` | 12.0KB | 会话管理：传输 ↔ bus 绑定 |
-| `server.rs` | 10.7KB | 多传输服务器（stdio/TCP） |
-| `transport/tcp.rs` | 6.4KB | TCP 传输实现 |
-| `transport/stdio.rs` | 5.1KB | Stdio 传输实现 |
-| `transport/mod.rs` | 2.0KB | Transport trait |
-| `error.rs` | 618B | 错误类型 |
+## 模块结构
 
-**依赖**：`clawed-bus`, `clawed-agent`, `serde`, `serde_json`, `tokio`, `tracing`
-
----
+| 模块 | 文件 | 行数 | 职责 |
+|------|------|-----:|------|
+| `protocol` | `src/protocol.rs` | 468 | JSON-RPC 2.0 消息类型、序列化、错误码 |
+| `session` | `src/session.rs` | 352 | 连接会话管理、pending request 跟踪、通知广播 |
+| `server` | `src/server.rs` | 273 | 多传输层服务启停、客户端生命周期管理 |
+| `transport/mod` | `src/transport/mod.rs` | 369 | Transport trait + TransportError + 工具类 + 测试 |
+| `transport/tcp` | `src/transport/tcp.rs` | 188 | TCP 传输实现（TCPListener + TcpTransport） |
+| `transport/stdio` | `src/transport/stdio.rs` | 492 | stdio 传输实现、JSON-RPC frame 编解码 |
+| `methods` | `src/methods.rs` | 242 | 方法路由表、JSON-RPC ↔ AgentRequest 映射 |
+| `error` | `src/error.rs` | 27 | RpcResult 类型别名 |
+| `lib` | `src/lib.rs` | 41 | 公开 API 与重导出 |
+| **测试** | `_test.rs` | 155 | `RpcServer::start_stdio` 集成测试 |
 
 ## 优点
 
-### 1. 完整的 JSON-RPC 2.0 协议实现（protocol.rs）
-
-- `RequestId` 支持 Number/String/Null（符合规范）
-- `RawMessage` 统一接收 + `classify()` 分发到 Request/Response/Notification
-- 标准错误码（-32700 到 -32603）+ 应用级错误码（-32001 到 -32005）
-- 双向 `From` 实现：`Request → RawMessage`、`Response → RawMessage`、`Notification → RawMessage`
-- 版本检查（拒绝非 "2.0" 的消息）
-- 完整的序列化往返测试
-
-### 2. 方法命名约定清晰（methods.rs）
-
-```
-agent.submit          agent.setModel        agent.clearHistory
-agent.abort           agent.listModels      session.save
-agent.compact         agent.listTools       session.status
-agent.permission      agent.sendMessage     session.shutdown
-agent.stopAgent       session.load
-mcp.connect           mcp.disconnect        mcp.listServers
-```
-
-17 种方法，命名一致，层次清晰（agent.* / session.* / mcp.*）
-
-### 3. 完整的通知转换（methods.rs:217-360）
-
-所有 31 种 `AgentNotification` 变体都有对应的 JSON-RPC 通知映射。这是最全面的 1:1 映射，确保 IDE 扩展/Web UI 能接收到所有 agent 事件。
-
-### 4. MCP 命令安全验证（methods.rs:181-212）
-
-```rust
-const MCP_ALLOWED_COMMANDS: &[&str] = &[
-    "npx", "node", "python", "python3", "uvx", "uv",
-    "deno", "bun", "cargo", "go", "java",
-    "docker", "podman", "mcp-server", "mcp-proxy",
-];
-// 也允许 mcp-* 前缀
-```
-
-防止通过 `mcp.connect` 执行任意命令。白名单 + 前缀匹配双重保护。
-
-### 5. Session 单 select! 循环设计优雅（session.rs:65-137）
-
-```rust
-tokio::select! {
-    // Inbound: transport → bus
-    msg = self.transport.read_message() => { ... }
-    // Outbound: bus notifications → transport
-    notif = notif_rx.recv() => { ... }
-    // Permission requests → transport
-    perm = self.client.recv_permission_request() => { ... }
-}
-```
-
-- 单个 `select!` 循环同时处理入站、出站和权限请求
-- 无需 mutex（每个分支操作不同的资源）
-- 使用 `subscribe_notifications()` 获取独立的 notification 接收器，避免与 `recv_permission_request()` 竞争 `&mut self`
-
-### 6. TCP 服务器支持多会话 + 认证（server.rs）
-
-- `MAX_TCP_SESSIONS = 64` 连接限制
-- 可选 token 认证（`with_auth()`）
-- `SessionGuard` RAII 模式确保 session count 正确递减（即使 panic）
-- `tokio::select!` 监听 accept 和 shutdown 信号
-- 5 秒认证超时
-
-### 7. Transport trait 设计简洁（transport/mod.rs）
-
-```rust
-#[async_trait]
-pub trait Transport: Send + 'static {
-    async fn read_message(&mut self) -> Result<Option<RawMessage>, TransportError>;
-    async fn write_message(&mut self, msg: &RawMessage) -> Result<(), TransportError>;
-    async fn close(&mut self) -> Result<(), TransportError> { Ok(()) }
-}
-```
-
-- `TransportError` 枚举覆盖 I/O、JSON、连接关闭、其他错误
-- 默认 `close()` 实现简化了无需清理的传输
-
-### 8. Stdio 和 TCP 传输实现一致（transport/stdio.rs, tcp.rs）
-
-- 相同的行格式（`\n` 分隔 JSON）
-- 相同的最大消息大小限制（4MB）
-- 相同的空行跳过逻辑
-- `ChannelTransport` 测试辅助工具实现完美
-
-### 9. 测试覆盖全面
-
-66 个测试，覆盖：
-- 协议序列化（20 测试）
-- 方法路由（20 测试）
-- TCP 传输（4 测试）
-- Stdio/Channel 传输（6 测试）
-- Session（4 测试）
-- Server（6 测试）
-- Transport trait（3 测试）
-- Error（3 测试）
-
----
+1. **清晰的协议实现**：protocol.rs 完整实现了 JSON-RPC 2.0 规范，包含 Request/Response/Notification/Error 所有类型，序列化/反序列化正确
+2. **良好的传输抽象**：`Transport` trait 设计合理，支持 stdio 和 TCP 两种传输方式，易于扩展 WebSocket
+3. **Pending request 跟踪**：RpcSession 维护 `pending_requests` HashMap 用于响应匹配，防止响应丢失
+4. **合理的错误处理**：RpcError/TransportError 分类清晰，支持带 data 字段和 JSON-RPC 错误码
+5. **测试覆盖较好**：包含单元测试和集成测试，覆盖了协议序列化、方法路由、传输层、服务端启停等场景
+6. **架构文档完善**：lib.rs 中有 ASCII 架构图，各模块文档注释清晰
 
 ## 问题与隐患
 
-### P1 — 可能导致功能异常
+### P0 — 严重问题（必须修复）
 
-#### 1. `handle_inbound()` 立即返回 `{"ok": true}` 而不等待结果（session.rs:160-166）
+#### 1. TcpTransport `read_line` 无上限内存分配风险
 
+**文件**: `src/transport/tcp.rs:47`
 ```rust
-if let Err(e) = self.client.send_request(agent_req) {
-    // error response
-} else {
-    let resp = Response::success(request_id, serde_json::json!({"ok": true}));
-    // ...
-}
+let mut line = String::new();
+let n = self.reader.read_line(&mut line).await?;
 ```
 
-**问题**：`send_request()` 只是将请求放入 mpsc 通道，不等待处理完成。客户端收到 `{"ok": true}` 后认为请求已成功处理，但 agent 可能还没开始处理。
+虽然第 51 行有 `MAX_LINE_SIZE` 检查，但 `read_line` 会一直读取直到遇到 `\n`。恶意客户端可以发送 100MB 无换行符的数据，导致 `String` 无限制增长，直到检查点才发现。应该在 `BufReader` 层面做限制，或使用 `read_until` + 大小限制的分块读取。
 
-**后果**：客户端无法知道请求的实际结果（如 `agent.submit` 的完成状态、错误等）。
+**修复建议**: 使用 `take(MAX_LINE_SIZE)` 包装 reader，或在 `read_line` 后立即检查长度并在超限前限制。
 
-**修复建议**：使用 request-response 模式，等待相应的通知或结果。
+#### 2. RpcSession 内存泄漏 — pending_requests 永远不清理成功响应
 
-#### 2. Session 的权限请求处理不等待响应（session.rs:114-135）
-
+**文件**: `src/session.rs:250-259`
 ```rust
-perm = self.client.recv_permission_request() => {
-    match perm {
-        Some(req) => {
-            let notif = Notification::new("agent.permissionRequest", ...);
-            // 只发送通知，不等待客户端响应
-            if let Err(e) = self.transport.write_message(&RawMessage::from(notif)).await { ... }
-        }
-        None => { /* 不 break */ }
+pub async fn handle_response(&self, response: Response) {
+    if let Some((id, tx)) = self.pending_requests.write().await.remove(&response.id) {
+        let _ = tx.send(Ok(response));
     }
 }
 ```
 
-权限请求只是通过通知发送，但没有机制等待客户端的 `agent.permission` 响应并将结果传回给 agent core。这意味着权限请求/响应流在 RPC 层是断开的。
+这里用 `response.id` 作为 key，但 `response.id` 类型是 `Option<RequestId>`，而 HashMap 的 key 是 `Option<RequestId>`。如果响应 ID 不匹配（None vs Some），请求将永远留在 map 中。更关键的是，`handle_response` 方法中 `response.id` 是 `Option<RequestId>` 类型，但 `self.pending_requests` 的 key 也是 `Option<RequestId>` — 这看起来正确，但需要确认 `RequestId` 实现了 `Eq + Hash`。
 
-**修复建议**：收到权限通知后，等待客户端发送 `agent.permission` 请求，然后通过 bus 发送响应。
+**实际验证**: `RequestId` 在 protocol.rs:215 定义了 `#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]`，所以 `Eq + Hash` 是有的。但需要确认 `remove` 的语义 — 如果 response.id 是 `Some(Number(1))` 而 pending key 也是 `Some(Number(1))`，这可以匹配。
 
-#### 3. `authenticate_connection()` 的认证协议设计有误（server.rs:187-226）
+**真正的泄漏风险**: 如果客户端发送一个请求后断开连接，对应的 pending entry 不会被清理。`RpcSession::run` 的 main loop 在 transport 关闭时退出，但如果还有其他并发 reader（比如 `forward_notifications`），这些 pending requests 不会被清理。
 
+#### 3. StdioTransport 的 `frame_size` 字段溢出风险
+
+**文件**: `src/transport/stdio.rs:234-235`
 ```rust
-let is_auth = msg.method.as_deref() == Some("auth");
-let token = msg.params.as_ref().and_then(|p| p.get("token")).and_then(|v| v.as_str());
+fn parse_header(&mut self, header: &[u8]) -> Result<Option<usize>, TransportError> {
+    ...
+    let size: usize = std::str::from_utf8(value)
+        .map_err(|e| TransportError::Other(format!("Invalid Content-Length value: {}", e)))?
+        .parse()
 ```
 
-认证消息使用 `method: "auth"` 而不是 JSON-RPC 标准方法。而且认证成功后，认证消息被消费掉了，不会转发给 session。如果客户端的第一个消息恰好是有效的 JSON-RPC 请求（如 `agent.submit`），认证会失败。
+`usize` 在 64 位系统上是 64 位无符号整数。如果 Content-Length 值极大（比如 `99999999999999999999`），`parse()` 会返回错误，这没问题。但如果值刚好在 `usize::MAX` 附近，可能导致后续 `read_exact` 分配巨大内存。
 
-**修复建议**：使用标准的 JSON-RPC 方法名（如 `rpc.auth`），或者在认证完成后重新检查是否有排队消息。
+**修复建议**: 添加最大帧大小检查（比如 100MB），与 TcpTransport 的 `MAX_LINE_SIZE` 保持一致。
 
-#### 4. TCP `serve_tcp()` 使用随机端口时无法获取实际端口号（server.rs:93）
+### P1 — 高优先级问题
 
+#### 4. `RpcServer::start_stdio` 中 joinset 的 join 错误被吞
+
+**文件**: `src/server.rs:95-101`
 ```rust
-pub async fn serve_tcp(&self, addr: &str) -> Result<(), std::io::Error> {
-    let listener = TcpListener::bind(addr).await?;
-    let local_addr = listener.local_addr()?;  // 获取到了但只用于日志
-    info!("TCP server listening on {}", local_addr);
-    // ... 没有返回端口号给调用方
-```
-
-当使用随机端口（`:0`）时，调用方无法知道实际监听的端口。
-
-**修复建议**：返回实际监听的地址，或提供 `local_addr()` 方法。
-
-### P2 — 设计/代码质量问题
-
-#### 5. `methods.rs` 的参数解析重复代码过多
-
-```rust
-// 每种方法都有类似的模式
-let p = params.ok_or_else(|| RpcError::new(...))?;
-let name = p.get("name").and_then(|v| v.as_str())
-    .ok_or_else(|| RpcError::new(...))?.to_string();
-```
-
-200+ 行重复的参数提取代码。应该使用宏或 helper 函数。
-
-#### 6. `StdioTransport` 不实现 `close()`（transport/stdio.rs）
-
-`StdioTransport` 使用默认的 `close()` 实现（空操作），但 stdio 的 writer 应该调用 `shutdown()` 以刷新缓冲区。
-
-#### 7. `RpcSession::run()` 中 `tokio::select!` 偏向第一个分支
-
-```rust
-tokio::select! {
-    msg = self.transport.read_message() => { ... }     // bias: first
-    notif = notif_rx.recv() => { ... }                  // checked second
-    perm = self.client.recv_permission_request() => { ... } // checked third
+while let Some(result) = self.joinset.join_next().await {
+    match result {
+        Ok(Ok(())) => { /* Task completed successfully */ }
+        Ok(Err(e)) => {
+            // Already logged in the task
+        }
+        Err(e) => {
+            // Already logged in the task
+        }
+    }
 }
 ```
 
-`tokio::select!` 默认是 biased 的（按声明顺序检查）。如果 transport 一直有数据，通知和权限请求可能被延迟。
+所有错误分支都是空操作。如果 stdio 任务因为某些原因 panic 或失败，`RpcServer::run()` 会静默退出，不会传播错误。虽然注释说 "Already logged in the task"，但实际上在 `start_stdio` 的 spawn 闭包中只有 `tracing::info!` 记录 session 退出，没有 `tracing::error!` 记录异常。
 
-**修复建议**：添加 `biased;` 标记明确意图，或使用公平模式。
+**修复建议**: 至少对 `Err(e)` 分支（JoinError/panic）添加 `tracing::error!` 记录。
 
-#### 8. `notification_to_jsonrpc()` 中的 `serde_json::json!` 宏调用过多
+#### 5. `RpcServer::start_stdio` 中 session 在 joinset 外创建
 
-31 个 match arm 每个都调用 `serde_json::json!` 宏，在热路径上产生大量动态分配。
-
-**修复建议**：使用 `serde::Serialize` 结构体替代 `json!` 宏。
-
-#### 9. `ChannelTransport::pair()` 的通道方向容易混淆（transport/stdio.rs:87-94）
-
+**文件**: `src/server.rs:84-92`
 ```rust
-pub fn pair(capacity: usize) -> (Self, Self) {
-    let (tx_a, rx_b) = mpsc::channel(capacity);
-    let (tx_b, rx_a) = mpsc::channel(capacity);
-    (Self { rx: rx_a, tx: tx_a }, Self { rx: rx_b, tx: tx_b })
+let session_id = Uuid::new_v4();
+let mut session = RpcSession::new(session_id, transport, self.event_bus.clone());
+self.session_count += 1;
+let initial_count = self.session_count;
+
+self.joinset.spawn(async move {
+    session.run().await;
+    Ok::<_, RpcError>(())
+});
+```
+
+`session_count` 在 spawn 前递增，但如果 spawn 失败（虽然 JoinSet::spawn 通常不会失败），计数会不一致。更重要的是，`self.session_count` 在 `spawn` 闭包外被修改，而 `run()` 方法没有维护这个计数 — 如果 session 异常退出，计数不会减少。
+
+#### 6. StdioTransport 的 `parse_header` 不处理 `Content-Type` 以外的 header
+
+**文件**: `src/transport/stdio.rs:206-244`
+```rust
+fn parse_header(&mut self, header: &[u8]) -> Result<Option<usize>, TransportError> {
+    if header.is_empty() {
+        return Ok(None); // Empty line signals end of headers
+    }
+    if let Some(content_type) = header.strip_prefix(b"Content-Type: ") {
+        // ...
+    }
+    // 其他 header 被静默忽略
+    Ok(Some(0)) // 返回 0 意味着继续读取
 }
 ```
 
-`tx_a` 发给 `rx_b`，`tx_b` 发给 `rx_a`。交叉连接是正确的，但变量命名容易让人混淆。
+如果收到未知的 header（比如 `Content-Encoding: gzip`），它返回 `Ok(Some(0))`，这意味着 "继续读取更多 header"。但如果 `Content-Length` 在未知 header 之后，解析逻辑是正确的。然而，如果只收到未知 header 而没有 `Content-Length`，会导致 `Content-Length: missing` 错误。
 
-#### 10. 缺少 WebSocket 传输
+**修复建议**: 对未知 header 添加 `tracing::warn!` 日志，方便调试。
 
-lib.rs 文档提到了 WebSocket（"stdio, TCP, WebSocket"），但实际只实现了 stdio 和 TCP。
+#### 7. `RpcSession::handle_request` 中 `handle_notification` 的错误被吞
 
-#### 11. `parse_request()` 不支持 `session.listModels` 和 `session.listTools`（methods.rs:129-130）
-
+**文件**: `src/session.rs:210-213`
 ```rust
-"agent.listModels" => Ok(AgentRequest::ListModels),
-"agent.listTools" => Ok(AgentRequest::ListTools),
+pub async fn handle_notification(&self, notification: Notification) {
+    if let Err(e) = self.handle_notification_inner(notification).await {
+        tracing::warn!("Error handling notification: {}", e);
+    }
+}
 ```
 
-这些方法使用 `agent.*` 前缀而不是 `session.*`。应该统一为 `session.*` 前缀以保持一致性。
+这里用 `warn` 级别是可以的，但对于某些关键通知（如 `initialize`、`shutdown`），可能需要 `error` 级别。
 
-#### 12. 缺少批量请求支持
+#### 8. `RpcSession::run` 中通知转发与请求处理并发竞态
 
-JSON-RPC 2.0 规范支持批量请求（数组），但 `RawMessage` 只处理单个对象。批量请求会被解析失败。
+**文件**: `src/session.rs:104-137`
+```rust
+// 两个 tokio::select! 分支：
+msg_opt = transport.read_message() => { ... }
+// vs
+notification = bus_rx.recv() => { ... }
+```
 
----
+当 transport 消息和 bus 通知同时到达时，`select!` 随机选择一个。这可能导致通知延迟，但对于 JSON-RPC 这是可接受的。真正的问题是：如果 transport 关闭（返回 `None`），`select!` 的 `msg_opt` 分支会立即匹配并退出循环，此时 pending 的 bus 通知不会被发送。
+
+**修复建议**: 在 transport 关闭后，继续发送剩余的 bus 通知再退出。
+
+### P2 — 中等优先级问题
+
+#### 9. `TransportError` 的 `From<std::io::Error>` 和 `From<serde_json::Error>` 实现信息损失
+
+**文件**: `src/transport/mod.rs:65-83`
+```rust
+impl From<std::io::Error> for TransportError {
+    fn from(err: std::io::Error) -> Self {
+        TransportError::Io(err)
+    }
+}
+impl From<serde_json::Error> for TransportError {
+    fn from(err: serde_json::Error) -> Self {
+        TransportError::Serialization(err)
+    }
+}
+```
+
+这些实现是正确的，但 `TransportError::Other(String)`  variant 直接存储错误消息，不包含原始错误。对于调试和监控，保留原始错误类型会更好。
+
+**修复建议**: 考虑为 `Other` variant 添加 `source: Option<Box<dyn std::error::Error + Send + Sync>>` 字段，或为常见错误类型添加专用 variant。
+
+#### 10. `RpcSession` 中 `session_id` 字段只用于日志
+
+**文件**: `src/session.rs:27`
+```rust
+session_id: Uuid,
+```
+
+`session_id` 只在 `run()` 方法中用于日志输出。如果需要追踪客户端连接（比如统计活跃连接、调试问题），应该暴露 session 查询接口。
+
+#### 11. `TcpListener` 没有 backlog 配置
+
+**文件**: `src/transport/tcp.rs:86-88`
+```rust
+pub async fn bind(addr: &str) -> Result<Self, std::io::Error> {
+    let inner = tokio::net::TcpListener::bind(addr).await?;
+    Ok(Self { inner })
+}
+```
+
+`tokio::net::TcpListener::bind` 使用默认 backlog（通常是 1024）。对于 daemon 模式，可能需要自定义 backlog 大小。
+
+**修复建议**: 添加 `bind_with_backlog(addr, backlog)` 方法，或在文档中说明使用默认值。
+
+#### 12. `methods.rs` 中 `map_request_to_method` 和 `map_notification_to_method` 的不完整映射
+
+**文件**: `src/methods.rs:133-170`（`map_request_to_method`）和 `src/methods.rs:173-204`（`map_notification_to_method`）
+
+`map_request_to_method` 只映射了 `Initialize` 和 `Shutdown`，其他请求类型返回 `"unknown"`. `map_notification_to_method` 也只映射了 `AgentTextDelta` 等少数类型。
+
+虽然这在当前版本中可能是故意的设计（只暴露部分能力），但这意味着 `AgentRequest::Abort`、`AgentRequest::UserSubmit` 等请求无法通过 JSON-RPC 调用。
+
+**修复建议**: 在文档中明确说明哪些方法被暴露，哪些是内部使用。
+
+#### 13. `RawMessage` 反序列化不支持位置参数
+
+**文件**: `src/protocol.rs:310-318`
+```rust
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RequestParams {
+    Object(serde_json::Map<String, serde_json::Value>),
+    Array(Vec<serde_json::Value>),
+}
+```
+
+JSON-RPC 2.0 规范允许 `params` 为 Structured 值（object 或 array）。`RawMessage` 使用 `Option<serde_json::Value>` 作为 params 字段（第 278 行），这支持任何 JSON 值，所以这不是问题。但 `RequestParams` 枚举在 `Request` 类型中使用，而 `RawMessage` 使用 `Value`，两者不一致。
+
+### P3 — 低优先级问题
+
+#### 14. `error.rs` 几乎没有实际内容
+
+**文件**: `src/error.rs:1-27`
+
+这个模块只包含一个类型别名 `RpcResult<T>` 和两个 trivial 测试。`RpcError` 实际定义在 `protocol.rs` 中。这个模块的存在增加了认知负担。
+
+**修复建议**: 将 `RpcResult` 移到 `protocol.rs` 中，或让 `error.rs` 包含所有错误相关定义（包括 `RpcError`）。
+
+#### 15. `StdioTransport` 的 `write_message` 不检查写入完整性
+
+**文件**: `src/transport/stdio.rs:274-284`
+```rust
+async fn write_message(&mut self, msg: &RawMessage) -> Result<(), TransportError> {
+    let json = serde_json::to_string(msg)?;
+    let header = format!("Content-Length: {}\r\n\r\n", json.len());
+    self.writer.write_all(header.as_bytes()).await?;
+    self.writer.write_all(json.as_bytes()).await?;
+    self.writer.flush().await?;
+    Ok(())
+}
+```
+
+`write_all` 确保所有字节被写入，这是正确的。但如果 stdout 被管道关闭（比如客户端退出），`write_all` 会返回 `BrokenPipe` 错误。这个错误会被 `TransportError::Io` 包装，但不会区分 "正常退出" 和 "异常断开"。
+
+#### 16. 缺少 WebSocket 传输实现
+
+文档注释中提到 "TCP/WebSocket"（lib.rs:14），但实际只实现了 stdio 和 TCP。
+
+**修复建议**: 更新文档注释，或添加 WebSocket 传输实现。
+
+#### 17. `TcpTransport` 的 `close` 方法只关闭写端
+
+**文件**: `src/transport/tcp.rs:73-76`
+```rust
+async fn close(&mut self) -> Result<(), TransportError> {
+    self.writer.shutdown().await?;
+    Ok(())
+}
+```
+
+只关闭写端（half-close），不关闭读端。这意味着 reader 仍然可以接收数据。对于优雅关闭这是合理的，但应该添加文档说明。
+
+#### 18. `RpcServer` 没有 graceful shutdown 机制
+
+**文件**: `src/server.rs:118-126`
+```rust
+pub async fn shutdown(&mut self) {
+    tracing::info!("Shutting down RPC server ({} active sessions)", self.joinset.len());
+    self.joinset.shutdown().await;
+    tracing::info!("All RPC sessions have been shut down");
+}
+```
+
+`JoinSet::shutdown()` 会取消所有正在运行的任务，但不会等待它们完成清理。如果需要优雅关闭（比如发送 JSON-RPC shutdown 通知给所有客户端），需要额外实现。
 
 ## 代码质量评估
 
-| 维度 | 评分 | 说明 |
-|------|------|------|
-| 协议实现 | ⭐⭐⭐⭐⭐ | 完整 JSON-RPC 2.0，标准错误码 |
-| 方法路由 | ⭐⭐⭐⭐ | 17 种方法，但参数解析代码重复 |
-| 传输设计 | ⭐⭐⭐⭐ | stdio + TCP，trait 抽象好 |
-| Session 设计 | ⭐⭐⭐⭐ | 单 select! 循环优雅，但立即返回 ok 有问题 |
-| 安全 | ⭐⭐⭐⭐ | MCP 命令白名单 + TCP token 认证 |
-| 测试覆盖 | ⭐⭐⭐⭐⭐ | 66 个测试，覆盖所有路径 |
-| 代码组织 | ⭐⭐⭐⭐ | 按职责清晰分离 |
-| 文档 | ⭐⭐⭐⭐⭐ | 架构图 + 示例 + wire format 文档 |
-
----
+| 维度 | 评分 (1-5) | 说明 |
+|------|:----------:|------|
+| **错误处理** | 3 | 错误类型设计合理，但多处错误被吞（P1-4, P1-7），缺乏错误传播机制 |
+| **异步设计** | 4 | 正确使用 `tokio::select!`、`JoinSet`、`Mutex`，并发模型合理 |
+| **测试覆盖** | 4 | 单元测试覆盖协议序列化、方法路由、传输层；集成测试覆盖服务端启停 |
+| **命名** | 5 | 命名清晰一致，符合 Rust 惯例 |
+| **文档** | 4 | 模块文档良好，但缺少方法级别的详细文档 |
+| **模块组织** | 4 | 层次清晰，但 `error.rs` 过于简单 |
+| **安全性** | 3 | 缺少输入大小限制（TCP）、无认证机制、无 TLS 支持 |
 
 ## 修复建议汇总
 
-| 优先级 | 问题 | 位置 | 建议 |
-|--------|------|------|------|
-| P1 | handle_inbound 立即返回 ok 不等待结果 | session.rs:160 | 使用 request-response 模式等待实际结果 |
-| P1 | 权限请求不等待客户端响应 | session.rs:114 | 实现完整的权限请求/响应流 |
-| P1 | 认证协议使用非标准方法名 | server.rs:187 | 使用标准 JSON-RPC 方法名 |
-| P2 | 参数解析重复代码过多 | methods.rs | 使用宏或 helper 函数 |
-| P2 | select! 偏向第一个分支 | session.rs:65 | 添加 biased 标记或使用公平模式 |
-| P2 | notification_to_jsonrpc 过多 json! 调用 | methods.rs:217 | 使用 Serialize 结构体 |
-| P2 | StdioTransport 缺少 close 实现 | transport/stdio.rs | 添加 flush/shutdown |
-| P3 | 缺少 WebSocket 传输 | lib.rs | 实现或更新文档 |
-| P3 | 缺少批量请求支持 | protocol.rs | 支持 JSON-RPC 批量请求 |
+| # | 优先级 | 文件 | 行号 | 问题 | 建议修复 |
+|---|:------:|------|:----:|------|----------|
+| 1 | P0 | `transport/tcp.rs` | 47 | `read_line` 无上限内存分配 | 使用 `take(MAX_LINE_SIZE)` 包装 reader |
+| 2 | P0 | `session.rs` | 250-259 | 断开连接后 pending_requests 泄漏 | 在 transport 关闭时清理所有 pending entries |
+| 3 | P0 | `transport/stdio.rs` | 234-235 | 大 Content-Length 导致内存分配 | 添加最大帧大小检查（100MB） |
+| 4 | P1 | `server.rs` | 95-101 | JoinError 被静默吞没 | 添加 `tracing::error!` 记录 panic |
+| 5 | P1 | `server.rs` | 84-92 | session_count 不一致风险 | 在 session 退出时减少计数 |
+| 6 | P1 | `transport/stdio.rs` | 206-244 | 未知 header 静默忽略 | 添加 `tracing::warn!` |
+| 7 | P1 | `session.rs` | 104-137 | transport 关闭后 bus 通知丢失 | 在退出前清空 bus_rx |
+| 8 | P2 | `transport/mod.rs` | 65-83 | TransportError::Other 丢失原始错误 | 添加 source 字段 |
+| 9 | P2 | `methods.rs` | 133-204 | 方法映射不完整 | 文档说明暴露范围 |
+| 10 | P2 | `transport/tcp.rs` | 86 | 无 backlog 配置 | 添加 `bind_with_backlog` |
+| 11 | P3 | `error.rs` | 1-27 | 模块内容太少 | 合并到 protocol.rs 或充实内容 |
+| 12 | P3 | `lib.rs` | 14 | 文档提到 WebSocket 但未实现 | 更新文档或添加实现 |
+| 13 | P3 | `transport/tcp.rs` | 73-76 | close 只关闭写端 | 添加文档说明 half-close 语义 |
+| 14 | P3 | `server.rs` | 118-126 | 无 graceful shutdown | 实现优雅关闭机制 |
 
----
+## 总结
 
-## 总体评价
+clawed-rpc 是一个结构良好的 JSON-RPC 2.0 实现，协议层设计正确，传输抽象合理。主要风险集中在：
 
-这是一个**设计良好的 JSON-RPC 2.0 服务器实现**，核心优势在于：
+1. **内存安全**：TCP 和 stdio 传输都缺少严格的输入大小限制，可能导致 OOM
+2. **错误处理**：多处关键错误被静默吞没，不利于故障诊断
+3. **生命周期管理**：session 和 pending request 的生命周期管理存在泄漏风险
 
-1. **完整的协议实现** — JSON-RPC 2.0 规范全覆盖，标准错误码 + 应用级错误码
-2. **优雅的单 select! 循环** — 无需 mutex 同时处理入站、出站、权限请求
-3. **两种传输方式** — stdio（IDE 扩展）和 TCP（守护进程模式）
-4. **MCP 安全验证** — 命令白名单防止任意代码执行
-5. **66 个测试** — 覆盖协议、方法、传输、会话、服务器
-
-主要改进空间在于：
-- **P1**: `handle_inbound()` 立即返回 `{"ok": true}` 而不等待 agent 处理结果 — 这破坏了 request-response 语义
-- **P1**: 权限请求/响应流在 RPC 层是断开的
-- **P2**: 参数解析有大量重复代码
-
-总体而言，这是一个架构清晰、代码质量良好的 RPC 层，但核心的 request-response 语义需要修复才能达到生产就绪。
+建议在投入生产使用前优先修复 P0 级别问题，特别是 TCP 传输的内存限制和 pending request 清理。

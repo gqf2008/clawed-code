@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use clawed_api::client::ApiClient;
 use clawed_api::types::{CacheControl, ThinkingConfig, ToolDefinition};
 use clawed_core::message::Message;
+use clawed_bus::AgentNotification;
 use clawed_core::tool::AbortSignal;
 use clawed_tools::ToolRegistry;
 
@@ -78,6 +79,9 @@ pub struct QueryEngine {
     break_cache_next: AtomicBool,
     /// Runtime-mutable thinking config (toggled via /think command).
     thinking_override: std::sync::Mutex<ThinkingOverride>,
+    /// Receives bus `AgentNotification`s emitted by background sub-agents.
+    /// Drained by `drain_agent_notifications()` and forwarded to the bus adapter.
+    pub agent_notif_rx: Option<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<AgentNotification>>>,
 }
 
 impl QueryEngine {
@@ -170,6 +174,18 @@ impl QueryEngine {
             messages.push(notification.to_message());
         }
         messages
+    }
+
+    /// Drain any pending bus `AgentNotification`s emitted by background sub-agents.
+    /// Called by the bus adapter to forward these notifications to all TUI clients.
+    pub fn drain_agent_notifications(&self) -> Vec<AgentNotification> {
+        let Some(rx) = &self.agent_notif_rx else { return Vec::new() };
+        let Ok(mut guard) = rx.try_lock() else { return Vec::new() };
+        let mut result = Vec::new();
+        while let Ok(n) = guard.try_recv() {
+            result.push(n);
+        }
+        result
     }
 
     /// Get a clone of the abort signal so callers can cancel the running task.

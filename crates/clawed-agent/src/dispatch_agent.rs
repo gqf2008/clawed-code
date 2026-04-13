@@ -4,8 +4,10 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use clawed_api::client::ApiClient;
 use clawed_api::types::ToolDefinition;
+use clawed_bus::AgentNotification;
 use clawed_core::tool::{Tool, ToolContext, ToolResult};
 use serde_json::{json, Value};
+use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
 use crate::coordinator::AgentTracker;
@@ -174,6 +176,8 @@ pub struct DispatchAgentTool {
     pub cancel_tokens: Option<CancelTokenMap>,
     /// Shared agent message channels — used by SendMessage to deliver follow-ups.
     pub agent_channels: Option<AgentChannelMap>,
+    /// Optional channel to emit `AgentNotification`s to the bus (TUI visibility).
+    pub agent_notif_tx: Option<mpsc::UnboundedSender<AgentNotification>>,
 }
 
 #[async_trait]
@@ -404,6 +408,17 @@ impl Tool for DispatchAgentTool {
                 let cancel_tokens = self.cancel_tokens.clone();
                 let agent_channels = self.agent_channels.clone();
                 let agent_name_clone = agent_name.clone();
+                let agent_notif_tx = self.agent_notif_tx.clone();
+
+                // Notify TUI: agent spawned
+                if let Some(ref tx) = agent_notif_tx {
+                    let _ = tx.send(AgentNotification::AgentSpawned {
+                        agent_id: agent_id.clone(),
+                        name: agent_name.clone(),
+                        agent_type: format!("{:?}", agent_type).to_lowercase(),
+                        background: true,
+                    });
+                }
 
                 // Acquire concurrency permit — blocks if at max parallel agents
                 let permit = match tracker.acquire_permit().await {
@@ -433,6 +448,8 @@ impl Tool for DispatchAgentTool {
                     let mut output = String::new();
                     let mut tool_use_count: u32 = 0;
                     let mut total_tokens: u64 = 0;
+                    let mut completed_ok = false;
+                    let mut completed_error: Option<String> = None;
 
                     loop {
                         tokio::select! {
@@ -440,6 +457,12 @@ impl Tool for DispatchAgentTool {
                                 agent_abort.abort();
                                 if tracker.is_running(&agent_id_clone).await {
                                     tracker.kill(&agent_id_clone).await;
+                                }
+                                if let Some(ref tx) = agent_notif_tx {
+                                    let _ = tx.send(AgentNotification::AgentTerminated {
+                                        agent_id: agent_id_clone.clone(),
+                                        reason: "cancelled".to_string(),
+                                    });
                                 }
                                 break;
                             }
@@ -470,18 +493,37 @@ impl Tool for DispatchAgentTool {
                                         } else {
                                             format!("Error after partial output:\n{}\n\nError: {}", output, e)
                                         };
-                                        tracker.fail(&agent_id_clone, error_with_context).await;
+                                        tracker.fail(&agent_id_clone, error_with_context.clone()).await;
+                                        completed_error = Some(error_with_context);
                                         break;
                                     }
                                     None => {
                                         tracker
-                                            .complete(&agent_id_clone, output, total_tokens, tool_use_count)
+                                            .complete(&agent_id_clone, output.clone(), total_tokens, tool_use_count)
                                             .await;
+                                        completed_ok = true;
                                         break;
                                     }
                                     _ => {}
                                 }
                             }
+                        }
+                    }
+
+                    // Notify TUI: agent complete or failed
+                    if let Some(ref tx) = agent_notif_tx {
+                        if completed_ok {
+                            let _ = tx.send(AgentNotification::AgentComplete {
+                                agent_id: agent_id_clone.clone(),
+                                result: output.clone(),
+                                is_error: false,
+                            });
+                        } else if let Some(ref err) = completed_error {
+                            let _ = tx.send(AgentNotification::AgentComplete {
+                                agent_id: agent_id_clone.clone(),
+                                result: err.clone(),
+                                is_error: true,
+                            });
                         }
                     }
 
@@ -711,6 +753,7 @@ mod tests {
             agent_tracker: None,
             cancel_tokens: None,
             agent_channels: None,
+            agent_notif_tx: None,
         }
     }
 
