@@ -85,7 +85,15 @@ impl PermissionPrompter for BusPermissionPrompter {
                 // Convert bus PermissionResponse → core PermissionResponse
                 if bus_resp.granted {
                     if bus_resp.remember {
-                        PermissionResponse::allow_always()
+                        // "Allow Always" → persist to project-local settings so the rule
+                        // survives across sessions (written to .claude/settings.json).
+                        clawed_core::permissions::PermissionResponse {
+                            allowed: true,
+                            persist: true,
+                            feedback: None,
+                            selected_suggestion: None,
+                            destination: Some(clawed_core::permissions::PermissionDestination::LocalSettings),
+                        }
                     } else {
                         PermissionResponse::allow_once()
                     }

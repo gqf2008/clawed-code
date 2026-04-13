@@ -396,8 +396,43 @@ impl PermissionChecker {
                     }
                 }
             } else {
-                // Generic "always allow" for this session
-                self.session_allow(tool_name);
+                // Generic "always allow": use the destination on the response to decide whether
+                // to persist to a settings file (so the rule survives across sessions) or just
+                // keep it in the in-memory session cache.
+                let rule = clawed_core::permissions::PermissionRule {
+                    tool_name: tool_name.to_string(),
+                    pattern: None,
+                    behavior: PermissionBehavior::Allow,
+                };
+                match response.destination.unwrap_or(PermissionDestination::Session) {
+                    PermissionDestination::Session => {
+                        self.session_allow(tool_name);
+                    }
+                    PermissionDestination::LocalSettings => {
+                        let _ = clawed_core::config::Settings::add_permission_rule(
+                            rule,
+                            clawed_core::config::SettingsSource::Local,
+                            cwd,
+                        );
+                        self.session_allow(tool_name);
+                    }
+                    PermissionDestination::ProjectSettings => {
+                        let _ = clawed_core::config::Settings::add_permission_rule(
+                            rule,
+                            clawed_core::config::SettingsSource::Project,
+                            cwd,
+                        );
+                        self.session_allow(tool_name);
+                    }
+                    PermissionDestination::UserSettings => {
+                        let _ = clawed_core::config::Settings::add_permission_rule(
+                            rule,
+                            clawed_core::config::SettingsSource::User,
+                            cwd,
+                        );
+                        self.session_allow(tool_name);
+                    }
+                }
             }
         }
     }

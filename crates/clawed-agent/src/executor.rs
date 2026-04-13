@@ -192,16 +192,19 @@ impl ToolExecutor {
                     let _ = self.hooks.run(HookEvent::PermissionRequest, ctx).await;
                 }
 
-                let desc = format!("{}: {}", tool_name, serde_json::to_string(&input).unwrap_or_default());
+                // Always use the canonical tool name for prompts and session cache so that
+                // alias-resolved tools (e.g. "FileWriteTool" → "Write") are keyed consistently.
+                let canonical = tool.name();
+                let desc = format!("{}: {}", canonical, serde_json::to_string(&input).unwrap_or_default());
                 let suggestions = perm.suggestions.clone();
                 let perm_timeout = std::time::Duration::from_secs(300); // 5 min default
                 let response = match tokio::time::timeout(
                     perm_timeout,
-                    self.prompter().ask_permission(tool_name, &desc, &suggestions),
+                    self.prompter().ask_permission(canonical, &desc, &suggestions),
                 ).await {
                     Ok(r) => r,
                     Err(_) => {
-                        warn!("Permission prompt timed out after {}s for tool '{}'", perm_timeout.as_secs(), tool_name);
+                        warn!("Permission prompt timed out after {}s for tool '{}'", perm_timeout.as_secs(), canonical);
                         PermissionResponse::deny()
                     }
                 };
@@ -222,8 +225,9 @@ impl ToolExecutor {
                         is_error: true,
                     };
                 }
-                // Apply the response (session allow, suggestion rule, etc.)
-                self.permission_checker.apply_response(tool_name, &response, &perm, &context.cwd);
+                // Apply the response using canonical name so session_allowed is keyed the same
+                // way check() looks it up (via tool.name()).
+                self.permission_checker.apply_response(canonical, &response, &perm, &context.cwd);
             }
             PermissionBehavior::Allow => {}
         }
