@@ -913,11 +913,9 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
     let dim = Style::default().fg(MUTED);
     let hi = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
 
-    // Build the info string embedded in the separator.
-    // Format: " model │ turn N │ Xk↑ Yk↓ │ Z% ctx │ 📥N "
+    // Build info parts: model │ turn N │ Xk↑ Yk↓ │ Z% ctx │ 📥N
     let mut info_parts: Vec<String> = Vec::new();
 
-    // Shorten model name: strip provider prefix and date suffix for brevity.
     let short_model = shorten_model_name(&app.model);
     if !short_model.is_empty() {
         info_parts.push(short_model);
@@ -944,47 +942,35 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         info_parts.push(format!("\u{1F4E5}{}", app.queued_inputs.len()));
     }
 
-    let info = if info_parts.is_empty() {
-        String::new()
-    } else {
-        format!(" {} ", info_parts.join(" \u{2502} "))
-    };
-
-    // Scroll indicator on the right when scrolled up.
-    let scroll = if scroll_offset > 0 {
-        format!(" \u{2191}{scroll_offset} ")
-    } else {
-        String::new()
-    };
-
-    // Truncate info so that info + scroll always fit within the terminal width.
-    // Reserve at least 2 dashes on the left for visual framing.
-    let scroll_w = scroll.width();
-    let max_info_w = width.saturating_sub(scroll_w + 2);
-    let info = if info.width() > max_info_w {
-        let mut truncated = String::new();
-        for ch in info.chars() {
-            if truncated.width() + 1 >= max_info_w {
-                truncated.push('…');
-                break;
-            }
-            truncated.push(ch);
-        }
-        truncated
-    } else {
-        info
-    };
-
-    let info_w = info.width();
-    // Right-align: scroll indicator on the left (when present), then dashes, then info.
-    let dashes = width.saturating_sub(scroll_w + info_w);
-
+    // Scroll indicator on the left when scrolled up (no dashes, just text).
     let mut spans: Vec<Span> = Vec::new();
-    if scroll_w > 0 {
-        spans.push(Span::styled(scroll, hi));
+    let mut used = 0usize;
+
+    if scroll_offset > 0 {
+        let s = format!("\u{2191}{scroll_offset}  ");
+        used += s.width();
+        spans.push(Span::styled(s, hi));
     }
-    spans.push(Span::styled("\u{2500}".repeat(dashes), dim));
-    spans.push(Span::styled(info, dim));
+
+    // Info text left-aligned, truncated to remaining width.
+    if !info_parts.is_empty() {
+        let info = format!(" {} ", info_parts.join(" \u{2502} "));
+        let available = width.saturating_sub(used);
+        let info = if info.width() > available {
+            let mut t = String::new();
+            for ch in info.chars() {
+                if t.width() + 1 >= available {
+                    t.push('…');
+                    break;
+                }
+                t.push(ch);
+            }
+            t
+        } else {
+            info
+        };
+        spans.push(Span::styled(info, dim));
+    }
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
