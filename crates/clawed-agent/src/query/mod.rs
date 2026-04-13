@@ -445,9 +445,12 @@ pub fn query_stream_with_injection(
                     output_tokens: u.output_tokens,
                 };
 
-                // Context usage warning (only emit when level escalates)
-                let total_input = { state.read().await.total_input_tokens };
-                if let Some((level, warning_event)) = build_context_warning(total_input, config.context_window) {
+                // Context usage warning (only emit when level escalates).
+                // Use u.input_tokens (current turn's context size from the API, which
+                // equals the actual tokens in the context window for this request)
+                // rather than state.total_input_tokens (accumulated sum across all turns,
+                // which grows far beyond the window size and fires warnings too early).
+                if let Some((level, warning_event)) = build_context_warning(u.input_tokens, config.context_window) {
                     if last_warning_level != Some(level) {
                         last_warning_level = Some(level);
                         yield warning_event;

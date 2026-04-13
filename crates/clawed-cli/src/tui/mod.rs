@@ -1949,8 +1949,9 @@ async fn handle_async_command(
             let state = engine.state().read().await;
             let elapsed = app.status.session_start.elapsed().as_secs();
             let info = format!(
-                "Session stats:\n  Turns: {}\n  Messages: {}\n  Input tokens: {}\n  Output tokens: {}\n  Elapsed: {}s\n  Model: {}",
+                "Session stats:\n  Turns: {}\n  Messages: {}\n  Context tokens (last turn): {}\n  Billed input tokens (all turns): {}\n  Output tokens: {}\n  Elapsed: {}s\n  Model: {}",
                 state.turn_count, state.messages.len(),
+                app.context_tokens,
                 state.total_input_tokens, state.total_output_tokens,
                 elapsed, state.model,
             );
