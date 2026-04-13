@@ -160,10 +160,38 @@ impl ToolRegistry {
         self.tools.insert(name, Arc::new(tool));
     }
 
-    /// Look up a tool by name.
-    #[must_use] 
+    /// Normalize a tool name from legacy/alternative spellings to the canonical registered name.
+    /// Handles names the model may hallucinate from TypeScript SDK conventions (e.g., `FileWriteTool`).
+    fn normalize_name(name: &str) -> &str {
+        match name {
+            // TypeScript SDK names (FooTool suffix) and FileXxx variants
+            "FileWriteTool" | "FileWrite" => "Write",
+            "FileReadTool"  | "FileRead"  => "Read",
+            "FileEditTool"  | "FileEdit"  => "Edit",
+            "BashTool"      | "RunBash"   => "Bash",
+            "GlobTool"      | "FileFinder"=> "Glob",
+            "GrepTool"      | "FileSearch"=> "Grep",
+            "LsTool"        | "ListFiles" => "LS",
+            "MultiEditTool"               => "MultiEdit",
+            "WebFetchTool"                => "WebFetch",
+            "WebSearchTool"               => "WebSearch",
+            "TodoWriteTool"               => "TodoWrite",
+            "TodoReadTool"                => "TodoRead",
+            other => other,
+        }
+    }
+
+    /// Look up a tool by name. Falls back to alias normalization if the exact name is not found.
+    #[must_use]
     pub fn get(&self, name: &str) -> Option<&DynTool> {
-        self.tools.get(name)
+        self.tools.get(name).or_else(|| {
+            let canonical = Self::normalize_name(name);
+            if canonical != name {
+                self.tools.get(canonical)
+            } else {
+                None
+            }
+        })
     }
 
     /// Return all registered tools (unordered).

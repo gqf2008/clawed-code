@@ -246,7 +246,7 @@ pub fn query_stream_with_injection(
             let mut current_tool_id = String::new();
             let mut current_tool_name = String::new();
             let mut stop_reason = None;
-            let mut usage = None;
+            let mut usage: Option<Usage> = None;
             let mut should_retry_turn = false;
 
             use tokio_stream::StreamExt;
@@ -319,7 +319,7 @@ pub fn query_stream_with_injection(
                                 current_tool_input.clear();
                             }
                         }
-                        StreamEvent::MessageDelta { delta, .. } => {
+                        StreamEvent::MessageDelta { delta, usage: delta_usage } => {
                             stop_reason = delta.stop_reason.as_deref().map(|r| match r {
                                 "end_turn" => StopReason::EndTurn,
                                 "tool_use" => StopReason::ToolUse,
@@ -330,6 +330,13 @@ pub fn query_stream_with_injection(
                                     StopReason::EndTurn
                                 }
                             });
+                            // MessageDelta carries the final output_tokens count for the turn.
+                            // MessageStart only has input_tokens (output_tokens is 0 there).
+                            if let Some(du) = delta_usage {
+                                if let Some(ref mut u) = usage {
+                                    u.output_tokens = du.output_tokens;
+                                }
+                            }
                         }
                         StreamEvent::MessageStart { message } => {
                             usage = Some(Usage {
