@@ -406,36 +406,67 @@ fn build_perm_description(tool_name: &str, input: &Value) -> String {
         "description", "regex", "glob",
     ];
     const MAX_VAL_LEN: usize = 80;
+    const MAX_PARTS: usize = 3;
+    const MAX_KEYS: usize = 6;
 
     let obj = match input.as_object() {
         Some(o) => o,
         None => return format!("{tool_name}: (non-object input)"),
     };
 
-    let parts: Vec<String> = obj
+    let parts: Vec<String> = SHOW_KEYS
         .iter()
-        .filter(|(k, _)| SHOW_KEYS.contains(&k.as_str()))
-        .map(|(k, v)| {
-            let s = match v {
-                Value::String(s) => s.clone(),
-                other => other.to_string(),
-            };
-            if s.chars().count() > MAX_VAL_LEN {
-                let truncated: String = s.chars().take(MAX_VAL_LEN - 1).collect();
-                format!("{k}={truncated}…")
-            } else {
-                format!("{k}={s}")
-            }
+        .filter_map(|key| {
+            obj.get(*key).map(|v| {
+                let s = match v {
+                    Value::String(s) => sanitize_inline_summary(s),
+                    other => sanitize_inline_summary(&other.to_string()),
+                };
+                if s.chars().count() > MAX_VAL_LEN {
+                    let truncated: String = s.chars().take(MAX_VAL_LEN - 1).collect();
+                    format!("{key}={truncated}…")
+                } else {
+                    format!("{key}={s}")
+                }
+            })
         })
+        .take(MAX_PARTS)
         .collect();
 
     if parts.is_empty() {
-        // Fallback: show just the key names
-        let keys: Vec<&String> = obj.keys().collect();
-        format!("{tool_name}({})", keys.iter().map(|k| k.as_str()).collect::<Vec<_>>().join(", "))
+        // Fallback: show just a short key list
+        let mut keys: Vec<&str> = obj.keys().take(MAX_KEYS).map(String::as_str).collect();
+        let truncated = obj.len() > MAX_KEYS;
+        if truncated {
+            keys.push("…");
+        }
+        format!("{tool_name}({})", keys.join(", "))
     } else {
         format!("{tool_name}: {}", parts.join(", "))
     }
+}
+
+fn sanitize_inline_summary(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut prev_space = true;
+
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            if !prev_space {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            out.push(ch);
+            prev_space = false;
+        }
+    }
+
+    if out.ends_with(' ') {
+        out.pop();
+    }
+
+    out
 }
 
 #[cfg(test)]
@@ -697,5 +728,14 @@ mod tests {
         // No SHOW_KEYS match → should list key names
         assert!(desc.contains("content"), "got: {desc}");
         assert!(desc.contains("mode"), "got: {desc}");
+    }
+
+    #[test]
+    fn perm_desc_sanitizes_newlines() {
+        let input = json!({"command": "echo hello\nworld\t&& ls"});
+        let desc = build_perm_description("Bash", &input);
+        assert!(!desc.contains('\n'), "got: {desc}");
+        assert!(!desc.contains('\t'), "got: {desc}");
+        assert!(desc.contains("echo hello world && ls"), "got: {desc}");
     }
 }

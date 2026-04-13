@@ -1,11 +1,7 @@
 //! Permission prompt widget — replaces the input area when a tool needs approval.
 //!
-//! Layout (3 rows):
-//! ```text
-//! 🔒 bash wants to run: rm -rf /tmp/foo     ← description line
-//!   [Allow]  [Deny]  [Allow Always]          ← button row
-//! Tab: select  Enter: confirm  Esc: deny     ← hint row
-//! ```
+//! The footer rows adapt to terminal width. Description, buttons, and hints may
+//! each take multiple wrapped rows on narrow terminals.
 
 use super::MUTED;
 use clawed_bus::events::{PermissionRequest, PermissionResponse, RiskLevel};
@@ -13,9 +9,10 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Paragraph, Wrap},
     Frame,
 };
+use unicode_width::UnicodeWidthStr;
 
 /// Which button is currently highlighted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +46,19 @@ impl PermissionChoice {
 pub struct PendingPermission {
     pub request: PermissionRequest,
     pub selected: PermissionChoice,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PermissionLayout {
+    pub desc_rows: u16,
+    pub button_rows: u16,
+    pub hint_rows: u16,
+}
+
+impl PermissionLayout {
+    pub const fn total_rows(self) -> u16 {
+        self.desc_rows + self.button_rows + self.hint_rows
+    }
 }
 
 impl PendingPermission {
@@ -88,8 +98,29 @@ impl PendingPermission {
 /// Render the permission prompt into the given areas.
 ///
 /// `desc_area` — 1+ row area for the description line
-/// `btn_area`  — 1 row area for the button row
-/// `hint_area` — 1 row area for the hint text (optional, may be zero-height)
+/// `btn_area`  — 1+ row area for the button row
+/// `hint_area` — 1+ row area for the hint text (optional, may be zero-height)
+pub fn layout_for(width: u16, perm: &PendingPermission) -> PermissionLayout {
+    let width = width.max(1);
+    let desc_rows = Paragraph::new(build_description_line(perm))
+        .wrap(Wrap { trim: false })
+        .line_count(width)
+        .max(1) as u16;
+    let button_rows = build_button_lines(perm.selected, risk_color(perm), width)
+        .len()
+        .max(1) as u16;
+    let hint_rows = Paragraph::new(build_hint_line())
+        .wrap(Wrap { trim: false })
+        .line_count(width)
+        .max(1) as u16;
+
+    PermissionLayout {
+        desc_rows,
+        button_rows,
+        hint_rows,
+    }
+}
+
 pub fn render(
     frame: &mut Frame,
     desc_area: Rect,
@@ -97,90 +128,153 @@ pub fn render(
     hint_area: Rect,
     perm: &PendingPermission,
 ) {
-    // --- Description line ---
-    let risk_color = match perm.request.risk_level {
+    let accent = risk_color(perm);
+
+    frame.render_widget(
+        Paragraph::new(build_description_line(perm)).wrap(Wrap { trim: false }),
+        desc_area,
+    );
+
+    // --- Button row ---
+    frame.render_widget(
+        Paragraph::new(build_button_lines(perm.selected, accent, btn_area.width)),
+        btn_area,
+    );
+
+    // --- Hint row ---
+    if hint_area.height > 0 {
+        frame.render_widget(
+            Paragraph::new(build_hint_line()).wrap(Wrap { trim: false }),
+            hint_area,
+        );
+    }
+}
+
+fn risk_color(perm: &PendingPermission) -> Color {
+    match perm.request.risk_level {
         RiskLevel::Low => Color::Green,
         RiskLevel::Medium => Color::Yellow,
         RiskLevel::High => Color::Red,
-    };
-    let risk_icon = match perm.request.risk_level {
-        RiskLevel::Low => "\u{1F513}",    // 🔓
-        RiskLevel::Medium => "\u{1F512}", // 🔒
-        RiskLevel::High => "\u{26A0}\u{FE0F}",  // ⚠️
-    };
+    }
+}
 
-    let desc = &perm.request.description;
-    let desc_line = Line::from(vec![
-        Span::styled(
-            format!("{risk_icon} "),
-            Style::default().fg(risk_color),
-        ),
+fn sanitize_inline_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut prev_space = true;
+
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            if !prev_space {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            out.push(ch);
+            prev_space = false;
+        }
+    }
+
+    if out.ends_with(' ') {
+        out.pop();
+    }
+
+    out
+}
+
+fn build_description_line(perm: &PendingPermission) -> Line<'static> {
+    let risk_icon = match perm.request.risk_level {
+        RiskLevel::Low => "\u{1F513}",       // 🔓
+        RiskLevel::Medium => "\u{1F512}",    // 🔒
+        RiskLevel::High => "\u{26A0}\u{FE0F}", // ⚠️
+    };
+    let accent = risk_color(perm);
+    let desc = sanitize_inline_text(&perm.request.description);
+
+    Line::from(vec![
+        Span::styled(format!("{risk_icon} "), Style::default().fg(accent)),
         Span::styled(
             perm.request.tool_name.clone(),
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            format!(": {desc}"),
-            Style::default().fg(Color::Gray),
-        ),
-    ]);
-    frame.render_widget(Paragraph::new(desc_line), desc_area);
-
-    // --- Button row ---
-    let btn_line = build_button_line(perm.selected, risk_color);
-    frame.render_widget(Paragraph::new(btn_line), btn_area);
-
-    // --- Hint row ---
-    if hint_area.height > 0 {
-        let hint = Line::from(vec![
-            Span::styled("Tab", Style::default().fg(Color::Cyan)),
-            Span::styled(": select  ", Style::default().fg(MUTED)),
-            Span::styled("Enter", Style::default().fg(Color::Cyan)),
-            Span::styled(": confirm  ", Style::default().fg(MUTED)),
-            Span::styled("Esc", Style::default().fg(Color::Cyan)),
-            Span::styled(": deny", Style::default().fg(MUTED)),
-        ]);
-        frame.render_widget(Paragraph::new(hint), hint_area);
-    }
+        Span::styled(format!(": {desc}"), Style::default().fg(Color::Gray)),
+    ])
 }
 
-fn build_button_line(selected: PermissionChoice, accent: Color) -> Line<'static> {
-    let btn = |label: &str, choice: PermissionChoice| -> Vec<Span<'static>> {
-        let is_sel = selected == choice;
-        if is_sel {
-            vec![
-                Span::styled(
-                    format!(" [{label}] "),
-                    Style::default()
-                        .fg(Color::White)
-                        .bg(accent)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]
-        } else {
-            vec![
-                Span::styled(
-                    format!("  {label}  "),
-                    Style::default().fg(MUTED),
-                ),
-            ]
+fn build_button_lines(selected: PermissionChoice, accent: Color, width: u16) -> Vec<Line<'static>> {
+    let width = usize::from(width.max(1));
+    let indent = "  ";
+    let indent_width = indent.width();
+    let buttons = [
+        build_button("Allow", PermissionChoice::Allow, selected, accent),
+        build_button("Deny", PermissionChoice::Deny, selected, accent),
+        build_button("Allow Always", PermissionChoice::AllowAlways, selected, accent),
+    ];
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut current = vec![Span::raw(indent)];
+    let mut line_width = indent_width;
+    let mut items_on_line = 0usize;
+
+    for (span, button_width) in buttons {
+        let extra_gap = if items_on_line == 0 { 0 } else { 2 };
+        if items_on_line > 0 && line_width + extra_gap + button_width > width {
+            lines.push(Line::from(std::mem::take(&mut current)));
+            current.push(Span::raw(indent));
+            line_width = indent_width;
+            items_on_line = 0;
         }
+
+        if items_on_line > 0 {
+            current.push(Span::raw("  "));
+            line_width += 2;
+        }
+
+        current.push(span);
+        line_width += button_width;
+        items_on_line += 1;
+    }
+
+    lines.push(Line::from(current));
+    lines
+}
+
+fn build_button(
+    label: &str,
+    choice: PermissionChoice,
+    selected: PermissionChoice,
+    accent: Color,
+) -> (Span<'static>, usize) {
+    let is_sel = selected == choice;
+    let text = if is_sel {
+        format!(" [{label}] ")
+    } else {
+        format!("  {label}  ")
+    };
+    let style = if is_sel {
+        Style::default()
+            .fg(Color::White)
+            .bg(accent)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(MUTED)
     };
 
-    let mut spans = vec![Span::raw("  ")];
-    spans.extend(btn("Allow", PermissionChoice::Allow));
-    spans.push(Span::raw("  "));
-    spans.extend(btn("Deny", PermissionChoice::Deny));
-    spans.push(Span::raw("  "));
-    spans.extend(btn("Allow Always", PermissionChoice::AllowAlways));
-
-    Line::from(spans)
+    let width = text.width();
+    (Span::styled(text, style), width)
 }
 
-/// Rows needed for the permission prompt footer.
-pub const PERM_ROWS: u16 = 3; // description + buttons + hints
+fn build_hint_line() -> Line<'static> {
+    Line::from(vec![
+        Span::styled("Tab", Style::default().fg(Color::Cyan)),
+        Span::styled(": select  ", Style::default().fg(MUTED)),
+        Span::styled("Enter", Style::default().fg(Color::Cyan)),
+        Span::styled(": confirm  ", Style::default().fg(MUTED)),
+        Span::styled("Esc", Style::default().fg(Color::Cyan)),
+        Span::styled(": deny", Style::default().fg(MUTED)),
+    ])
+}
 
 #[cfg(test)]
 mod tests {
@@ -248,5 +342,22 @@ mod tests {
         p.selected = PermissionChoice::Deny;
         let resp = p.to_response();
         assert!(!resp.granted);
+    }
+
+    #[test]
+    fn sanitize_inline_text_collapses_newlines() {
+        assert_eq!(
+            sanitize_inline_text("run\nthis\tcommand\r\nnow"),
+            "run this command now"
+        );
+    }
+
+    #[test]
+    fn permission_layout_expands_on_narrow_width() {
+        let p = PendingPermission::new(sample_request(RiskLevel::Medium));
+        let wide = layout_for(120, &p);
+        let narrow = layout_for(18, &p);
+        assert_eq!(wide.total_rows(), 3);
+        assert!(narrow.total_rows() > 3);
     }
 }

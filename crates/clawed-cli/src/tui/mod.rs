@@ -55,6 +55,35 @@ use self::status::{ToolInfo, TuiStatusState};
 /// unlike `Color::DarkGray` (ANSI 8) which maps to bright on many terminals.
 const MUTED: Color = Color::Rgb(140, 140, 140);
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct LayoutSignature {
+    has_overlay: bool,
+    has_permission: bool,
+    bottom_bar_hidden: bool,
+    input_rows: u16,
+    queue_rows: u16,
+    task_plan_rows: u16,
+}
+
+fn restore_terminal_after_tui() {
+    clawed_tools::diff_ui::set_tui_mode(false);
+    let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::PopKeyboardEnhancementFlags
+    );
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
+    let _ = crossterm::terminal::disable_raw_mode();
+}
+
+struct TuiTerminalGuard;
+
+impl Drop for TuiTerminalGuard {
+    fn drop(&mut self) {
+        restore_terminal_after_tui();
+    }
+}
+
 // -- App State ----------------------------------------------------------------
 
 struct App {
@@ -69,8 +98,9 @@ struct App {
     bottom_bar_hidden: bool,
     thinking_collapsed: bool,
     running: bool,
-    /// Set to true whenever content changes; causes a full terminal clear before the next draw
-    /// to eliminate ghost cells left over from prior frames (no alternate screen).
+    /// Set to true when the terminal needs a full clear before the next draw.
+    /// This is only required when the layout geometry changes (footer/input/task
+    /// panel height changes, overlays appear/disappear, resize events, etc.).
     needs_full_clear: bool,
     total_turns: u32,
     /// Latest context size from the most recent API response (not accumulated).
@@ -93,10 +123,9 @@ struct App {
     /// TextDelta/ThinkingDelta received in this window belong to the previous
     /// (aborted) stream and must be discarded to avoid bleed-in.
     expecting_turn_start: bool,
-    /// Track overlay/permission visibility from the previous frame to detect
-    /// structural layout transitions that need a full terminal clear.
-    last_had_overlay: bool,
-    last_had_permission: bool,
+    /// Layout state from the previous frame, used to detect geometry changes
+    /// that need a full terminal clear to avoid ghost cells.
+    last_layout_sig: LayoutSignature,
 }
 
 impl App {
@@ -124,8 +153,7 @@ impl App {
             queued_inputs: Vec::new(),
             is_generating: false,
             expecting_turn_start: false,
-            last_had_overlay: false,
-            last_had_permission: false,
+            last_layout_sig: LayoutSignature::default(),
         }
     }
 
@@ -133,6 +161,24 @@ impl App {
         self.messages.push(Message::new(content));
         if self.auto_scroll {
             self.scroll_offset = 0;
+        }
+    }
+
+    fn layout_signature(&self) -> LayoutSignature {
+        let has_permission = self.permission.is_some();
+        let queue_rows = if has_permission || self.queued_inputs.is_empty() {
+            0
+        } else {
+            self.queued_inputs.len().min(5) as u16
+        };
+
+        LayoutSignature {
+            has_overlay: self.overlay.is_some(),
+            has_permission,
+            bottom_bar_hidden: self.bottom_bar_hidden,
+            input_rows: self.input.visible_rows(),
+            queue_rows,
+            task_plan_rows: self.task_plan.render_height(),
         }
     }
 
@@ -462,43 +508,10 @@ impl App {
                     "Session saved: {session_id}",
                 )));
             }
-            // Tool input ready — show a compact one-line summary.
-            // Only the first relevant key (path, command, etc.) is shown to keep
-            // the message area clean. Full input is irrelevant to the user.
-            AgentNotification::ToolUseReady { tool_name, input, .. } => {
-                let brief = match input {
-                    serde_json::Value::Object(ref m) => {
-                        // Pick the first short, human-meaningful field
-                        const PREF_KEYS: &[&str] = &[
-                            "command", "file_path", "path", "pattern", "url", "query",
-                            "regex", "glob", "description",
-                        ];
-                        let chosen = PREF_KEYS
-                            .iter()
-                            .find_map(|k| m.get(*k).and_then(|v| v.as_str()).map(|s| (*k, s)));
-                        if let Some((k, v)) = chosen {
-                            if v.chars().count() > 60 {
-                                let t: String = v.chars().take(57).collect();
-                                format!("{k}=\"{t}…\"")
-                            } else {
-                                format!("{k}=\"{v}\"")
-                            }
-                        } else {
-                            String::new()
-                        }
-                    }
-                    _ => String::new(),
-                };
-                if brief.is_empty() {
-                    self.push_message(MessageContent::System(format!(
-                        "  ↳ {tool_name}",
-                    )));
-                } else {
-                    self.push_message(MessageContent::System(format!(
-                        "  ↳ {tool_name}({brief})",
-                    )));
-                }
-            }
+            // Tool input is intentionally not shown in TUI history. The user only
+            // needs to know which tool is running; long parameter dumps add noise
+            // and can still produce visually disruptive output.
+            AgentNotification::ToolUseReady { .. } => {}
             // Tool selected — pre-execution signal (just a brief note)
             AgentNotification::ToolSelected { .. } => {}
             // AssistantMessage — full text for logging, already shown via TextDelta
@@ -738,7 +751,11 @@ impl App {
 fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
-    let has_permission = app.permission.is_some();
+    let perm_layout = app
+        .permission
+        .as_ref()
+        .map(|perm| permission::layout_for(area.width, perm));
+    let has_permission = perm_layout.is_some();
 
     // Build vertical layout constraints
     let bottom_bar_rows = if has_permission {
@@ -748,12 +765,10 @@ fn render(frame: &mut Frame, app: &App) {
     };
     let task_plan_rows = app.task_plan.render_height();
 
-    // When permission is active, the input row + hint bar are replaced by
-    // a 3-row permission prompt (description + buttons + hints).
     let input_rows = app.input.visible_rows();
     // Footer includes a separator between input and hint bar (always, except perm).
-    let footer_rows = if has_permission {
-        permission::PERM_ROWS
+    let footer_rows = if let Some(layout) = perm_layout {
+        layout.total_rows()
     } else {
         input_rows + 1 + bottom_bar_rows // +1 for the separator between input and hint bar
     };
@@ -803,12 +818,14 @@ fn render(frame: &mut Frame, app: &App) {
         render_input_separator(frame, input_sep_area);
     }
 
-    if let Some(ref perm) = app.permission {
-        // Permission prompt: split footer into 3 rows
+    if let Some(perm) = app.permission.as_ref() {
+        let layout = permission::layout_for(footer_area.width, perm);
+        // Permission prompt: rows adapt to terminal width instead of assuming a
+        // fixed 3-line footer.
         let perm_chunks = Layout::vertical([
-            Constraint::Length(1), // description
-            Constraint::Length(1), // buttons
-            Constraint::Length(1), // hints
+            Constraint::Length(layout.desc_rows),
+            Constraint::Length(layout.button_rows),
+            Constraint::Length(layout.hint_rows),
         ])
         .split(footer_area);
         permission::render(frame, perm_chunks[0], perm_chunks[1], perm_chunks[2], perm);
@@ -1290,6 +1307,7 @@ pub async fn run_tui(
     // Skipping alternate screen improves Chinese IME compatibility on macOS
     // and lets output persist after exit.
     crossterm::terminal::enable_raw_mode()?;
+    let _terminal_guard = TuiTerminalGuard;
 
     // Enable bracketed paste so multi-line paste arrives as Event::Paste(String)
     // instead of individual Key events (which would submit on Enter).
@@ -1325,17 +1343,16 @@ pub async fn run_tui(
             app.status.spinner_frame = app.status.spinner_frame.wrapping_add(1);
         }
 
-        // Detect structural layout transitions (overlay/permission appear/disappear)
-        // that require a full clear to avoid ghost cells from the previous layout.
-        let cur_overlay = app.overlay.is_some();
-        let cur_permission = app.permission.is_some();
-        if cur_overlay != app.last_had_overlay || cur_permission != app.last_had_permission {
+        // Detect any layout geometry change that can leave ghost cells behind in
+        // non-alternate-screen mode: overlays, permission footer, queue rows,
+        // input growth/shrink, task-plan height changes, bottom bar toggles, etc.
+        let layout_sig = app.layout_signature();
+        if layout_sig != app.last_layout_sig {
             app.needs_full_clear = true;
-            app.last_had_overlay = cur_overlay;
-            app.last_had_permission = cur_permission;
+            app.last_layout_sig = layout_sig;
         }
 
-        // If content changed, fully clear the terminal before drawing to eliminate
+        // If layout changed, fully clear the terminal before drawing to eliminate
         // ghost cells left from prior frames (no alternate screen = ratatui diffs
         // only changed cells, leaving stale cells where layout shrank).
         if app.needs_full_clear {
@@ -1375,8 +1392,8 @@ pub async fn run_tui(
                     }
 
                     // If overlay is active, route keys there first
-                    if app.overlay.is_some() {
-                        let action = app.overlay.as_mut().unwrap().handle_key(key.code);
+                    if let Some(overlay) = app.overlay.as_mut() {
+                        let action = overlay.handle_key(key.code);
                         match action {
                             OverlayAction::Dismissed => {
                                 app.overlay = None;
@@ -1417,7 +1434,7 @@ pub async fn run_tui(
                                         "Denied"
                                     };
                                     app.push_message(MessageContent::System(
-                                        format!("{label}: {} — {}", perm.request.tool_name, perm.request.description),
+                                        format!("{label}: {}", perm.request.tool_name),
                                     ));
                                     let _ = client.send_permission_response(resp);
                                 }
@@ -1426,7 +1443,7 @@ pub async fn run_tui(
                                 if let Some(perm) = app.permission.take() {
                                     let resp = perm.deny_response();
                                     app.push_message(MessageContent::System(
-                                        format!("Denied: {} — {}", perm.request.tool_name, perm.request.description),
+                                        format!("Denied: {}", perm.request.tool_name),
                                     ));
                                     let _ = client.send_permission_response(resp);
                                 }
@@ -1640,8 +1657,8 @@ pub async fn run_tui(
         // Check for incoming permission requests
         while let Ok(req) = perm_rx.try_recv() {
             app.push_message(MessageContent::System(format!(
-                "\u{1F512} Permission required: {} — {}",
-                req.tool_name, req.description,
+                "\u{1F512} Permission required: {}",
+                req.tool_name,
             )));
             app.permission = Some(PendingPermission::new(req));
         }
@@ -1663,23 +1680,6 @@ pub async fn run_tui(
     forwarder.abort();
     perm_forwarder.abort();
 
-    // Re-enable diff_ui stderr output for non-TUI usage after exit.
-    clawed_tools::diff_ui::set_tui_mode(false);
-
-    // Restore terminal (no alternate screen to leave).
-    // Always pop keyboard enhancement flags — the push is unconditional, and
-    // popping on terminals that ignored the push is harmless.
-    let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
-    let _ = crossterm::execute!(
-        std::io::stdout(),
-        crossterm::event::PopKeyboardEnhancementFlags
-    );
-    // Show cursor, clear screen, and disable raw mode
-    let _ = crossterm::execute!(
-        std::io::stdout(),
-        crossterm::cursor::Show,
-    );
-    let _ = crossterm::terminal::disable_raw_mode();
     Ok(())
 }
 
@@ -2611,6 +2611,8 @@ fn format_duration(dur: chrono::Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clawed_bus::events::{PermissionRequest, RiskLevel};
+    use serde_json::json;
 
     #[test]
     fn welcome_lines_are_nonempty() {
@@ -2674,5 +2676,41 @@ mod tests {
         assert!(app.overlay.is_some());
         app.overlay = None;
         assert!(app.overlay.is_none());
+    }
+
+    #[test]
+    fn layout_signature_detects_footer_changes() {
+        let mut app = App::new("test".to_string());
+        let base = app.layout_signature();
+
+        app.bottom_bar_hidden = true;
+        assert_ne!(base, app.layout_signature());
+
+        app.bottom_bar_hidden = false;
+        app.queued_inputs.push("queued".to_string());
+        assert_ne!(base, app.layout_signature());
+
+        app.queued_inputs.clear();
+        app.input.insert_text("line1\nline2");
+        assert_ne!(base, app.layout_signature());
+    }
+
+    #[test]
+    fn layout_signature_detects_permission_and_task_panel() {
+        let mut app = App::new("test".to_string());
+        let base = app.layout_signature();
+
+        app.task_plan.add_task("agent-1".to_string(), "Task".to_string());
+        assert_ne!(base, app.layout_signature());
+
+        app.task_plan = taskplan::TaskPlan::new();
+        app.permission = Some(PendingPermission::new(PermissionRequest {
+            request_id: "req-1".to_string(),
+            tool_name: "Bash".to_string(),
+            input: json!({"command": "ls"}),
+            risk_level: RiskLevel::Medium,
+            description: "Bash: command=ls".to_string(),
+        }));
+        assert_ne!(base, app.layout_signature());
     }
 }
