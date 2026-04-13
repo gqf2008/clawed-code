@@ -138,6 +138,7 @@ impl App {
     /// true for the entire turn so queue gating and Esc abort work correctly.
     fn mark_generating(&mut self) {
         self.status.thinking = true;
+        self.status.is_generating = true;
         self.is_generating = true;
         // Discard any TextDelta/ThinkingDelta that arrive before TurnStart —
         // they belong to the previous (possibly aborted) stream.
@@ -147,6 +148,7 @@ impl App {
     /// Clear all generation state (abort or TurnComplete).
     fn mark_done(&mut self) {
         self.status.thinking = false;
+        self.status.is_generating = false;
         self.is_generating = false;
         self.expecting_turn_start = false;
         self.status.active_tools.clear();
@@ -280,6 +282,7 @@ impl App {
                 // previous (aborted) stream arrived between mark_generating()
                 // and this TurnStart, resetting is_generating prematurely.
                 self.is_generating = true;
+                self.status.is_generating = true;
                 // We now have a confirmed new turn — allow TextDelta through.
                 self.expecting_turn_start = false;
                 self.status.thinking = true;
@@ -1311,8 +1314,8 @@ pub async fn run_tui(
 
     // Main event loop
     while app.running {
-        // Advance spinner when thinking
-        if app.status.thinking || !app.status.active_tools.is_empty() {
+        // Advance spinner whenever generating (covers thinking, text streaming, tool execution)
+        if app.status.is_generating || !app.status.active_tools.is_empty() {
             app.status.spinner_frame = app.status.spinner_frame.wrapping_add(1);
         }
 

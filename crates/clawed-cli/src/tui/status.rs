@@ -22,8 +22,11 @@ pub struct TuiStatusState {
     pub active_shells: u32,
     pub active_agents: HashMap<String, String>,
     pub thinking: bool,
+    /// True for the entire duration the agent is generating (set in mark_generating,
+    /// cleared in mark_done). Broader than `thinking`, which goes false during TextDelta.
+    pub is_generating: bool,
     pub session_start: Instant,
-    /// Spinner frame counter, incremented on each render tick while thinking.
+    /// Spinner frame counter, incremented on each render tick while generating.
     pub spinner_frame: usize,
     /// Context window usage percentage (0.0–100.0), updated from SessionStatus.
     pub context_pct: f64,
@@ -36,6 +39,7 @@ impl TuiStatusState {
             active_shells: 0,
             active_agents: HashMap::new(),
             thinking: false,
+            is_generating: false,
             session_start: Instant::now(),
             spinner_frame: 0,
             context_pct: 0.0,
@@ -44,10 +48,10 @@ impl TuiStatusState {
 
     /// Whether the status line should be visible.
     pub fn should_show(&self) -> bool {
-        !self.active_tools.is_empty()
+        self.is_generating
+            || !self.active_tools.is_empty()
             || self.active_shells > 0
             || !self.active_agents.is_empty()
-            || self.thinking
     }
 }
 
@@ -69,11 +73,22 @@ pub fn build_spans(state: &TuiStatusState) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> =
         vec![Span::styled(format!("{mins:02}:{secs:02}"), dim)];
 
-    if state.thinking {
+    // Show spinner whenever generating — label changes based on phase:
+    //   "thinking"   — extended thinking or between submit and first TextDelta
+    //   tool name    — tool is running (shown separately below with timing)
+    //   "generating" — streaming text back, or waiting for next response after tools
+    if state.is_generating {
         const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let ch = SPINNER[state.spinner_frame % SPINNER.len()];
+        let label = if state.thinking {
+            "thinking"
+        } else if !state.active_tools.is_empty() {
+            "running"
+        } else {
+            "generating"
+        };
         spans.push(Span::raw("  "));
-        spans.push(Span::styled(format!("{ch} thinking"), tool_style));
+        spans.push(Span::styled(format!("{ch} {label}"), tool_style));
     }
 
     let tool_count = state.active_tools.len();
@@ -131,9 +146,9 @@ mod tests {
     }
 
     #[test]
-    fn test_should_show_thinking() {
+    fn test_should_show_generating() {
         let mut state = TuiStatusState::new();
-        state.thinking = true;
+        state.is_generating = true;
         assert!(state.should_show());
     }
 
