@@ -843,49 +843,27 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     let viewport_height = area.height as usize;
-    let total_lines = all_lines.len();
-    let width = area.width as usize;
 
-    // Compute visual (terminal row) height for each logical line.
-    // A line W display-columns wide in a terminal of width W takes ceil(W/width) rows.
-    let visual_heights: Vec<usize> = all_lines
-        .iter()
-        .map(|l| {
-            let w: usize = l.spans.iter().map(|s| s.content.width()).sum();
-            if w == 0 { 1 } else { w.div_ceil(width) }
-        })
-        .collect();
-    let total_visual: usize = visual_heights.iter().sum();
+    // Build the full paragraph and let ratatui compute the exact visual row count.
+    // This avoids the div_ceil approximation which can be wrong for word-wrapped
+    // content (word boundaries differ from column boundaries).
+    let paragraph = Paragraph::new(all_lines).wrap(Wrap { trim: false });
+    let total_visual = paragraph.line_count(area.width);
 
-    // Find start logical-line index (scroll_offset=0 means bottom of content).
-    let start = if total_visual <= viewport_height {
-        // All content fits — no scrolling needed.
+    // scroll_offset = 0 → bottom of content; higher = scroll up.
+    let scroll_row: u16 = if total_visual <= viewport_height {
         0
     } else {
-        // Find bottom_start: first logical line such that visual rows [bottom_start..end]
-        // fit within viewport_height. This is the anchor for scroll_offset=0.
-        // Default to the last line so that a single line taller than the viewport
-        // still renders (ratatui clips the overflow).
-        let mut v = 0usize;
-        let mut bottom_start = total_lines.saturating_sub(1);
-        for i in (0..total_lines).rev() {
-            let vh = visual_heights[i];
-            if v + vh > viewport_height {
-                break;
-            }
-            v += vh;
-            bottom_start = i;
-        }
-        // Scroll up by scroll_offset logical lines from the bottom anchor.
-        let offset = app.scroll_offset.min(bottom_start);
-        bottom_start - offset
+        let max_scroll = total_visual - viewport_height;
+        let clamped = app.scroll_offset.min(max_scroll);
+        // Skip (max_scroll - clamped) visual rows from the top to anchor to the bottom.
+        (max_scroll - clamped) as u16
     };
 
-    // Take all lines from start; ratatui clips rendering to area.height.
-    let visible: Vec<Line> = all_lines.into_iter().skip(start).collect();
-
-    let paragraph = Paragraph::new(visible).wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, area);
+    // Clear the area first to prevent ghost cells from prior frames leaking through
+    // when content shifts (especially large markdown blocks rendered all at once).
+    frame.render_widget(Clear, area);
+    frame.render_widget(paragraph.scroll((scroll_row, 0)), area);
 }
 
 fn render_queue_banner(frame: &mut Frame, area: Rect, queued: &[String]) {
