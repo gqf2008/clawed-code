@@ -462,42 +462,42 @@ impl App {
                     "Session saved: {session_id}",
                 )));
             }
-            // Tool input ready — show a compact summary of what's being passed
+            // Tool input ready — show a compact one-line summary.
+            // Only the first relevant key (path, command, etc.) is shown to keep
+            // the message area clean. Full input is irrelevant to the user.
             AgentNotification::ToolUseReady { tool_name, input, .. } => {
-                let summary = match input {
+                let brief = match input {
                     serde_json::Value::Object(ref m) => {
-                        m.iter()
-                            .take(3)
-                            .map(|(k, v)| {
-                                let val = match v {
-                                    serde_json::Value::String(s) => {
-                                        if s.chars().count() > 40 {
-                                            let t: String = s.chars().take(37).collect();
-                                            format!("\"{t}…\"")
-                                        } else {
-                                            format!("\"{s}\"")
-                                        }
-                                    }
-                                    other => {
-                                        let s = other.to_string();
-                                        if s.chars().count() > 40 {
-                                            let t: String = s.chars().take(37).collect();
-                                            format!("{t}…")
-                                        } else {
-                                            s
-                                        }
-                                    }
-                                };
-                                format!("{k}={val}")
-                            })
-                            .collect::<Vec<_>>()
-                            .join(", ")
+                        // Pick the first short, human-meaningful field
+                        const PREF_KEYS: &[&str] = &[
+                            "command", "file_path", "path", "pattern", "url", "query",
+                            "regex", "glob", "description",
+                        ];
+                        let chosen = PREF_KEYS
+                            .iter()
+                            .find_map(|k| m.get(*k).and_then(|v| v.as_str()).map(|s| (*k, s)));
+                        if let Some((k, v)) = chosen {
+                            if v.chars().count() > 60 {
+                                let t: String = v.chars().take(57).collect();
+                                format!("{k}=\"{t}…\"")
+                            } else {
+                                format!("{k}=\"{v}\"")
+                            }
+                        } else {
+                            String::new()
+                        }
                     }
-                    _ => input.to_string(),
+                    _ => String::new(),
                 };
-                self.push_message(MessageContent::System(format!(
-                    "  ↳ {tool_name}({summary})",
-                )));
+                if brief.is_empty() {
+                    self.push_message(MessageContent::System(format!(
+                        "  ↳ {tool_name}",
+                    )));
+                } else {
+                    self.push_message(MessageContent::System(format!(
+                        "  ↳ {tool_name}({brief})",
+                    )));
+                }
             }
             // Tool selected — pre-execution signal (just a brief note)
             AgentNotification::ToolSelected { .. } => {}

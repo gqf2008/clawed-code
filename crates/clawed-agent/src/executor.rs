@@ -195,7 +195,10 @@ impl ToolExecutor {
                 // Always use the canonical tool name for prompts and session cache so that
                 // alias-resolved tools (e.g. "FileWriteTool" → "Write") are keyed consistently.
                 let canonical = tool.name();
-                let desc = format!("{}: {}", canonical, serde_json::to_string(&input).unwrap_or_default());
+                // Build a short human-readable description for the permission prompt.
+                // The full input JSON can be huge (e.g. file contents), so extract only
+                // a brief summary to avoid overflowing the TUI layout.
+                let desc = build_perm_description(canonical, &input);
                 let suggestions = perm.suggestions.clone();
                 let perm_timeout = std::time::Duration::from_secs(300); // 5 min default
                 let response = match tokio::time::timeout(
@@ -389,6 +392,50 @@ fn partition_tool_calls(
     }
 
     batches
+}
+
+/// Build a concise human-readable description for the permission prompt.
+///
+/// Extracts key fields (e.g. `command`, `file_path`) from the tool input JSON
+/// and truncates to avoid overflowing the TUI layout. Long values like file
+/// contents are omitted.
+fn build_perm_description(tool_name: &str, input: &Value) -> String {
+    // Keys whose values are likely short and human-readable — show these.
+    const SHOW_KEYS: &[&str] = &[
+        "command", "file_path", "path", "pattern", "url", "query",
+        "description", "regex", "glob",
+    ];
+    const MAX_VAL_LEN: usize = 80;
+
+    let obj = match input.as_object() {
+        Some(o) => o,
+        None => return format!("{tool_name}: (non-object input)"),
+    };
+
+    let parts: Vec<String> = obj
+        .iter()
+        .filter(|(k, _)| SHOW_KEYS.contains(&k.as_str()))
+        .map(|(k, v)| {
+            let s = match v {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            if s.chars().count() > MAX_VAL_LEN {
+                let truncated: String = s.chars().take(MAX_VAL_LEN - 1).collect();
+                format!("{k}={truncated}…")
+            } else {
+                format!("{k}={s}")
+            }
+        })
+        .collect();
+
+    if parts.is_empty() {
+        // Fallback: show just the key names
+        let keys: Vec<&String> = obj.keys().collect();
+        format!("{tool_name}({})", keys.iter().map(|k| k.as_str()).collect::<Vec<_>>().join(", "))
+    } else {
+        format!("{tool_name}: {}", parts.join(", "))
+    }
 }
 
 #[cfg(test)]
@@ -621,5 +668,34 @@ mod tests {
             }
             _ => panic!("Expected ToolResult"),
         }
+    }
+
+    // ── build_perm_description ──────────────────────────────────────────
+
+    #[test]
+    fn perm_desc_shows_command() {
+        let input = json!({"command": "ls -la", "timeout": 30});
+        let desc = build_perm_description("Bash", &input);
+        assert!(desc.contains("command=ls -la"), "got: {desc}");
+        // Should NOT contain "timeout" (not in SHOW_KEYS)
+        assert!(!desc.contains("timeout"), "got: {desc}");
+    }
+
+    #[test]
+    fn perm_desc_truncates_long_values() {
+        let long = "x".repeat(200);
+        let input = json!({"command": long});
+        let desc = build_perm_description("Bash", &input);
+        assert!(desc.len() < 150, "desc too long: {} chars", desc.len());
+        assert!(desc.contains('…'), "missing truncation marker: {desc}");
+    }
+
+    #[test]
+    fn perm_desc_fallback_to_keys() {
+        let input = json!({"content": "very long data", "mode": "overwrite"});
+        let desc = build_perm_description("Write", &input);
+        // No SHOW_KEYS match → should list key names
+        assert!(desc.contains("content"), "got: {desc}");
+        assert!(desc.contains("mode"), "got: {desc}");
     }
 }
