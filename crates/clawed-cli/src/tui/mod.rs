@@ -931,7 +931,7 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
     let total_tokens = app.total_input_tokens + app.total_output_tokens;
     if total_tokens > 0 {
         info_parts.push(format!(
-            "{}{}",
+            "{}\u{2191} {}\u{2193}",
             fmt_tokens(app.total_input_tokens),
             fmt_tokens(app.total_output_tokens),
         ));
@@ -958,8 +958,26 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         String::new()
     };
 
-    let info_w = info.width();
+    // Truncate info so that info + scroll always fit within the terminal width.
+    // Reserve at least 4 dashes (2 left + 2 right) for visual framing.
     let scroll_w = scroll.width();
+    let max_info_w = width.saturating_sub(scroll_w + 4);
+    let info = if info.width() > max_info_w {
+        // Trim to fit, appending "…"
+        let mut truncated = String::new();
+        for ch in info.chars() {
+            if truncated.width() + 1 /* … */ >= max_info_w {
+                truncated.push('…');
+                break;
+            }
+            truncated.push(ch);
+        }
+        truncated
+    } else {
+        info
+    };
+
+    let info_w = info.width();
     let content_w = info_w + scroll_w;
     let dashes = width.saturating_sub(content_w);
     let left = dashes / 2;
@@ -1009,7 +1027,8 @@ fn shorten_model_name(model: &str) -> String {
     }
 }
 
-/// Format a token count compactly: ≥1000 → "1.2k↑", else "512↑".
+/// Format a token count compactly: ≥1000 → `"1k"`, else `"512"`.
+/// The caller is responsible for appending directional arrows (↑/↓).
 fn fmt_tokens(n: u64) -> String {
     if n >= 1_000 {
         format!("{:.0}k", n as f64 / 1000.0)
