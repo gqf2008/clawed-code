@@ -718,8 +718,6 @@ fn render(frame: &mut Frame, app: &App) {
     } else {
         u16::from(!app.bottom_bar_hidden)
     };
-    // Dynamic status (spinner, tools, agents) — only shown when active.
-    let status_rows = u16::from(app.status.should_show());
     let task_plan_rows = app.task_plan.render_height();
 
     // When permission is active, the input row + hint bar are replaced by
@@ -733,22 +731,21 @@ fn render(frame: &mut Frame, app: &App) {
     };
 
     // Queue items: 1 row per queued message (capped at 5), no header row.
-    // Queue count is shown inside the separator line instead.
+    // Queue count is shown inside the info line instead.
     let queue_rows = if has_permission || app.queued_inputs.is_empty() {
         0
     } else {
         app.queued_inputs.len().min(5) as u16
     };
 
-    // Input separator is always shown (separates queue/status from input box).
+    // Input separator is always shown (separates queue from input box).
     // Suppress it when permission prompt is active (it has its own layout).
     let input_sep_rows = u16::from(!has_permission);
 
     let constraints = [
         Constraint::Min(1),                       // messages
         Constraint::Length(task_plan_rows),        // task plan (0 if empty)
-        Constraint::Length(1),                     // separator (with static info)
-        Constraint::Length(status_rows),           // dynamic status (0 or 1)
+        Constraint::Length(1),                     // info line (static + dynamic, always 1 row)
         Constraint::Length(queue_rows),            // queue items (0 or n)
         Constraint::Length(input_sep_rows),        // input separator (always 1, except perm)
         Constraint::Length(footer_rows),           // input/permission footer
@@ -758,10 +755,9 @@ fn render(frame: &mut Frame, app: &App) {
     let msg_area = chunks[0];
     let task_area = chunks[1];
     let sep_area = chunks[2];
-    let status_area = chunks[3];
-    let queue_area = chunks[4];
-    let input_sep_area = chunks[5];
-    let footer_area = chunks[6];
+    let queue_area = chunks[3];
+    let input_sep_area = chunks[4];
+    let footer_area = chunks[5];
 
     render_messages(frame, msg_area, app);
 
@@ -770,14 +766,6 @@ fn render(frame: &mut Frame, app: &App) {
     }
 
     render_separator(frame, sep_area, app.scroll_offset, app);
-
-    if status_rows > 0 {
-        status::render(
-            frame,
-            status_area,
-            &app.status,
-        );
-    }
 
     if queue_rows > 0 {
         render_queue_banner(frame, queue_area, &app.queued_inputs);
@@ -913,7 +901,7 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
     let dim = Style::default().fg(MUTED);
     let hi = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
 
-    // Build info parts: model │ turn N │ Xk↑ Yk↓ │ Z% ctx │ 📥N
+    // --- Left side: static info (model │ turn N │ Xk↑ Yk↓ │ Z% ctx │ 📥N) ---
     let mut info_parts: Vec<String> = Vec::new();
 
     let short_model = shorten_model_name(&app.model);
@@ -942,20 +930,27 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         info_parts.push(format!("\u{1F4E5}{}", app.queued_inputs.len()));
     }
 
-    // Scroll indicator on the left when scrolled up (no dashes, just text).
+    // --- Right side: dynamic status spans (elapsed, spinner, tools, shells, agents) ---
+    let status_spans = status::build_spans(&app.status);
+
+    // Measure right side width so we can right-align it.
+    let status_w: usize = status_spans.iter().map(|s| s.content.width()).sum();
+    let status_gap = if status_w > 0 { 2usize } else { 0 }; // 2-space gap before status
+
+    // Scroll indicator on the left when scrolled up.
     let mut spans: Vec<Span> = Vec::new();
-    let mut used = 0usize;
+    let mut left_used = 0usize;
 
     if scroll_offset > 0 {
         let s = format!("\u{2191}{scroll_offset}  ");
-        used += s.width();
+        left_used += s.width();
         spans.push(Span::styled(s, hi));
     }
 
-    // Info text left-aligned, truncated to remaining width.
+    // Info text left-aligned, truncated so it doesn't collide with status.
     if !info_parts.is_empty() {
         let info = format!(" {} ", info_parts.join(" \u{2502} "));
-        let available = width.saturating_sub(used);
+        let available = width.saturating_sub(left_used + status_w + status_gap);
         let info = if info.width() > available {
             let mut t = String::new();
             for ch in info.chars() {
@@ -969,7 +964,17 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         } else {
             info
         };
+        left_used += info.width();
         spans.push(Span::styled(info, dim));
+    }
+
+    // Pad to push status to the right edge.
+    if status_w > 0 {
+        let pad = width.saturating_sub(left_used + status_w);
+        if pad > 0 {
+            spans.push(Span::raw(" ".repeat(pad)));
+        }
+        spans.extend(status_spans);
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);

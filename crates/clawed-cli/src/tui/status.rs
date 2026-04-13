@@ -51,14 +51,13 @@ impl TuiStatusState {
     }
 }
 
-/// Render the status bar into the given area.
-/// Shows only dynamic content: elapsed time, spinner, tools, shells, agents.
-/// Static info (model, tokens, ctx%, queue count) is now in the separator line.
-pub fn render(
-    frame: &mut Frame,
-    area: Rect,
-    state: &TuiStatusState,
-) {
+/// Build the dynamic status spans (elapsed, spinner, tools, shells, agents).
+/// Returns an empty vec when there is nothing to show.
+pub fn build_spans(state: &TuiStatusState) -> Vec<Span<'static>> {
+    if !state.should_show() {
+        return Vec::new();
+    }
+
     let dim = Style::default().fg(MUTED);
     let warn = Style::default().fg(Color::Yellow);
     let tool_style = Style::default().fg(Color::Blue);
@@ -67,7 +66,8 @@ pub fn render(
     let mins = elapsed.as_secs() / 60;
     let secs = elapsed.as_secs() % 60;
 
-    let mut spans: Vec<Span> = vec![Span::styled(format!("{mins:02}:{secs:02}"), dim)];
+    let mut spans: Vec<Span<'static>> =
+        vec![Span::styled(format!("{mins:02}:{secs:02}"), dim)];
 
     if state.thinking {
         const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -87,7 +87,12 @@ pub fn render(
             };
             spans.push(Span::raw("  "));
             spans.push(Span::styled(
-                format!("{} ({:02}:{:02}){suffix}", tool.name, te.as_secs() / 60, te.as_secs() % 60),
+                format!(
+                    "{} ({:02}:{:02}){suffix}",
+                    tool.name,
+                    te.as_secs() / 60,
+                    te.as_secs() % 60
+                ),
                 warn,
             ));
         }
@@ -106,6 +111,12 @@ pub fn render(
         spans.push(Span::styled(format!("{agent_count} agent{s}"), warn));
     }
 
+    spans
+}
+
+/// Render the status bar into the given area (standalone, for fallback use).
+pub fn render(frame: &mut Frame, area: Rect, state: &TuiStatusState) {
+    let spans = build_spans(state);
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 

@@ -5,7 +5,7 @@
       "cron": "* * * * *",
       "prompt": "给用户讲一个有趣的冷笑话。要简洁，不要重复之前讲过的笑话。用 Brief 工具发送给用户，status 设为 proactive。",
       "createdAt": 1775904426681,
-      "lastFiredAt": 1776057146214,
+      "lastFiredAt": 1776057566589,
       "recurring": true
     }
   ]
