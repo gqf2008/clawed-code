@@ -136,6 +136,7 @@ impl App {
     fn mark_done(&mut self) {
         self.status.thinking = false;
         self.is_generating = false;
+        self.expecting_turn_start = false;
         self.status.active_tools.clear();
         self.status.active_shells = 0;
     }
@@ -237,14 +238,24 @@ impl App {
                 self.total_turns = turn;
                 self.total_input_tokens += usage.input_tokens;
                 self.total_output_tokens += usage.output_tokens;
-                self.mark_done();
+                // If expecting_turn_start is true, the user already submitted a new
+                // message and is waiting for TurnStart of the *new* turn. This
+                // TurnComplete belongs to the old (possibly aborted) turn. Skip
+                // mark_done() so we don't clear is_generating and make the UI
+                // appear frozen — that causes the user to think the 1st submit was
+                // lost and submit again unnecessarily.
+                if !self.expecting_turn_start {
+                    self.mark_done();
+                }
                 self.push_message(MessageContent::TurnDivider {
                     turn,
                     input_tokens: usage.input_tokens,
                     output_tokens: usage.output_tokens,
                 });
-                // Drain queue: merge all pending inputs and submit as one message
-                if !self.queued_inputs.is_empty() {
+                // Drain queue: merge all pending inputs and submit as one message.
+                // Only drain when NOT expecting a new turn (if expecting_turn_start,
+                // the direct submit already happened at the call site).
+                if !self.expecting_turn_start && !self.queued_inputs.is_empty() {
                     let merged = self.queued_inputs.join("\n\n");
                     self.queued_inputs.clear();
                     return Some(merged);
