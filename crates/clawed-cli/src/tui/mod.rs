@@ -32,6 +32,7 @@ use clawed_bus::bus::ClientHandle;
 use clawed_bus::events::{AgentNotification, ImageAttachment, PermissionRequest};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
+    DisableMouseCapture, EnableMouseCapture, MouseEventKind,
 };
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -1288,6 +1289,8 @@ pub async fn run_tui(
     // Enable bracketed paste so multi-line paste arrives as Event::Paste(String)
     // instead of individual Key events (which would submit on Enter).
     crossterm::execute!(std::io::stdout(), EnableBracketedPaste)?;
+    // Enable mouse capture so scroll wheel events reach the TUI scroll handler.
+    crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
 
     // Always push keyboard enhancement flags so modifiers for keys like Enter
     // are disambiguated (matching codex-rs behavior). Terminals that don't support
@@ -1589,7 +1592,24 @@ pub async fn run_tui(
                     let text = text.replace('\r', "");
                     app.input.insert_text(&text);
                 }
-                _ => {} // Mouse, Focus -- ignored
+                Event::Mouse(mouse) => {
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => {
+                            app.scroll_offset = app.scroll_offset.saturating_add(3);
+                            app.auto_scroll = false;
+                        }
+                        MouseEventKind::ScrollDown => {
+                            if app.scroll_offset > 0 {
+                                app.scroll_offset = app.scroll_offset.saturating_sub(3);
+                                if app.scroll_offset == 0 {
+                                    app.auto_scroll = true;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {} // Focus -- ignored
             }
         }
 
@@ -1645,6 +1665,7 @@ pub async fn run_tui(
     // Always pop keyboard enhancement flags — the push is unconditional, and
     // popping on terminals that ignored the push is harmless.
     let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
+    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     let _ = crossterm::execute!(
         std::io::stdout(),
         crossterm::event::PopKeyboardEnhancementFlags
