@@ -751,6 +751,7 @@ fn render(frame: &mut Frame, app: &App) {
         Constraint::Length(queue_rows),            // queue items (0 or n)
         Constraint::Length(input_sep_rows),        // input separator (always 1, except perm)
         Constraint::Length(footer_rows),           // input/permission footer
+        Constraint::Length(1),                     // bottom separator (always)
     ];
 
     let chunks = Layout::vertical(constraints).split(area);
@@ -761,6 +762,7 @@ fn render(frame: &mut Frame, app: &App) {
     let queue_area = chunks[4];
     let input_sep_area = chunks[5];
     let footer_area = chunks[6];
+    let bottom_sep_area = chunks[7];
 
     render_messages(frame, msg_area, app);
 
@@ -818,6 +820,8 @@ fn render(frame: &mut Frame, app: &App) {
     if let Some(ref ov) = app.overlay {
         overlay::render(frame, msg_area, ov);
     }
+
+    render_input_separator(frame, bottom_sep_area);
 }
 
 fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
