@@ -844,21 +844,43 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
 
     let viewport_height = area.height as usize;
     let total_lines = all_lines.len();
+    let width = area.width as usize;
 
-    // Calculate scroll position (scroll_offset=0 means at bottom)
-    let start = if total_lines <= viewport_height {
+    // Compute visual (terminal row) height for each logical line.
+    // A line W display-columns wide in a terminal of width W takes ceil(W/width) rows.
+    let visual_heights: Vec<usize> = all_lines
+        .iter()
+        .map(|l| {
+            let w: usize = l.spans.iter().map(|s| s.content.width()).sum();
+            if w == 0 { 1 } else { w.div_ceil(width) }
+        })
+        .collect();
+    let total_visual: usize = visual_heights.iter().sum();
+
+    // Find start logical-line index (scroll_offset=0 means bottom of content).
+    let start = if total_visual <= viewport_height {
+        // All content fits — no scrolling needed.
         0
     } else {
-        let max_scroll = total_lines - viewport_height;
-        let offset = app.scroll_offset.min(max_scroll);
-        max_scroll - offset
+        // Find bottom_start: first logical line such that visual rows [bottom_start..end]
+        // fit within viewport_height. This is the anchor for scroll_offset=0.
+        let mut v = 0usize;
+        let mut bottom_start = total_lines;
+        for i in (0..total_lines).rev() {
+            let vh = visual_heights[i];
+            if v + vh > viewport_height {
+                break;
+            }
+            v += vh;
+            bottom_start = i;
+        }
+        // Scroll up by scroll_offset logical lines from the bottom anchor.
+        let offset = app.scroll_offset.min(bottom_start);
+        bottom_start - offset
     };
 
-    let visible: Vec<Line> = all_lines
-        .into_iter()
-        .skip(start)
-        .take(viewport_height)
-        .collect();
+    // Take all lines from start; ratatui clips rendering to area.height.
+    let visible: Vec<Line> = all_lines.into_iter().skip(start).collect();
 
     let paragraph = Paragraph::new(visible).wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);

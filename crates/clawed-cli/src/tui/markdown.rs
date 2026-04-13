@@ -90,11 +90,18 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
     let mut code_block_buf = String::new();
     let mut list_item_started = false;
     let mut ordered_list_index: Option<u64> = None;
+    // Table tracking: column index within the current row (reset per row).
+    let mut table_col_idx: usize = 0;
 
     for event in parser {
         match event {
             Event::Start(tag) => match tag {
                 Tag::Heading { level, .. } => {
+                    // Flush any pending content (e.g. from a preceding table that
+                    // never emitted its own flush) before starting a new heading.
+                    if !current_spans.is_empty() {
+                        flush_line(&mut lines, &mut current_spans);
+                    }
                     state.heading_level = level as u8;
                     // Use a visual bar prefix scaled by heading level instead
                     // of echoing the raw '#' characters.
@@ -142,7 +149,18 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     state.bold = true;
                     let _ = dest_url; // URL appended on TagEnd
                 }
-                Tag::Table(_) | Tag::TableHead | Tag::TableRow | Tag::TableCell => {}
+                Tag::Table(_) => {}
+                Tag::TableHead | Tag::TableRow => {
+                    // Reset column counter for each new row.
+                    table_col_idx = 0;
+                }
+                Tag::TableCell => {
+                    // Add a column separator before every cell except the first.
+                    if table_col_idx > 0 {
+                        current_spans.push(Span::styled(" │ ", Style::default().fg(MUTED)));
+                    }
+                    table_col_idx += 1;
+                }
                 _ => {}
             },
             Event::End(tag_end) => match tag_end {
@@ -192,7 +210,30 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                 TagEnd::Link => {
                     state.bold = false;
                 }
-                TagEnd::Table | TagEnd::TableHead | TagEnd::TableRow | TagEnd::TableCell => {}
+                // Table rows: flush each row as its own line.
+                // Table head end: add a separator line after flushing the header row.
+                // Table end: add a blank line after the table.
+                TagEnd::TableRow => {
+                    flush_line(&mut lines, &mut current_spans);
+                }
+                TagEnd::TableHead => {
+                    // Header cells are direct children of TableHead (no TableRow wrapper),
+                    // so we flush the accumulated header spans here.
+                    flush_line(&mut lines, &mut current_spans);
+                    // Add a visual separator between header and data rows.
+                    lines.push(Line::styled(
+                        "\u{2500}".repeat(40),
+                        Style::default().fg(MUTED),
+                    ));
+                }
+                TagEnd::Table => {
+                    // Flush any remaining content (data rows are flushed by TagEnd::TableRow).
+                    if !current_spans.is_empty() {
+                        flush_line(&mut lines, &mut current_spans);
+                    }
+                    lines.push(Line::from(""));
+                }
+                TagEnd::TableCell => {}
                 _ => {}
             },
             Event::Text(cow_text) => {
@@ -520,5 +561,31 @@ mod tests {
         let md = "- [x] done\n- [ ] pending";
         let lines = render_markdown(md);
         assert!(lines.len() >= 2);
+    }
+
+    #[test]
+    fn table_rows_are_separate_lines() {
+        let md = "| Col A | Col B |\n|-------|-------|\n| val1  | val2  |\n| val3  | val4  |";
+        let lines = render_markdown(md);
+        // Header row + data rows should each be on their own line.
+        // At minimum: header (1), separator line (1), 2 data rows (2) = 4 lines.
+        assert!(lines.len() >= 4, "expected ≥4 lines, got {}", lines.len());
+        // The cell separator │ must appear in at least one line.
+        let has_pipe = lines.iter().any(|l| {
+            l.spans.iter().any(|s| s.content.contains('│'))
+        });
+        assert!(has_pipe, "table cells should be separated by │");
+    }
+
+    #[test]
+    fn heading_after_table_does_not_merge() {
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |\n\n## Section";
+        let lines = render_markdown(md);
+        // The heading should be on its own line, not merged with table content.
+        let has_heading_line = lines.iter().any(|l| {
+            let text: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            text.contains("Section") && !text.contains("│")
+        });
+        assert!(has_heading_line, "heading should be on a separate line from table");
     }
 }
