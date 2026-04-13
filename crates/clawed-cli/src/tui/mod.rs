@@ -1391,6 +1391,7 @@ pub async fn run_tui(
                             }
                             KeyCode::Enter => {
                                 if let Some(perm) = app.permission.take() {
+                                    app.needs_full_clear = true;
                                     let resp = perm.to_response();
                                     let label = if resp.granted {
                                         if resp.remember { "Allowed (always)" } else { "Allowed" }
@@ -1405,6 +1406,7 @@ pub async fn run_tui(
                             }
                             KeyCode::Esc => {
                                 if let Some(perm) = app.permission.take() {
+                                    app.needs_full_clear = true;
                                     let resp = perm.deny_response();
                                     app.push_message(MessageContent::System(
                                         format!("Denied: {} — {}", perm.request.tool_name, perm.request.description),
@@ -1625,6 +1627,7 @@ pub async fn run_tui(
                 req.tool_name, req.description,
             )));
             app.permission = Some(PendingPermission::new(req));
+            app.needs_full_clear = true;
         }
     }
 
