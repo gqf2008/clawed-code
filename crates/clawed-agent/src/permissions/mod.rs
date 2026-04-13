@@ -122,7 +122,11 @@ impl PermissionChecker {
             return PermissionResult::allow();
         }
         if mode == PermissionMode::Plan && !tool.is_read_only() {
-            return PermissionResult::deny("Plan mode: writes not allowed".into());
+            // ExitPlanMode (and other plan-mode management tools) must always be
+            // allowed even in plan mode — otherwise the agent can never exit it.
+            if !clawed_tools::plan_mode::is_plan_mode_tool(tool.name()) {
+                return PermissionResult::deny("Plan mode: writes not allowed".into());
+            }
         }
 
         // Check session-level "always allow" cache
