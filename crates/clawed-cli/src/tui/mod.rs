@@ -69,8 +69,13 @@ struct App {
     bottom_bar_hidden: bool,
     thinking_collapsed: bool,
     running: bool,
+    /// Set to true whenever content changes; causes a full terminal clear before the next draw
+    /// to eliminate ghost cells left over from prior frames (no alternate screen).
+    needs_full_clear: bool,
     total_turns: u32,
-    total_input_tokens: u64,
+    /// Latest context size from the most recent API response (not accumulated).
+    context_tokens: u64,
+    /// Cumulative output tokens generated across all turns.
     total_output_tokens: u64,
     model: String,
     pending_images: Vec<ImageAttachment>,
@@ -104,8 +109,9 @@ impl App {
             bottom_bar_hidden: false,
             thinking_collapsed: true,
             running: true,
+            needs_full_clear: false,
             total_turns: 0,
-            total_input_tokens: 0,
+            context_tokens: 0,
             total_output_tokens: 0,
             model,
             pending_images: Vec::new(),
@@ -122,6 +128,9 @@ impl App {
         if self.auto_scroll {
             self.scroll_offset = 0;
         }
+        // Force a full terminal clear on the next draw so no ghost cells remain
+        // from the previous layout (no alternate screen, so ratatui diff can miss cells).
+        self.needs_full_clear = true;
     }
 
     /// Mark that the LLM is now generating a response.
@@ -239,7 +248,9 @@ impl App {
             }
             AgentNotification::TurnComplete { turn, usage, .. } => {
                 self.total_turns = turn;
-                self.total_input_tokens += usage.input_tokens;
+                // input_tokens = context size for this turn (cumulative from API).
+                // Keep the latest value rather than summing — summing double-counts context.
+                self.context_tokens = usage.input_tokens;
                 self.total_output_tokens += usage.output_tokens;
                 // If expecting_turn_start is true, the user already submitted a new
                 // message and is waiting for TurnStart of the *new* turn. This
@@ -342,6 +353,17 @@ impl App {
                 ..
             } => {
                 self.status.context_pct = context_usage_pct;
+                // Initialise counters from the authoritative session state.
+                // total_input_tokens from the engine is the accumulated sum across all turns
+                // (for billing). We display only the latest context size (context_tokens),
+                // so use it as the seed if we have no local value yet.
+                if self.context_tokens == 0 && total_input_tokens > 0 {
+                    self.context_tokens = total_input_tokens;
+                }
+                if self.total_output_tokens == 0 && total_output_tokens > 0 {
+                    self.total_output_tokens = total_output_tokens;
+                }
+                self.total_turns = self.total_turns.max(total_turns);
                 self.push_message(MessageContent::System(format!(
                     "Model: {model} | Turns: {total_turns} | Tokens: {total_input_tokens}\u{2191} {total_output_tokens}\u{2193} | Context: {context_usage_pct:.0}%",
                 )));
@@ -561,7 +583,7 @@ impl App {
                 let elapsed = self.status.session_start.elapsed().as_secs();
                 self.overlay = Some(overlay::build_status_overlay(
                     &self.model, self.total_turns,
-                    self.total_input_tokens, self.total_output_tokens, elapsed,
+                    self.context_tokens, self.total_output_tokens, elapsed,
                 ));
             }
             crate::commands::CommandResult::Compact { instructions } => {
@@ -573,7 +595,7 @@ impl App {
                 let elapsed = self.status.session_start.elapsed().as_secs();
                 self.overlay = Some(overlay::build_status_overlay(
                     &self.model, self.total_turns,
-                    self.total_input_tokens, self.total_output_tokens, elapsed,
+                    self.context_tokens, self.total_output_tokens, elapsed,
                 ));
             }
             crate::commands::CommandResult::Think { args } => {
@@ -916,11 +938,10 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         info_parts.push(format!("turn {}", app.total_turns));
     }
 
-    let total_tokens = app.total_input_tokens + app.total_output_tokens;
-    if total_tokens > 0 {
+    if app.context_tokens > 0 || app.total_output_tokens > 0 {
         info_parts.push(format!(
             "{}\u{2191} {}\u{2193}",
-            fmt_tokens(app.total_input_tokens),
+            fmt_tokens(app.context_tokens),
             fmt_tokens(app.total_output_tokens),
         ));
     }
@@ -1292,6 +1313,14 @@ pub async fn run_tui(
             app.status.spinner_frame = app.status.spinner_frame.wrapping_add(1);
         }
 
+        // If content changed, fully clear the terminal before drawing to eliminate
+        // ghost cells left from prior frames (no alternate screen = ratatui diffs
+        // only changed cells, leaving stale cells where layout shrank).
+        if app.needs_full_clear {
+            terminal.clear()?;
+            app.needs_full_clear = false;
+        }
+
         // Render
         terminal.draw(|frame| render(frame, &app))?;
 
@@ -1552,7 +1581,8 @@ pub async fn run_tui(
                     }
                 }
                 Event::Resize(_, _) => {
-                    // ratatui handles resize automatically on next draw
+                    // Full clear ensures no ghost cells after resize changes layout geometry.
+                    app.needs_full_clear = true;
                 }
                 Event::Paste(text) => {
                     // Strip CR so \r\n becomes \n (insert_text handles bare \r too)
@@ -2362,7 +2392,7 @@ async fn replay_session_messages(engine: &Arc<QueryEngine>, app: &mut App) {
     let state = engine.state().read().await;
     app.model = state.model.clone();
     app.total_turns = state.turn_count;
-    app.total_input_tokens = state.total_input_tokens;
+    app.context_tokens = state.total_input_tokens;
     app.total_output_tokens = state.total_output_tokens;
 
     for msg in &state.messages {
