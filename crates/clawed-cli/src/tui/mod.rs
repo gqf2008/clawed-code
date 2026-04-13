@@ -81,6 +81,10 @@ struct App {
     /// Unlike status.thinking (which is false during TextDelta streaming),
     /// this remains true for the entire LLM turn so queue/abort checks work correctly.
     is_generating: bool,
+    /// True between mark_generating() and the first TurnStart of the new turn.
+    /// TextDelta/ThinkingDelta received in this window belong to the previous
+    /// (aborted) stream and must be discarded to avoid bleed-in.
+    expecting_turn_start: bool,
 }
 
 impl App {
@@ -106,6 +110,7 @@ impl App {
             key_debug: false,
             queued_inputs: Vec::new(),
             is_generating: false,
+            expecting_turn_start: false,
         }
     }
 
@@ -122,6 +127,9 @@ impl App {
     fn mark_generating(&mut self) {
         self.status.thinking = true;
         self.is_generating = true;
+        // Discard any TextDelta/ThinkingDelta that arrive before TurnStart —
+        // they belong to the previous (possibly aborted) stream.
+        self.expecting_turn_start = true;
     }
 
     /// Clear all generation state (abort or TurnComplete).
@@ -243,6 +251,12 @@ impl App {
                 }
             }
             AgentNotification::TurnStart { turn } => {
+                // Re-assert is_generating in case a stale TurnComplete from a
+                // previous (aborted) stream arrived between mark_generating()
+                // and this TurnStart, resetting is_generating prematurely.
+                self.is_generating = true;
+                // We now have a confirmed new turn — allow TextDelta through.
+                self.expecting_turn_start = false;
                 self.status.thinking = true;
                 self.push_message(MessageContent::System(format!("\u{2500}\u{2500} turn {turn} \u{2500}\u{2500}")));
             }
@@ -1463,11 +1477,12 @@ pub async fn run_tui(
 
         // Drain notification channel
         while let Ok(notification) = notify_rx.try_recv() {
-            // After abort, skip text/thinking output that was already buffered
-            // in the channel — the user pressed Esc and doesn't want to see
-            // the rest of the response. Still process TurnComplete etc. so
-            // state resets cleanly.
-            if !app.is_generating {
+            // Discard TextDelta/ThinkingDelta when:
+            // - not generating (after abort), OR
+            // - expecting_turn_start (new submit queued, waiting for TurnStart
+            //   to confirm the new turn — deltas arriving now belong to the
+            //   previous, possibly aborted, stream and must not bleed through).
+            if !app.is_generating || app.expecting_turn_start {
                 match &notification {
                     AgentNotification::TextDelta { .. }
                     | AgentNotification::ThinkingDelta { .. } => continue,

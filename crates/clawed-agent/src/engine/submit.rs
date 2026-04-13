@@ -15,6 +15,10 @@ impl QueryEngine {
         &self,
         user_prompt: impl Into<String>,
     ) -> std::pin::Pin<Box<dyn futures::Stream<Item = AgentEvent> + Send>> {
+        // Reset the abort signal so a previous Esc/abort doesn't immediately
+        // cancel this new submission.
+        self.abort_signal.reset();
+
         let mut prompt_text: String = user_prompt.into();
 
         // ── Empty prompt validation ──────────────────────────────────────────
@@ -82,6 +86,10 @@ impl QueryEngine {
         &self,
         content: Vec<ContentBlock>,
     ) -> std::pin::Pin<Box<dyn futures::Stream<Item = AgentEvent> + Send>> {
+        // Reset the abort signal so a previous Esc/abort doesn't immediately
+        // cancel this new submission.
+        self.abort_signal.reset();
+
         if content.is_empty() {
             let err_stream = async_stream::stream! {
                 yield AgentEvent::Error("Prompt cannot be empty".to_string());
