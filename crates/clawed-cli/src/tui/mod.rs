@@ -857,7 +857,8 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
         let max_scroll = total_visual - viewport_height;
         let clamped = app.scroll_offset.min(max_scroll);
         // Skip (max_scroll - clamped) visual rows from the top to anchor to the bottom.
-        (max_scroll - clamped) as u16
+        // Clamp to u16::MAX: content beyond 65 k visual rows still renders from the bottom.
+        (max_scroll - clamped).min(u16::MAX as usize) as u16
     };
 
     // Clear the area first to prevent ghost cells from prior frames leaking through
