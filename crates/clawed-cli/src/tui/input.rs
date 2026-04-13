@@ -133,20 +133,20 @@ impl InputWidget {
                 }
             }
 
-            // Tab completion
+            // Tab: accept the currently selected completion (fill into input box).
+            // Up/Down arrows handle navigation within the list.
             KeyCode::Tab => {
                 if self.textarea.text().starts_with('/') {
-                    if let Some(ref mut comp) = self.completion {
-                        if comp.matches.len() == 1 {
-                            let idx = comp.matches[0];
-                            self.textarea.set_text(SLASH_COMMANDS[idx]);
-                            self.textarea.set_cursor(self.textarea.text().len());
-                            self.completion = None;
-                        } else {
-                            comp.selected = (comp.selected + 1) % comp.matches.len();
-                        }
+                    if let Some(ref comp) = self.completion {
+                        // Accept the highlighted item
+                        let idx = comp.matches[comp.selected];
+                        self.textarea.set_text(SLASH_COMMANDS[idx]);
+                        self.textarea.set_cursor(self.textarea.text().len());
+                        self.completion = None;
                     } else {
+                        // No menu yet — trigger completion
                         self.update_completion();
+                        // If only one match, auto-accept it immediately
                         if let Some(ref comp) = self.completion {
                             if comp.matches.len() == 1 {
                                 let idx = comp.matches[0];
@@ -162,7 +162,7 @@ impl InputWidget {
                 }
             }
 
-            // BackTab (Shift+Tab): cycle selection upward
+            // Shift+Tab: cycle selection upward (backward navigation)
             KeyCode::BackTab => {
                 if let Some(ref mut comp) = self.completion {
                     if comp.selected > 0 {
@@ -671,15 +671,26 @@ mod tests {
     }
 
     #[test]
-    fn test_tab_cycles_completions() {
+    fn test_tab_accepts_completion() {
+        let mut w = InputWidget::new();
+        // Type enough to get a single match
+        for c in "/hel".chars() { w.handle_key(key(KeyCode::Char(c))); }
+        assert!(w.in_completion());
+        // Tab should accept the currently highlighted item
+        w.handle_key(key(KeyCode::Tab));
+        assert!(!w.in_completion(), "Tab should dismiss completion menu");
+        assert!(w.buffer().starts_with('/'), "Tab should fill in the selected command");
+    }
+
+    #[test]
+    fn test_tab_on_slash_alone_shows_menu() {
         let mut w = InputWidget::new();
         w.handle_key(key(KeyCode::Char('/')));
-        // Typing '/' auto-triggers completion
         assert!(w.in_completion());
-        assert_eq!(w.completion_selected(), 0);
+        // Tab with multiple matches should accept the currently selected (first) item
         w.handle_key(key(KeyCode::Tab));
-        assert!(w.in_completion());
-        assert_eq!(w.completion_selected(), 1);
+        assert!(!w.in_completion(), "Tab should accept and dismiss menu");
+        assert!(w.buffer().starts_with('/'));
     }
 
     #[test]
