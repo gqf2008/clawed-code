@@ -864,8 +864,10 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         // Find bottom_start: first logical line such that visual rows [bottom_start..end]
         // fit within viewport_height. This is the anchor for scroll_offset=0.
+        // Default to the last line so that a single line taller than the viewport
+        // still renders (ratatui clips the overflow).
         let mut v = 0usize;
-        let mut bottom_start = total_lines;
+        let mut bottom_start = total_lines.saturating_sub(1);
         for i in (0..total_lines).rev() {
             let vh = visual_heights[i];
             if v + vh > viewport_height {
