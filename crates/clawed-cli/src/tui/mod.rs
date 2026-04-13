@@ -32,7 +32,6 @@ use clawed_bus::bus::ClientHandle;
 use clawed_bus::events::{AgentNotification, ImageAttachment, PermissionRequest};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
-    DisableMouseCapture, EnableMouseCapture, MouseEventKind,
 };
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -1289,8 +1288,9 @@ pub async fn run_tui(
     // Enable bracketed paste so multi-line paste arrives as Event::Paste(String)
     // instead of individual Key events (which would submit on Enter).
     crossterm::execute!(std::io::stdout(), EnableBracketedPaste)?;
-    // Enable mouse capture so scroll wheel events reach the TUI scroll handler.
-    crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
+    // Note: EnableMouseCapture is intentionally NOT set — it would prevent native
+    // terminal text selection (copy-paste from terminal). Scroll is keyboard-only:
+    // PageUp/PageDown and Shift+Up/Shift+Down.
 
     // Always push keyboard enhancement flags so modifiers for keys like Enter
     // are disambiguated (matching codex-rs behavior). Terminals that don't support
@@ -1592,24 +1592,7 @@ pub async fn run_tui(
                     let text = text.replace('\r', "");
                     app.input.insert_text(&text);
                 }
-                Event::Mouse(mouse) => {
-                    match mouse.kind {
-                        MouseEventKind::ScrollUp => {
-                            app.scroll_offset = app.scroll_offset.saturating_add(3);
-                            app.auto_scroll = false;
-                        }
-                        MouseEventKind::ScrollDown => {
-                            if app.scroll_offset > 0 {
-                                app.scroll_offset = app.scroll_offset.saturating_sub(3);
-                                if app.scroll_offset == 0 {
-                                    app.auto_scroll = true;
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {} // Focus -- ignored
+                _ => {} // Mouse, Focus -- ignored
             }
         }
 
@@ -1665,7 +1648,6 @@ pub async fn run_tui(
     // Always pop keyboard enhancement flags — the push is unconditional, and
     // popping on terminals that ignored the push is harmless.
     let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
-    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     let _ = crossterm::execute!(
         std::io::stdout(),
         crossterm::event::PopKeyboardEnhancementFlags
@@ -2334,7 +2316,12 @@ async fn handle_async_command(
                 )));
             }
         }
-        CommandResult::Agents { .. } | CommandResult::Plugin { .. }
+        CommandResult::Agents { sub } => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let text = format_agents_tui(&sub, &cwd, &app.status.active_agents);
+            app.overlay = Some(overlay::build_info_overlay("Agents", &text));
+        }
+        CommandResult::Plugin { .. }
         | CommandResult::RunPluginCommand { .. } | CommandResult::RunSkill { .. } => {
             app.push_message(MessageContent::System(
                 "This command is not yet available in TUI mode.".to_string(),
@@ -2357,6 +2344,134 @@ async fn handle_async_command(
         | CommandResult::Vim { .. }
         | CommandResult::Exit => {
             // Should not reach here — these are handled in handle_slash_command
+        }
+    }
+}
+
+// -- /agents TUI formatter ----------------------------------------------------
+
+/// Format `/agents [sub]` output as plain text for a TUI info overlay.
+fn format_agents_tui(
+    sub: &str,
+    cwd: &std::path::Path,
+    active_agents: &std::collections::HashMap<String, String>,
+) -> String {
+    let parts: Vec<&str> = sub.splitn(2, ' ').collect();
+    let subcmd = parts.first().map(|s| s.trim()).unwrap_or("");
+    let args = parts.get(1).map(|s| s.trim()).unwrap_or("");
+
+    match subcmd {
+        "" | "list" => {
+            let all = clawed_core::agents::get_agents(cwd);
+            if all.is_empty() {
+                return "No agent definitions found.\nCreate one with: /agents create <name>\nOr add .md files to .claude/agents/".to_string();
+            }
+            let mut out = format!("Agent Definitions ({} total)\n\n", all.len());
+            let mut by_source: std::collections::BTreeMap<String, Vec<&clawed_core::agents::AgentDefinition>> =
+                std::collections::BTreeMap::new();
+            for agent in &all {
+                by_source.entry(format!("{}", agent.source)).or_default().push(agent);
+            }
+            for (source, agents) in &by_source {
+                out.push_str(&format!("[{}]\n", source));
+                for a in agents {
+                    let bg = if a.background { "  [bg]" } else { "" };
+                    out.push_str(&format!("  {:<22} {}{}\n", a.agent_type, a.description, bg));
+                    if !a.allowed_tools.is_empty() {
+                        let tools = if a.allowed_tools.len() <= 5 {
+                            a.allowed_tools.join(", ")
+                        } else {
+                            format!("{}, ... (+{})", a.allowed_tools[..4].join(", "), a.allowed_tools.len() - 4)
+                        };
+                        out.push_str(&format!("  {:<22} tools: {}\n", "", tools));
+                    }
+                }
+                out.push('\n');
+            }
+            out
+        }
+        "status" => {
+            if active_agents.is_empty() {
+                "No background agents currently running.\n\nUse /agents list to see defined agents.".to_string()
+            } else {
+                let mut out = format!("Running Agents ({} active)\n\n", active_agents.len());
+                for (id, label) in active_agents {
+                    out.push_str(&format!("  ▸ {:<24} {}\n", id, label));
+                }
+                out
+            }
+        }
+        "info" => {
+            if args.is_empty() {
+                return "Usage: /agents info <name>".to_string();
+            }
+            let all = clawed_core::agents::get_agents(cwd);
+            match all.iter().find(|a| a.agent_type.eq_ignore_ascii_case(args)) {
+                None => format!("Agent '{}' not found.\nUse /agents list to see available.", args),
+                Some(a) => {
+                    let mut out = format!("{}\n\n", a.agent_type);
+                    out.push_str(&format!("Description: {}\n", a.description));
+                    out.push_str(&format!("Source:      {}\n", a.source));
+                    if let Some(ref m) = a.model { out.push_str(&format!("Model:       {}\n", m)); }
+                    if let Some(ref e) = a.effort { out.push_str(&format!("Effort:      {}\n", e)); }
+                    if let Some(ref p) = a.permission_mode { out.push_str(&format!("Permissions: {}\n", p)); }
+                    if let Some(t) = a.max_turns { out.push_str(&format!("Max turns:   {}\n", t)); }
+                    if a.background { out.push_str("Background:  yes\n"); }
+                    if !a.allowed_tools.is_empty() { out.push_str(&format!("Tools:       {}\n", a.allowed_tools.join(", "))); }
+                    if !a.disallowed_tools.is_empty() { out.push_str(&format!("Disallowed:  {}\n", a.disallowed_tools.join(", "))); }
+                    if let Some(ref path) = a.file_path { out.push_str(&format!("File:        {}\n", path.display())); }
+                    let preview = clawed_core::text_util::truncate_chars(&a.system_prompt, 300, "...");
+                    out.push_str(&format!("\n--- System Prompt ---\n{}\n", preview));
+                    out
+                }
+            }
+        }
+        "create" => {
+            if args.is_empty() {
+                return "Usage: /agents create <name>\nCreates an agent definition in .claude/agents/<name>.md".to_string();
+            }
+            let agent = clawed_core::agents::AgentDefinition {
+                agent_type: args.to_string(),
+                description: format!("{} agent", args),
+                system_prompt: format!("You are a specialized {} assistant.", args),
+                allowed_tools: vec![],
+                disallowed_tools: vec![],
+                model: None, effort: None, memory: None, color: None,
+                permission_mode: None, max_turns: None, background: false,
+                skills: vec![], initial_prompt: None,
+                source: clawed_core::agents::AgentSource::Local,
+                file_path: None, base_dir: None,
+            };
+            let existing = clawed_core::agents::get_agents(cwd);
+            let validation = clawed_core::agents::validate_agent(&agent, &existing);
+            if !validation.is_valid() {
+                return format!("Invalid agent definition:\n{}", validation.errors.join("\n"));
+            }
+            match clawed_core::agents::save_agent(&agent, cwd) {
+                Ok(path) => format!("✓ Created agent scaffold: {}\nEdit the file to customize tools, model, and system prompt.", path.display()),
+                Err(e) => format!("Failed to create agent: {}", e),
+            }
+        }
+        "delete" | "rm" => {
+            if args.is_empty() {
+                return "Usage: /agents delete <name>".to_string();
+            }
+            let all = clawed_core::agents::get_agents(cwd);
+            match all.iter().find(|a| a.agent_type.eq_ignore_ascii_case(args)) {
+                None => format!("Agent '{}' not found.\nUse /agents list to see available.", args),
+                Some(a) => {
+                    if a.source == clawed_core::agents::AgentSource::BuiltIn {
+                        return format!("Cannot delete built-in agent '{}'.", args);
+                    }
+                    match clawed_core::agents::delete_agent(a) {
+                        Ok(()) => format!("✓ Deleted agent: {}", args),
+                        Err(e) => format!("Failed to delete agent '{}': {}", args, e),
+                    }
+                }
+            }
+        }
+        "help" | _ => {
+            "Agent Definitions\n\n  /agents               List all agent definitions\n  /agents list           Same as above\n  /agents status         Show live running agents\n  /agents info <name>    Show details of an agent\n  /agents create <name>  Create a new agent scaffold\n  /agents delete <name>  Delete an agent definition\n\nAgents are .md files in .claude/agents/ with YAML frontmatter.\nThey define sub-agents with custom tools, models, and prompts.".to_string()
         }
     }
 }
