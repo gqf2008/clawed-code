@@ -725,10 +725,11 @@ fn render(frame: &mut Frame, app: &App) {
     // When permission is active, the input row + hint bar are replaced by
     // a 3-row permission prompt (description + buttons + hints).
     let input_rows = app.input.visible_rows();
+    // Footer includes a separator between input and hint bar (always, except perm).
     let footer_rows = if has_permission {
         permission::PERM_ROWS
     } else {
-        input_rows + bottom_bar_rows
+        input_rows + 1 + bottom_bar_rows // +1 for the separator between input and hint bar
     };
 
     // Queue items: 1 row per queued message (capped at 5), no header row.
@@ -751,7 +752,6 @@ fn render(frame: &mut Frame, app: &App) {
         Constraint::Length(queue_rows),            // queue items (0 or n)
         Constraint::Length(input_sep_rows),        // input separator (always 1, except perm)
         Constraint::Length(footer_rows),           // input/permission footer
-        Constraint::Length(1),                     // bottom separator (always)
     ];
 
     let chunks = Layout::vertical(constraints).split(area);
@@ -762,7 +762,6 @@ fn render(frame: &mut Frame, app: &App) {
     let queue_area = chunks[4];
     let input_sep_area = chunks[5];
     let footer_area = chunks[6];
-    let bottom_sep_area = chunks[7];
 
     render_messages(frame, msg_area, app);
 
@@ -798,16 +797,18 @@ fn render(frame: &mut Frame, app: &App) {
         .split(footer_area);
         permission::render(frame, perm_chunks[0], perm_chunks[1], perm_chunks[2], perm);
     } else {
-        // Normal: input + optional hint bar
+        // Normal: input ─── hint bar
         let input_chunks = Layout::vertical([
             Constraint::Length(input_rows),      // input (1–5 rows)
+            Constraint::Length(1),               // separator between input and hint bar
             Constraint::Length(bottom_bar_rows), // hint bar
         ])
         .split(footer_area);
 
         render_input(frame, input_chunks[0], app);
+        render_input_separator(frame, input_chunks[1]);
         if bottom_bar_rows > 0 {
-            bottombar::render(frame, input_chunks[1]);
+            bottombar::render(frame, input_chunks[2]);
         }
 
         // Completion popup (rendered last so it draws on top)
@@ -820,8 +821,6 @@ fn render(frame: &mut Frame, app: &App) {
     if let Some(ref ov) = app.overlay {
         overlay::render(frame, msg_area, ov);
     }
-
-    render_input_separator(frame, bottom_sep_area);
 }
 
 fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
@@ -959,14 +958,13 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
     };
 
     // Truncate info so that info + scroll always fit within the terminal width.
-    // Reserve at least 4 dashes (2 left + 2 right) for visual framing.
+    // Reserve at least 2 dashes on the left for visual framing.
     let scroll_w = scroll.width();
-    let max_info_w = width.saturating_sub(scroll_w + 4);
+    let max_info_w = width.saturating_sub(scroll_w + 2);
     let info = if info.width() > max_info_w {
-        // Trim to fit, appending "…"
         let mut truncated = String::new();
         for ch in info.chars() {
-            if truncated.width() + 1 /* … */ >= max_info_w {
+            if truncated.width() + 1 >= max_info_w {
                 truncated.push('…');
                 break;
             }
@@ -978,27 +976,15 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
     };
 
     let info_w = info.width();
-    let content_w = info_w + scroll_w;
-    let dashes = width.saturating_sub(content_w);
-    let left = dashes / 2;
-    let right = dashes - left;
+    // Right-align: scroll indicator on the left (when present), then dashes, then info.
+    let dashes = width.saturating_sub(scroll_w + info_w);
 
-    let mut spans = vec![
-        Span::styled("\u{2500}".repeat(left), dim),
-        Span::styled(info, dim),
-    ];
+    let mut spans: Vec<Span> = Vec::new();
     if scroll_w > 0 {
-        spans.push(Span::styled("\u{2500}".repeat(right.saturating_sub(scroll_w)), dim));
         spans.push(Span::styled(scroll, hi));
-        // fill remaining
-        let used = left + info_w + right.saturating_sub(scroll_w) + scroll_w;
-        let fill = width.saturating_sub(used);
-        if fill > 0 {
-            spans.push(Span::styled("\u{2500}".repeat(fill), dim));
-        }
-    } else {
-        spans.push(Span::styled("\u{2500}".repeat(right), dim));
     }
+    spans.push(Span::styled("\u{2500}".repeat(dashes), dim));
+    spans.push(Span::styled(info, dim));
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
