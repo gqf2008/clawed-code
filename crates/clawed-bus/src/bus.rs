@@ -12,11 +12,253 @@
 //! PermissionRequest:  Core ──broadcast──→ Client(s)  (1:N, first responder wins)
 //! PermissionResponse: Client ──mpsc────→ Core        (1:1, paired with request)
 //! ```
+//!
+//! ## Features
+//!
+//! - **Diagnostics**: [`BusDiagnostics`] exposes subscriber counts, message
+//!   counters, and history buffer stats for monitoring and debugging.
+//! - **RAII Subscriptions**: [`NotificationSubscription`] wraps a broadcast
+//!   receiver with optional filtering and auto-cleanup on drop.
+//! - **Event History**: Recent notifications are kept in a bounded ring buffer
+//!   so late-joining clients can replay missed state.
+
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use tokio::sync::{broadcast, mpsc, watch};
 use uuid::Uuid;
 
 use crate::events::{AgentNotification, AgentRequest, ImageAttachment, PermissionRequest, PermissionResponse, RiskLevel};
+#[cfg(test)]
+use crate::events::ErrorCode;
+
+// ── Lock helper ──────────────────────────────────────────────────────────────
+
+/// Lock a `std::sync::Mutex`, recovering from poisoning.
+///
+/// This is the bus-local equivalent of `lock_or_recover` in clawed-core.
+/// We define it here to avoid a circular dependency.
+fn lock_or_recover<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+// ── Shared state ─────────────────────────────────────────────────────────────
+
+/// Shared state accessible from both [`BusHandle`] and [`ClientHandle`].
+///
+/// Contains atomic counters for diagnostics and a bounded ring buffer
+/// for notification history (replay for late-joining clients).
+struct BusShared {
+    /// Total notifications broadcast since bus creation.
+    notifications_sent: AtomicU64,
+    /// Total requests sent by clients since bus creation.
+    requests_sent: AtomicU64,
+    /// Circular buffer of recent notifications for replay.
+    history: std::sync::Mutex<VecDeque<AgentNotification>>,
+    /// Maximum number of notifications kept in history.
+    history_capacity: usize,
+}
+
+impl BusShared {
+    fn new(history_capacity: usize) -> Self {
+        Self {
+            notifications_sent: AtomicU64::new(0),
+            requests_sent: AtomicU64::new(0),
+            history: std::sync::Mutex::new(VecDeque::with_capacity(history_capacity)),
+            history_capacity,
+        }
+    }
+
+    fn record_notification(&self, event: &AgentNotification) {
+        self.notifications_sent.fetch_add(1, Ordering::Relaxed);
+        if self.history_capacity == 0 {
+            return;
+        }
+        let mut history = lock_or_recover(&self.history);
+        if history.len() >= self.history_capacity {
+            history.pop_front();
+        }
+        history.push_back(event.clone());
+    }
+
+    fn record_request(&self) {
+        self.requests_sent.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn recent_history(&self) -> Vec<AgentNotification> {
+        lock_or_recover(&self.history).iter().cloned().collect()
+    }
+
+    fn history_len(&self) -> usize {
+        lock_or_recover(&self.history).len()
+    }
+}
+
+// ── BusDiagnostics ───────────────────────────────────────────────────────────
+
+/// Snapshot of bus diagnostics at a point in time.
+///
+/// Obtain via [`BusHandle::diagnostics`] or [`ClientHandle::diagnostics`].
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let diag = bus.diagnostics();
+/// println!("sent {} notifications to {} subscribers",
+///     diag.notifications_sent, diag.notification_subscribers);
+/// ```
+#[derive(Debug, Clone)]
+pub struct BusDiagnostics {
+    /// Total notifications broadcast since bus creation.
+    pub notifications_sent: u64,
+    /// Total requests sent by clients since bus creation.
+    pub requests_sent: u64,
+    /// Current number of active notification subscribers.
+    pub notification_subscribers: usize,
+    /// Number of notifications currently in the history buffer.
+    pub history_len: usize,
+    /// Maximum history buffer capacity.
+    pub history_capacity: usize,
+}
+
+// ── NotificationSubscription ─────────────────────────────────────────────────
+
+/// Type alias for the notification filter predicate to reduce type complexity.
+type NotificationFilter = Box<dyn Fn(&AgentNotification) -> bool + Send + Sync>;
+
+/// RAII subscription for agent notifications with optional filtering.
+///
+/// Created via [`ClientHandle::subscribe`] or [`ClientHandle::subscribe_filtered`].
+/// Automatically unsubscribes from the broadcast channel when dropped.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // Subscribe to only tool-related notifications
+/// let mut sub = client.subscribe().tools_only();
+/// while let Some(event) = sub.recv().await {
+///     println!("Tool event: {event:?}");
+/// }
+/// // Automatically unsubscribed when `sub` is dropped
+/// ```
+pub struct NotificationSubscription {
+    rx: broadcast::Receiver<AgentNotification>,
+    core_alive_rx: watch::Receiver<bool>,
+    filter: Option<NotificationFilter>,
+}
+
+impl NotificationSubscription {
+    /// Set a filter predicate. Only matching notifications will be yielded.
+    #[must_use]
+    pub fn with_filter<F>(mut self, filter: F) -> Self
+    where
+        F: Fn(&AgentNotification) -> bool + Send + Sync + 'static,
+    {
+        self.filter = Some(Box::new(filter));
+        self
+    }
+
+    /// Filter to only tool-lifecycle notifications
+    /// (`ToolUseStart`, `ToolUseReady`, `ToolUseComplete`, `ToolSelected`).
+    #[must_use]
+    pub fn tools_only(self) -> Self {
+        self.with_filter(|n| {
+            matches!(
+                n,
+                AgentNotification::ToolUseStart { .. }
+                    | AgentNotification::ToolUseReady { .. }
+                    | AgentNotification::ToolUseComplete { .. }
+                    | AgentNotification::ToolSelected { .. }
+            )
+        })
+    }
+
+    /// Filter to only sub-agent lifecycle notifications
+    /// (`AgentSpawned`, `AgentProgress`, `AgentComplete`, `AgentTerminated`).
+    #[must_use]
+    pub fn agents_only(self) -> Self {
+        self.with_filter(|n| {
+            matches!(
+                n,
+                AgentNotification::AgentSpawned { .. }
+                    | AgentNotification::AgentProgress { .. }
+                    | AgentNotification::AgentComplete { .. }
+                    | AgentNotification::AgentTerminated { .. }
+            )
+        })
+    }
+
+    /// Filter to only streaming content (`TextDelta`, `ThinkingDelta`).
+    #[must_use]
+    pub fn content_only(self) -> Self {
+        self.with_filter(|n| {
+            matches!(
+                n,
+                AgentNotification::TextDelta { .. } | AgentNotification::ThinkingDelta { .. }
+            )
+        })
+    }
+
+    /// Filter to only error notifications.
+    #[must_use]
+    pub fn errors_only(self) -> Self {
+        self.with_filter(|n| matches!(n, AgentNotification::Error { .. }))
+    }
+
+    /// Receive the next notification matching the filter.
+    ///
+    /// Returns `None` when the core is disconnected.
+    /// Skips non-matching notifications and handles `Lagged` transparently.
+    pub async fn recv(&mut self) -> Option<AgentNotification> {
+        loop {
+            tokio::select! {
+                result = self.rx.recv() => {
+                    match result {
+                        Ok(event) => {
+                            if let Some(ref filter) = self.filter {
+                                if !filter(&event) {
+                                    continue;
+                                }
+                            }
+                            return Some(event);
+                        }
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!("Subscription lagged by {n} notifications, catching up");
+                            continue;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => return None,
+                    }
+                }
+                result = self.core_alive_rx.changed() => {
+                    if result.is_err() || !*self.core_alive_rx.borrow() {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Try to receive the next matching notification without blocking.
+    ///
+    /// Returns `Some(event)` if a matching notification is available,
+    /// `None` otherwise.
+    pub fn try_recv(&mut self) -> Option<AgentNotification> {
+        loop {
+            match self.rx.try_recv() {
+                Ok(event) => {
+                    if let Some(ref filter) = self.filter {
+                        if !filter(&event) {
+                            continue;
+                        }
+                    }
+                    return Some(event);
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+}
 
 // ── EventBus ─────────────────────────────────────────────────────────────────
 
@@ -25,6 +267,9 @@ use crate::events::{AgentNotification, AgentRequest, ImageAttachment, Permission
 pub struct EventBus;
 
 impl EventBus {
+    /// Default history buffer capacity (number of recent notifications kept).
+    const DEFAULT_HISTORY_CAPACITY: usize = 512;
+
     /// Create a new event bus with the given broadcast channel capacity.
     ///
     /// `capacity` controls the broadcast buffer for notifications.
@@ -32,10 +277,22 @@ impl EventBus {
     /// will miss intermediate events (they get a `Lagged` error and can
     /// continue from the latest).
     ///
+    /// Uses a default history capacity of 512 notifications.
+    ///
     /// Returns `(core_handle, client_handle)`.
     #[allow(clippy::new_ret_no_self)]
-    #[must_use] 
+    #[must_use]
     pub fn new(capacity: usize) -> (BusHandle, ClientHandle) {
+        Self::with_history(capacity, Self::DEFAULT_HISTORY_CAPACITY)
+    }
+
+    /// Create a new event bus with explicit history buffer capacity.
+    ///
+    /// `history_capacity` controls how many recent notifications are kept
+    /// for replay by late-joining clients. Set to 0 to disable history.
+    #[allow(clippy::new_ret_no_self)]
+    #[must_use]
+    pub fn with_history(capacity: usize, history_capacity: usize) -> (BusHandle, ClientHandle) {
         /// Maximum queued requests before backpressure.
         const REQUEST_QUEUE_CAP: usize = 1024;
         /// Maximum queued permission responses before backpressure.
@@ -48,6 +305,7 @@ impl EventBus {
         let (perm_req_tx, perm_req_rx) = broadcast::channel(capacity.max(MIN_CRITICAL_CAP));
         let (perm_resp_tx, perm_resp_rx) = mpsc::channel(PERM_RESP_QUEUE_CAP);
         let (core_alive_tx, core_alive_rx) = watch::channel(true);
+        let shared = Arc::new(BusShared::new(history_capacity));
 
         let bus = BusHandle {
             notify_tx: notify_tx.clone(),
@@ -57,6 +315,7 @@ impl EventBus {
             perm_resp_rx: Some(perm_resp_rx),
             _perm_resp_tx: perm_resp_tx.clone(),
             core_alive_tx,
+            shared: Arc::clone(&shared),
         };
 
         let client = ClientHandle {
@@ -67,6 +326,7 @@ impl EventBus {
             _perm_req_tx: perm_req_tx,
             perm_resp_tx: Some(perm_resp_tx),
             core_alive_rx,
+            shared,
         };
 
         (bus, client)
@@ -80,6 +340,7 @@ impl EventBus {
 /// - Receive requests from UI clients
 /// - Send permission requests and receive responses
 /// - Create new client handles
+/// - Query diagnostics and history
 pub struct BusHandle {
     notify_tx: broadcast::Sender<AgentNotification>,
     request_rx: mpsc::Receiver<AgentRequest>,
@@ -91,6 +352,8 @@ pub struct BusHandle {
     _perm_resp_tx: mpsc::Sender<PermissionResponse>,
     /// Signals `false` on drop so clients detect core disconnection.
     core_alive_tx: watch::Sender<bool>,
+    /// Shared diagnostics and history state.
+    shared: Arc<BusShared>,
 }
 
 impl Drop for BusHandle {
@@ -102,9 +365,13 @@ impl Drop for BusHandle {
 impl BusHandle {
     /// Broadcast a notification to all subscribed clients.
     ///
+    /// Also records the notification in the history buffer for replay
+    /// and increments the diagnostics counter.
+    ///
     /// Returns the number of receivers that got the message.
     /// Returns 0 if no clients are listening (this is not an error).
     pub fn notify(&self, event: AgentNotification) -> usize {
+        self.shared.record_notification(&event);
         self.notify_tx.send(event).unwrap_or(0)
     }
 
@@ -246,7 +513,29 @@ impl BusHandle {
             _perm_req_tx: self.perm_req_tx.clone(),
             perm_resp_tx: None, // secondary clients cannot respond to permissions
             core_alive_rx: self.core_alive_tx.subscribe(),
+            shared: Arc::clone(&self.shared),
         }
+    }
+
+    /// Get a snapshot of bus diagnostics (counters, subscriber count, history).
+    #[must_use]
+    pub fn diagnostics(&self) -> BusDiagnostics {
+        BusDiagnostics {
+            notifications_sent: self.shared.notifications_sent.load(Ordering::Relaxed),
+            requests_sent: self.shared.requests_sent.load(Ordering::Relaxed),
+            notification_subscribers: self.notify_tx.receiver_count(),
+            history_len: self.shared.history_len(),
+            history_capacity: self.shared.history_capacity,
+        }
+    }
+
+    /// Get a copy of the recent notification history.
+    ///
+    /// Returns up to `history_capacity` most recent notifications, oldest first.
+    /// Useful for replaying state to late-joining clients.
+    #[must_use]
+    pub fn recent_history(&self) -> Vec<AgentNotification> {
+        self.shared.recent_history()
     }
 
     /// Create a dummy request receiver (for testing only).
@@ -269,6 +558,8 @@ impl BusHandle {
 /// - Receive notifications from the Agent Core
 /// - Send requests to the Agent Core
 /// - Receive permission requests and send responses
+/// - Create filtered subscriptions
+/// - Query diagnostics and replay history
 pub struct ClientHandle {
     notify_rx: broadcast::Receiver<AgentNotification>,
     /// Keep the sender alive so `subscribe_notifications()` can create new receivers.
@@ -282,6 +573,8 @@ pub struct ClientHandle {
     perm_resp_tx: Option<mpsc::Sender<PermissionResponse>>,
     /// Watch receiver for core alive status. Returns None when core drops.
     core_alive_rx: watch::Receiver<bool>,
+    /// Shared diagnostics and history state.
+    shared: Arc<BusShared>,
 }
 
 impl ClientHandle {
@@ -314,6 +607,7 @@ impl ClientHandle {
 
     /// Send a request to the Agent Core.
     pub fn send_request(&self, request: AgentRequest) -> Result<(), SendError> {
+        self.shared.record_request();
         self.request_tx
             .try_send(request)
             .map_err(|_| SendError::DISCONNECTED)
@@ -417,6 +711,52 @@ impl ClientHandle {
     #[must_use]
     pub fn subscribe_permission_requests(&self) -> broadcast::Receiver<PermissionRequest> {
         self._perm_req_tx.subscribe()
+    }
+
+    /// Create a [`NotificationSubscription`] with RAII lifecycle and
+    /// optional filtering.
+    ///
+    /// The subscription automatically unsubscribes when dropped.
+    /// Chain filter methods for selective reception:
+    ///
+    /// ```rust,ignore
+    /// let mut sub = client.subscribe().tools_only();
+    /// while let Some(event) = sub.recv().await { /* ... */ }
+    /// ```
+    #[must_use]
+    pub fn subscribe(&self) -> NotificationSubscription {
+        NotificationSubscription {
+            rx: self._notify_tx.subscribe(),
+            core_alive_rx: self.core_alive_rx.clone(),
+            filter: None,
+        }
+    }
+
+    /// Check whether the Agent Core is still alive.
+    #[must_use]
+    pub fn is_core_alive(&self) -> bool {
+        *self.core_alive_rx.borrow()
+    }
+
+    /// Get a snapshot of bus diagnostics.
+    #[must_use]
+    pub fn diagnostics(&self) -> BusDiagnostics {
+        BusDiagnostics {
+            notifications_sent: self.shared.notifications_sent.load(Ordering::Relaxed),
+            requests_sent: self.shared.requests_sent.load(Ordering::Relaxed),
+            notification_subscribers: self._notify_tx.receiver_count(),
+            history_len: self.shared.history_len(),
+            history_capacity: self.shared.history_capacity,
+        }
+    }
+
+    /// Get a copy of the recent notification history.
+    ///
+    /// Returns up to `history_capacity` most recent notifications, oldest first.
+    /// Useful for catching up on state after a late join or reconnection.
+    #[must_use]
+    pub fn recent_history(&self) -> Vec<AgentNotification> {
+        self.shared.recent_history()
     }
 }
 
@@ -703,5 +1043,327 @@ mod tests {
             .unwrap();
 
         core.await.unwrap();
+    }
+
+    // ── Diagnostics tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn diagnostics_counters_increment() {
+        let (bus, client) = EventBus::new(16);
+
+        // Initially zero
+        let d = bus.diagnostics();
+        assert_eq!(d.notifications_sent, 0);
+        assert_eq!(d.requests_sent, 0);
+
+        // Send some notifications
+        bus.notify(AgentNotification::TextDelta { text: "a".into() });
+        bus.notify(AgentNotification::TextDelta { text: "b".into() });
+        bus.notify(AgentNotification::TextDelta { text: "c".into() });
+
+        let d = bus.diagnostics();
+        assert_eq!(d.notifications_sent, 3);
+
+        // Send a request from the client side
+        client.submit("hello").unwrap();
+        client.abort().unwrap();
+
+        let d = client.diagnostics();
+        assert_eq!(d.requests_sent, 2);
+        assert_eq!(d.notifications_sent, 3);
+    }
+
+    #[tokio::test]
+    async fn diagnostics_subscriber_count() {
+        let (bus, client) = EventBus::new(16);
+
+        let initial = bus.diagnostics().notification_subscribers;
+
+        // Creating a subscription adds a subscriber
+        let _sub = client.subscribe();
+        let after_sub = bus.diagnostics().notification_subscribers;
+        assert_eq!(after_sub, initial + 1);
+
+        // Drop the subscription
+        drop(_sub);
+        let after_drop = bus.diagnostics().notification_subscribers;
+        assert_eq!(after_drop, initial);
+    }
+
+    #[tokio::test]
+    async fn new_client_shares_diagnostics() {
+        let (bus, _client) = EventBus::new(16);
+
+        bus.notify(AgentNotification::TextDelta { text: "x".into() });
+
+        let client2 = bus.new_client();
+        let d = client2.diagnostics();
+        assert_eq!(d.notifications_sent, 1, "secondary client sees same counters");
+    }
+
+    // ── Event history tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn event_history_records_and_replays() {
+        let (bus, _client) = EventBus::new(16);
+
+        bus.notify(AgentNotification::TextDelta { text: "one".into() });
+        bus.notify(AgentNotification::TextDelta { text: "two".into() });
+
+        let history = bus.recent_history();
+        assert_eq!(history.len(), 2);
+        match &history[0] {
+            AgentNotification::TextDelta { text } => assert_eq!(text, "one"),
+            other => panic!("Expected TextDelta, got {other:?}"),
+        }
+        match &history[1] {
+            AgentNotification::TextDelta { text } => assert_eq!(text, "two"),
+            other => panic!("Expected TextDelta, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn history_capacity_eviction() {
+        // Use a tiny capacity of 3
+        let (bus, _client) = EventBus::with_history(16, 3);
+
+        for i in 0..5 {
+            bus.notify(AgentNotification::TextDelta {
+                text: format!("msg-{i}"),
+            });
+        }
+
+        let history = bus.recent_history();
+        assert_eq!(history.len(), 3, "history should be capped at capacity");
+
+        // Should contain the 3 most recent: msg-2, msg-3, msg-4
+        let texts: Vec<String> = history
+            .iter()
+            .map(|n| match n {
+                AgentNotification::TextDelta { text } => text.clone(),
+                other => panic!("Expected TextDelta, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(texts, vec!["msg-2", "msg-3", "msg-4"]);
+    }
+
+    #[tokio::test]
+    async fn history_zero_capacity_disables() {
+        let (bus, _client) = EventBus::with_history(16, 0);
+
+        bus.notify(AgentNotification::TextDelta { text: "ignored".into() });
+
+        let history = bus.recent_history();
+        assert!(history.is_empty(), "zero-capacity history should store nothing");
+    }
+
+    #[tokio::test]
+    async fn client_can_replay_history() {
+        let (bus, _client) = EventBus::new(16);
+
+        bus.notify(AgentNotification::SessionStart {
+            session_id: "s1".into(),
+            model: "sonnet".into(),
+        });
+
+        // Late-joining client can read history
+        let client2 = bus.new_client();
+        let history = client2.recent_history();
+        assert_eq!(history.len(), 1);
+        assert!(matches!(history[0], AgentNotification::SessionStart { .. }));
+    }
+
+    // ── NotificationSubscription tests ───────────────────────────────────
+
+    #[tokio::test]
+    async fn subscription_basic_recv() {
+        let (bus, client) = EventBus::new(16);
+        let mut sub = client.subscribe();
+
+        bus.notify(AgentNotification::TextDelta { text: "hi".into() });
+
+        let event = sub.recv().await.unwrap();
+        match event {
+            AgentNotification::TextDelta { text } => assert_eq!(text, "hi"),
+            other => panic!("Expected TextDelta, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn subscription_try_recv() {
+        let (bus, client) = EventBus::new(16);
+        let mut sub = client.subscribe();
+
+        // Nothing pending
+        assert!(sub.try_recv().is_none());
+
+        bus.notify(AgentNotification::TextDelta { text: "x".into() });
+
+        // Now available
+        let event = sub.try_recv().unwrap();
+        assert!(matches!(event, AgentNotification::TextDelta { .. }));
+
+        // Empty again
+        assert!(sub.try_recv().is_none());
+    }
+
+    #[tokio::test]
+    async fn subscription_with_custom_filter() {
+        let (bus, client) = EventBus::new(16);
+        let mut sub = client.subscribe().with_filter(|n| {
+            matches!(n, AgentNotification::SessionStart { .. })
+        });
+
+        // Send a mix of events
+        bus.notify(AgentNotification::TextDelta { text: "skip".into() });
+        bus.notify(AgentNotification::SessionStart {
+            session_id: "s1".into(),
+            model: "sonnet".into(),
+        });
+        bus.notify(AgentNotification::TextDelta { text: "skip2".into() });
+
+        // Should only get SessionStart
+        let event = sub.recv().await.unwrap();
+        assert!(matches!(event, AgentNotification::SessionStart { .. }));
+    }
+
+    #[tokio::test]
+    async fn subscription_tools_only_filter() {
+        let (bus, client) = EventBus::new(16);
+        let mut sub = client.subscribe().tools_only();
+
+        bus.notify(AgentNotification::TextDelta { text: "skip".into() });
+        bus.notify(AgentNotification::ToolUseStart {
+            id: "t1".into(),
+            tool_name: "Bash".into(),
+        });
+        bus.notify(AgentNotification::ThinkingDelta { text: "skip".into() });
+        bus.notify(AgentNotification::ToolUseComplete {
+            id: "t1".into(),
+            tool_name: "Bash".into(),
+            is_error: false,
+            result_preview: Some("ok".into()),
+        });
+
+        let e1 = sub.recv().await.unwrap();
+        assert!(matches!(e1, AgentNotification::ToolUseStart { .. }));
+
+        let e2 = sub.recv().await.unwrap();
+        assert!(matches!(e2, AgentNotification::ToolUseComplete { .. }));
+    }
+
+    #[tokio::test]
+    async fn subscription_agents_only_filter() {
+        let (bus, client) = EventBus::new(16);
+        let mut sub = client.subscribe().agents_only();
+
+        bus.notify(AgentNotification::TextDelta { text: "skip".into() });
+        bus.notify(AgentNotification::AgentSpawned {
+            agent_id: "a1".into(),
+            name: Some("reviewer".into()),
+            agent_type: "explore".into(),
+            background: true,
+        });
+        bus.notify(AgentNotification::TextDelta { text: "skip".into() });
+
+        let event = sub.recv().await.unwrap();
+        assert!(matches!(event, AgentNotification::AgentSpawned { .. }));
+    }
+
+    #[tokio::test]
+    async fn subscription_content_only_filter() {
+        let (bus, client) = EventBus::new(16);
+        let mut sub = client.subscribe().content_only();
+
+        bus.notify(AgentNotification::TurnStart { turn: 1 });
+        bus.notify(AgentNotification::TextDelta { text: "hello".into() });
+        bus.notify(AgentNotification::ThinkingDelta { text: "hmm".into() });
+        bus.notify(AgentNotification::TurnStart { turn: 2 });
+
+        let e1 = sub.recv().await.unwrap();
+        assert!(matches!(e1, AgentNotification::TextDelta { .. }));
+
+        let e2 = sub.recv().await.unwrap();
+        assert!(matches!(e2, AgentNotification::ThinkingDelta { .. }));
+    }
+
+    #[tokio::test]
+    async fn subscription_errors_only_filter() {
+        let (bus, client) = EventBus::new(16);
+        let mut sub = client.subscribe().errors_only();
+
+        bus.notify(AgentNotification::TextDelta { text: "skip".into() });
+        bus.notify(AgentNotification::Error {
+            code: ErrorCode::ApiError,
+            message: "rate limited".into(),
+        });
+        bus.notify(AgentNotification::TextDelta { text: "skip".into() });
+
+        let event = sub.recv().await.unwrap();
+        match event {
+            AgentNotification::Error { code, message } => {
+                assert!(matches!(code, ErrorCode::ApiError));
+                assert_eq!(message, "rate limited");
+            }
+            other => panic!("Expected Error, got {other:?}"),
+        }
+    }
+
+    // ── is_core_alive tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn is_core_alive_true_while_bus_exists() {
+        let (bus, client) = EventBus::new(16);
+        assert!(client.is_core_alive());
+
+        // Still alive after sending some data
+        bus.notify(AgentNotification::TextDelta { text: "x".into() });
+        assert!(client.is_core_alive());
+    }
+
+    #[tokio::test]
+    async fn is_core_alive_false_after_bus_dropped() {
+        let (bus, client) = EventBus::new(16);
+        assert!(client.is_core_alive());
+
+        drop(bus);
+
+        // Give the watch channel time to propagate
+        tokio::task::yield_now().await;
+        assert!(!client.is_core_alive());
+    }
+
+    // ── with_history constructor test ────────────────────────────────────
+
+    #[tokio::test]
+    async fn with_history_custom_capacity() {
+        let (bus, _client) = EventBus::with_history(16, 5);
+
+        let d = bus.diagnostics();
+        assert_eq!(d.history_capacity, 5);
+        assert_eq!(d.history_len, 0);
+
+        for i in 0..10 {
+            bus.notify(AgentNotification::TextDelta {
+                text: format!("n-{i}"),
+            });
+        }
+
+        let d = bus.diagnostics();
+        assert_eq!(d.history_len, 5, "should cap at custom capacity");
+        assert_eq!(d.notifications_sent, 10);
+    }
+
+    // ── Subscription closes when core drops ──────────────────────────────
+
+    #[tokio::test]
+    async fn subscription_returns_none_on_core_drop() {
+        let (bus, client) = EventBus::new(16);
+        let mut sub = client.subscribe();
+
+        drop(bus);
+
+        let result = sub.recv().await;
+        assert!(result.is_none(), "subscription should yield None when core drops");
     }
 }

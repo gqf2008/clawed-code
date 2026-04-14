@@ -26,6 +26,17 @@
 //! └─────────────────────────────────────┘
 //! ```
 //!
+//! ## Features
+//!
+//! - **Typed channels**: `AgentNotification` (broadcast 1:N),
+//!   `AgentRequest` (mpsc N:1), `PermissionRequest/Response` (paired).
+//! - **Diagnostics**: [`BusDiagnostics`] exposes message counters,
+//!   subscriber counts, and history buffer stats.
+//! - **RAII subscriptions**: [`NotificationSubscription`] with optional
+//!   filtering and auto-cleanup on drop.
+//! - **Event history**: Bounded ring buffer for notification replay by
+//!   late-joining clients.
+//!
 //! ## Usage
 //!
 //! ```rust,ignore
@@ -36,9 +47,15 @@
 //!     bus.notify(AgentNotification::TextDelta { text: "Hello".into() });
 //! });
 //!
-//! // UI client side
+//! // UI client side — basic
 //! while let Ok(event) = client.notifications().recv().await {
 //!     println!("Got: {:?}", event);
+//! }
+//!
+//! // UI client side — filtered subscription
+//! let mut tools = client.subscribe().tools_only();
+//! while let Some(event) = tools.recv().await {
+//!     println!("Tool event: {:?}", event);
 //! }
 //! ```
 
