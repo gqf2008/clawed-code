@@ -12,8 +12,8 @@
 | 注册工具 | 28+ (含 MCP 动态代理 + Computer Use) |
 | 斜杠命令 | 30+ |
 | 测试数 | 2,048 |
-| Clippy 警告 | 0 |
-| unsafe 块 | 0 |
+| Clippy 策略 | pedantic + nursery；新增代码不引入 warning |
+| unsafe 使用 | 仅少量底层/平台互操作点 |
 | Release 二进制 | 19.8 MB, 38ms 启动 |
 
 ## 分层架构
@@ -322,11 +322,11 @@ Compact                → 压缩事件
 
 | 特性 | 状态 |
 |------|------|
-| unsafe 代码 | 0 块 |
-| panic! (生产代码) | 0 处 |
-| .lock().unwrap() (生产代码) | 0 处 (全部使用 `lock_or_recover` 毒化恢复) |
+| unsafe 代码 | 少量底层/平台互操作点；新增代码默认禁止 |
+| panic! (生产代码) | 避免引入 |
+| .lock().unwrap() (生产代码) | 新代码避免；优先 `lock_or_recover` |
 | TODO/FIXME | 0 处 |
-| Clippy 警告 | 0 |
+| Clippy | pedantic + nursery；新增 warning 必须清理 |
 | 死锁风险 | 无 (单任务顺序循环 + 一致锁顺序) |
 
 ## 构建与测试
