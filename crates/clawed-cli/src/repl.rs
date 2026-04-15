@@ -3,14 +3,13 @@ use std::time::Duration;
 
 use clawed_agent::cron_scheduler::{CronScheduler, CronSchedulerOptions};
 use clawed_agent::engine::QueryEngine;
-use clawed_agent::plugin::PluginLoader;
 use clawed_bus::bus::ClientHandle;
 use clawed_bus::events::AgentRequest;
 use clawed_core::file_watcher::ConfigWatcher;
 
-use crate::commands::{CommandResult, SlashCommand};
+use crate::commands::{resolve_command_result, CommandResult};
 use crate::config;
-use crate::input::{InputReader, InputResult, history_file_path};
+use crate::input::{history_file_path, InputReader, InputResult};
 use crate::output::{print_stream, spawn_stream_input, OutputRenderer};
 use crate::repl_commands::*;
 use crate::theme;
@@ -49,7 +48,11 @@ pub async fn run(
     let startup_skills = clawed_core::skills::get_skills(&cwd);
     if !startup_skills.is_empty() {
         let names: Vec<&str> = startup_skills.iter().map(|s| s.name.as_str()).collect();
-        println!("{}Skills loaded: {}\x1b[0m\n", theme::c_warn(), names.join(", "));
+        println!(
+            "{}Skills loaded: {}\x1b[0m\n",
+            theme::c_warn(),
+            names.join(", ")
+        );
     }
 
     let mut rl = InputReader::new();
@@ -99,7 +102,10 @@ pub async fn run(
         // Context usage warning before prompt
         if let Some(pct) = engine.context_usage_percent().await {
             if pct >= 95 {
-                eprintln!("{}⚠ Context {pct}% full — compaction imminent\x1b[0m", theme::c_err());
+                eprintln!(
+                    "{}⚠ Context {pct}% full — compaction imminent\x1b[0m",
+                    theme::c_err()
+                );
             } else if pct >= 80 {
                 eprintln!("{}⚠ Context {pct}% full\x1b[0m", theme::c_warn());
             }
@@ -163,52 +169,33 @@ pub async fn run(
         match readline {
             Ok(InputResult::Line(line)) => {
                 let trimmed = line.trim();
-                if trimmed.is_empty() { continue; }
+                if trimmed.is_empty() {
+                    continue;
+                }
 
                 // Parse slash commands BEFORE multiline expansion
                 if trimmed.starts_with('/') {
                     rl.add_history(trimmed);
                     // Re-fetch skills each time (cached; refreshed by /reload-context)
                     let skills = clawed_core::skills::get_skills(&cwd);
-                    if let Some(cmd) = SlashCommand::parse(trimmed, &skills) {
-                        let loader = PluginLoader::discover(&cwd);
-                        // Resolve Unknown commands: check if they match a plugin command
-                        let cmd = if let SlashCommand::Unknown(ref name) = cmd {
-                            let found = loader.all_commands().into_iter()
-                                .find(|(_, c)| c.name == *name);
-                            if let Some((plugin, pcmd)) = found {
-                                if let Some(prompt) = PluginLoader::command_prompt(plugin, pcmd) {
-                                    SlashCommand::RunPluginCommand {
-                                        name: name.clone(),
-                                        prompt,
-                                    }
-                                } else {
-                                    eprintln!("{}Plugin command /{} has no prompt file\x1b[0m", theme::c_warn(), name);
-                                    cmd
-                                }
-                            } else {
-                                cmd
-                            }
-                        } else {
-                            cmd
-                        };
-                        // Build plugin command list for help display
-                        let plugin_cmds: Vec<crate::commands::PluginCommandEntry> =
-                            loader.all_commands().into_iter()
-                                .map(|(p, c)| crate::commands::PluginCommandEntry {
-                                    plugin_name: p.manifest.name.clone(),
-                                    command_name: c.name.clone(),
-                                })
-                                .collect();
-                        match cmd.execute(&skills, &plugin_cmds) {
+                    if let Some(result) = resolve_command_result(trimmed, &cwd, &skills) {
+                        match result {
                             CommandResult::Print(text) => println!("{}", text),
-                            CommandResult::Exit => { println!("Goodbye!"); break; }
+                            CommandResult::Exit => {
+                                println!("Goodbye!");
+                                break;
+                            }
                             CommandResult::ClearHistory => {
                                 if let Some(ref mut c) = client {
                                     let _ = c.send_request(AgentRequest::ClearHistory);
                                     // Wait for HistoryCleared notification
-                                    while let Some(n) = recv_with_timeout(c, CMD_NOTIFICATION_TIMEOUT).await {
-                                        if matches!(n, clawed_bus::events::AgentNotification::HistoryCleared) {
+                                    while let Some(n) =
+                                        recv_with_timeout(c, CMD_NOTIFICATION_TIMEOUT).await
+                                    {
+                                        if matches!(
+                                            n,
+                                            clawed_bus::events::AgentNotification::HistoryCleared
+                                        ) {
                                             println!("Conversation history cleared.");
                                             break;
                                         }
@@ -220,9 +207,13 @@ pub async fn run(
                             }
                             CommandResult::SetModel(input) => {
                                 if let Some(ref mut c) = client {
-                                    let _ = c.send_request(AgentRequest::SetModel { model: input.clone() });
+                                    let _ = c.send_request(AgentRequest::SetModel {
+                                        model: input.clone(),
+                                    });
                                     // Wait for ModelChanged notification
-                                    while let Some(n) = recv_with_timeout(c, CMD_NOTIFICATION_TIMEOUT).await {
+                                    while let Some(n) =
+                                        recv_with_timeout(c, CMD_NOTIFICATION_TIMEOUT).await
+                                    {
                                         if let clawed_bus::events::AgentNotification::ModelChanged { model, display_name } = n {
                                             println!("Model set to: {} ({})", display_name, model);
                                             // Persist to user settings
@@ -248,9 +239,15 @@ pub async fn run(
                                     if let Err(e) = clawed_core::config::Settings::update_field(
                                         clawed_core::config::SettingsSource::User,
                                         &cwd,
-                                        |s| { s.model = Some(resolved.clone()); },
+                                        |s| {
+                                            s.model = Some(resolved.clone());
+                                        },
                                     ) {
-                                        eprintln!("{}Note: Could not persist model choice: {}\x1b[0m", theme::c_warn(), e);
+                                        eprintln!(
+                                            "{}Note: Could not persist model choice: {}\x1b[0m",
+                                            theme::c_warn(),
+                                            e
+                                        );
                                     }
                                 }
                             }
@@ -271,7 +268,9 @@ pub async fn run(
                                     println!("{}Compacting conversation…\x1b[0m", theme::c_warn());
                                     let _ = c.send_request(AgentRequest::Compact { instructions });
                                     // Wait for CompactComplete or Error notification
-                                    while let Some(n) = recv_with_timeout(c, CMD_NOTIFICATION_TIMEOUT).await {
+                                    while let Some(n) =
+                                        recv_with_timeout(c, CMD_NOTIFICATION_TIMEOUT).await
+                                    {
                                         match n {
                                             clawed_bus::events::AgentNotification::CompactComplete { summary_len } => {
                                                 println!("{}✓ Compacted ({} chars).\x1b[0m", theme::c_ok(), summary_len);
@@ -289,10 +288,18 @@ pub async fn run(
                                     match engine.compact("manual", instructions.as_deref()).await {
                                         Ok(summary) => {
                                             println!("{}✓ Compacted.\x1b[0m", theme::c_ok());
-                                            let preview: String = summary.lines().take(5).collect::<Vec<_>>().join("\n");
+                                            let preview: String = summary
+                                                .lines()
+                                                .take(5)
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
                                             println!("\x1b[2m{}\x1b[0m", preview);
                                         }
-                                        Err(e) => eprintln!("{}Compact failed: {}\x1b[0m", theme::c_err(), e),
+                                        Err(e) => eprintln!(
+                                            "{}Compact failed: {}\x1b[0m",
+                                            theme::c_err(),
+                                            e
+                                        ),
                                     }
                                 }
                             }
@@ -308,7 +315,9 @@ pub async fn run(
                             CommandResult::Status => {
                                 if let Some(ref mut c) = client {
                                     let _ = c.send_request(AgentRequest::GetStatus);
-                                    while let Some(n) = recv_with_timeout(c, CMD_NOTIFICATION_TIMEOUT).await {
+                                    while let Some(n) =
+                                        recv_with_timeout(c, CMD_NOTIFICATION_TIMEOUT).await
+                                    {
                                         if let clawed_bus::events::AgentNotification::SessionStatus {
                                             model, total_turns, total_input_tokens,
                                             total_output_tokens, context_usage_pct, ..
@@ -376,11 +385,21 @@ pub async fn run(
                             }
                             CommandResult::Retry => {
                                 if let Some(prompt) = engine.pop_last_turn().await {
-                                    eprintln!("{}[Retrying: {}…]\x1b[0m", theme::c_warn(),
-                                        clawed_core::text_util::truncate_chars(&prompt, 50, "…"));
+                                    eprintln!(
+                                        "{}[Retrying: {}…]\x1b[0m",
+                                        theme::c_warn(),
+                                        clawed_core::text_util::truncate_chars(&prompt, 50, "…")
+                                    );
                                     let model = { engine.state().read().await.model.clone() };
                                     let stream = engine.submit(&prompt).await;
-                                    if let Err(e) = print_stream(stream, &model, Some(engine.cost_tracker()), Some(&engine.abort_signal())).await {
+                                    if let Err(e) = print_stream(
+                                        stream,
+                                        &model,
+                                        Some(engine.cost_tracker()),
+                                        Some(&engine.abort_signal()),
+                                    )
+                                    .await
+                                    {
                                         eprintln!("{}Retry error: {}\x1b[0m", theme::c_err(), e);
                                     }
                                     print_turn_stats(&engine).await;
@@ -428,12 +447,18 @@ pub async fn run(
                                 if let Some(ref mut c) = client {
                                     let mode = if args.is_empty() {
                                         // Toggle: if currently enabled → off, else on
-                                        if engine.thinking_config().is_some() { "off".to_string() } else { "on".to_string() }
+                                        if engine.thinking_config().is_some() {
+                                            "off".to_string()
+                                        } else {
+                                            "on".to_string()
+                                        }
                                     } else {
                                         args.clone()
                                     };
                                     let _ = c.send_request(AgentRequest::SetThinking { mode });
-                                    while let Some(n) = recv_with_timeout(c, CMD_NOTIFICATION_TIMEOUT).await {
+                                    while let Some(n) =
+                                        recv_with_timeout(c, CMD_NOTIFICATION_TIMEOUT).await
+                                    {
                                         if let clawed_bus::events::AgentNotification::ThinkingChanged { enabled, budget } = n {
                                             if enabled {
                                                 let budget_str = budget.map(|b| format!(" (budget: {})", b)).unwrap_or_default();
@@ -447,28 +472,39 @@ pub async fn run(
                                 } else {
                                     // Direct mode (no bus)
                                     let mode = if args.is_empty() {
-                                        if engine.thinking_config().is_some() { "off" } else { "on" }
+                                        if engine.thinking_config().is_some() {
+                                            "off"
+                                        } else {
+                                            "on"
+                                        }
                                     } else {
                                         args.as_str()
                                     };
                                     match mode.to_lowercase().as_str() {
                                         "off" | "false" | "0" | "disable" => {
                                             engine.set_thinking(None);
-                                            println!("{}✓ Extended thinking disabled\x1b[0m", theme::c_ok());
+                                            println!(
+                                                "{}✓ Extended thinking disabled\x1b[0m",
+                                                theme::c_ok()
+                                            );
                                         }
                                         "on" | "true" | "enable" => {
-                                            engine.set_thinking(Some(clawed_api::types::ThinkingConfig {
-                                                thinking_type: "enabled".into(),
-                                                budget_tokens: Some(10_000),
-                                            }));
+                                            engine.set_thinking(Some(
+                                                clawed_api::types::ThinkingConfig {
+                                                    thinking_type: "enabled".into(),
+                                                    budget_tokens: Some(10_000),
+                                                },
+                                            ));
                                             println!("{}✓ Extended thinking enabled (budget: 10000)\x1b[0m", theme::c_ok());
                                         }
                                         other => {
                                             if let Ok(budget) = other.parse::<u32>() {
-                                                engine.set_thinking(Some(clawed_api::types::ThinkingConfig {
-                                                    thinking_type: "enabled".into(),
-                                                    budget_tokens: Some(budget),
-                                                }));
+                                                engine.set_thinking(Some(
+                                                    clawed_api::types::ThinkingConfig {
+                                                        thinking_type: "enabled".into(),
+                                                        budget_tokens: Some(budget),
+                                                    },
+                                                ));
                                                 println!("{}✓ Extended thinking enabled (budget: {})\x1b[0m", theme::c_ok(), budget);
                                             } else {
                                                 println!("Usage: /think [on|off|<budget>]");
@@ -480,15 +516,26 @@ pub async fn run(
                             CommandResult::BreakCache => {
                                 if let Some(ref mut c) = client {
                                     let _ = c.send_request(AgentRequest::BreakCache);
-                                    while let Some(n) = recv_with_timeout(c, CMD_NOTIFICATION_TIMEOUT).await {
-                                        if matches!(n, clawed_bus::events::AgentNotification::CacheBreakSet) {
-                                            println!("{}✓ Next request will skip prompt cache\x1b[0m", theme::c_ok());
+                                    while let Some(n) =
+                                        recv_with_timeout(c, CMD_NOTIFICATION_TIMEOUT).await
+                                    {
+                                        if matches!(
+                                            n,
+                                            clawed_bus::events::AgentNotification::CacheBreakSet
+                                        ) {
+                                            println!(
+                                                "{}✓ Next request will skip prompt cache\x1b[0m",
+                                                theme::c_ok()
+                                            );
                                             break;
                                         }
                                     }
                                 } else {
                                     engine.set_break_cache();
-                                    println!("{}✓ Next request will skip prompt cache\x1b[0m", theme::c_ok());
+                                    println!(
+                                        "{}✓ Next request will skip prompt cache\x1b[0m",
+                                        theme::c_ok()
+                                    );
                                 }
                             }
                             CommandResult::Rewind { turns } => {
@@ -523,9 +570,13 @@ pub async fn run(
 
                                 if toggle.eq_ignore_ascii_case("off") {
                                     // Restore to default (sonnet)
-                                    let default = clawed_core::model::resolve_model_string("sonnet");
+                                    let default =
+                                        clawed_core::model::resolve_model_string("sonnet");
                                     if current == default {
-                                        println!("Already on default model: {}", clawed_core::model::display_name_any(&default));
+                                        println!(
+                                            "Already on default model: {}",
+                                            clawed_core::model::display_name_any(&default)
+                                        );
                                     } else {
                                         state.write().await.model = default.clone();
                                         println!(
@@ -538,7 +589,8 @@ pub async fn run(
                                 } else {
                                     // Toggle: if already on fast model, switch to sonnet; else switch to fast
                                     if current == fast_model {
-                                        let default = clawed_core::model::resolve_model_string("sonnet");
+                                        let default =
+                                            clawed_core::model::resolve_model_string("sonnet");
                                         state.write().await.model = default.clone();
                                         println!(
                                             "{}✓ Fast mode off → {} ({})\x1b[0m",
@@ -569,19 +621,31 @@ pub async fn run(
                                     dir_path.to_path_buf()
                                 };
                                 if !dir_path.is_dir() {
-                                    println!("{}Directory not found: {}\x1b[0m", theme::c_warn(), dir_path.display());
+                                    println!(
+                                        "{}Directory not found: {}\x1b[0m",
+                                        theme::c_warn(),
+                                        dir_path.display()
+                                    );
                                     continue;
                                 }
                                 // Read directory contents and inject as context
-                                let mut ctx = format!("<context source=\"{}\">\n", dir_path.display());
+                                let mut ctx =
+                                    format!("<context source=\"{}\">\n", dir_path.display());
                                 let mut file_count = 0u32;
                                 if let Ok(entries) = std::fs::read_dir(&dir_path) {
                                     for entry in entries.flatten() {
                                         let p = entry.path();
                                         if p.is_file() {
                                             if let Ok(content) = std::fs::read_to_string(&p) {
-                                                let name = p.file_name().unwrap_or_default().to_string_lossy();
-                                                ctx.push_str(&format!("--- {} ---\n{}\n\n", name, content.trim()));
+                                                let name = p
+                                                    .file_name()
+                                                    .unwrap_or_default()
+                                                    .to_string_lossy();
+                                                ctx.push_str(&format!(
+                                                    "--- {} ---\n{}\n\n",
+                                                    name,
+                                                    content.trim()
+                                                ));
                                                 file_count += 1;
                                             }
                                         }
@@ -606,8 +670,16 @@ pub async fn run(
                                     println!("{}Usage: /rename <new name>\x1b[0m", theme::c_warn());
                                 } else {
                                     match engine.rename_session(&name).await {
-                                        Ok(_) => println!("{}✓ Session renamed to '{}'\x1b[0m", theme::c_ok(), name),
-                                        Err(e) => eprintln!("{}Rename failed: {}\x1b[0m", theme::c_err(), e),
+                                        Ok(_) => println!(
+                                            "{}✓ Session renamed to '{}'\x1b[0m",
+                                            theme::c_ok(),
+                                            name
+                                        ),
+                                        Err(e) => eprintln!(
+                                            "{}Rename failed: {}\x1b[0m",
+                                            theme::c_err(),
+                                            e
+                                        ),
                                     }
                                 }
                             }
@@ -617,7 +689,10 @@ pub async fn run(
                                 let text = state.messages.iter().rev().find_map(|m| {
                                     if let clawed_core::message::Message::Assistant(a) = m {
                                         a.content.iter().find_map(|b| {
-                                            if let clawed_core::message::ContentBlock::Text { text } = b {
+                                            if let clawed_core::message::ContentBlock::Text {
+                                                text,
+                                            } = b
+                                            {
                                                 Some(text.clone())
                                             } else {
                                                 None
@@ -630,11 +705,20 @@ pub async fn run(
                                 drop(state);
                                 if let Some(text) = text {
                                     match copy_to_clipboard(&text) {
-                                        Ok(_) => println!("{}✓ Copied to clipboard ({} chars)\x1b[0m", theme::c_ok(), text.len()),
-                                        Err(e) => eprintln!("{}Copy failed: {}\x1b[0m", theme::c_err(), e),
+                                        Ok(_) => println!(
+                                            "{}✓ Copied to clipboard ({} chars)\x1b[0m",
+                                            theme::c_ok(),
+                                            text.len()
+                                        ),
+                                        Err(e) => {
+                                            eprintln!("{}Copy failed: {}\x1b[0m", theme::c_err(), e)
+                                        }
                                     }
                                 } else {
-                                    println!("{}No assistant response to copy.\x1b[0m", theme::c_warn());
+                                    println!(
+                                        "{}No assistant response to copy.\x1b[0m",
+                                        theme::c_warn()
+                                    );
                                 }
                             }
                             CommandResult::Share => {
@@ -645,7 +729,10 @@ pub async fn run(
                                         clawed_core::message::Message::User(u) => {
                                             md.push_str("## User\n\n");
                                             for block in &u.content {
-                                                if let clawed_core::message::ContentBlock::Text { text } = block {
+                                                if let clawed_core::message::ContentBlock::Text {
+                                                    text,
+                                                } = block
+                                                {
                                                     md.push_str(text);
                                                     md.push_str("\n\n");
                                                 }
@@ -654,7 +741,10 @@ pub async fn run(
                                         clawed_core::message::Message::Assistant(a) => {
                                             md.push_str("## Assistant\n\n");
                                             for block in &a.content {
-                                                if let clawed_core::message::ContentBlock::Text { text } = block {
+                                                if let clawed_core::message::ContentBlock::Text {
+                                                    text,
+                                                } = block
+                                                {
                                                     md.push_str(text);
                                                     md.push_str("\n\n");
                                                 }
@@ -667,8 +757,14 @@ pub async fn run(
                                 let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
                                 let filename = format!("claude-session-{ts}.md");
                                 match std::fs::write(&filename, &md) {
-                                    Ok(_) => println!("{}✓ Session exported to {filename} ({} bytes)\x1b[0m", theme::c_ok(), md.len()),
-                                    Err(e) => eprintln!("{}Export failed: {e}\x1b[0m", theme::c_err()),
+                                    Ok(_) => println!(
+                                        "{}✓ Session exported to {filename} ({} bytes)\x1b[0m",
+                                        theme::c_ok(),
+                                        md.len()
+                                    ),
+                                    Err(e) => {
+                                        eprintln!("{}Export failed: {e}\x1b[0m", theme::c_err())
+                                    }
                                 }
                             }
                             CommandResult::Files { pattern } => {
@@ -681,7 +777,9 @@ pub async fn run(
                                                 if pattern.is_empty() {
                                                     true
                                                 } else {
-                                                    e.file_name().to_string_lossy().contains(pattern.as_str())
+                                                    e.file_name()
+                                                        .to_string_lossy()
+                                                        .contains(pattern.as_str())
                                                 }
                                             })
                                             .collect();
@@ -689,36 +787,59 @@ pub async fn run(
                                         let mut count = 0;
                                         for entry in &items {
                                             let name = entry.file_name();
-                                            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                                                println!("  \x1b[1;34m{}/\x1b[0m", name.to_string_lossy());
+                                            if entry
+                                                .file_type()
+                                                .map(|t| t.is_dir())
+                                                .unwrap_or(false)
+                                            {
+                                                println!(
+                                                    "  \x1b[1;34m{}/\x1b[0m",
+                                                    name.to_string_lossy()
+                                                );
                                             } else {
                                                 println!("  {}", name.to_string_lossy());
                                             }
                                             count += 1;
                                         }
                                         if count == 0 {
-                                            println!("{}No files matching '{pattern}'\x1b[0m", theme::c_warn());
+                                            println!(
+                                                "{}No files matching '{pattern}'\x1b[0m",
+                                                theme::c_warn()
+                                            );
                                         } else {
-                                            println!("\x1b[2m({count} items in {})\x1b[0m", cwd.display());
+                                            println!(
+                                                "\x1b[2m({count} items in {})\x1b[0m",
+                                                cwd.display()
+                                            );
                                         }
                                     }
-                                    Err(e) => eprintln!("{}Cannot read directory: {e}\x1b[0m", theme::c_err()),
+                                    Err(e) => eprintln!(
+                                        "{}Cannot read directory: {e}\x1b[0m",
+                                        theme::c_err()
+                                    ),
                                 }
                             }
                             CommandResult::Env => {
                                 println!("\x1b[1mEnvironment\x1b[0m");
                                 println!("  OS:          {}", std::env::consts::OS);
                                 println!("  Arch:        {}", std::env::consts::ARCH);
-                                println!("  CWD:         {}", std::env::current_dir().unwrap_or_default().display());
+                                println!(
+                                    "  CWD:         {}",
+                                    std::env::current_dir().unwrap_or_default().display()
+                                );
                                 println!("  Version:     v{}", env!("CARGO_PKG_VERSION"));
-                                if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+                                if let Ok(home) =
+                                    std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"))
+                                {
                                     println!("  Home:        {home}");
                                 }
                                 let state = engine.state().read().await;
                                 println!("  Model:       {}", state.model);
                                 println!("  Messages:    {}", state.messages.len());
                                 drop(state);
-                                if let Ok(shell) = std::env::var("SHELL").or_else(|_| std::env::var("COMSPEC")) {
+                                if let Ok(shell) =
+                                    std::env::var("SHELL").or_else(|_| std::env::var("COMSPEC"))
+                                {
                                     println!("  Shell:       {shell}");
                                 }
                                 if let Ok(term) = std::env::var("TERM") {
@@ -737,13 +858,18 @@ pub async fn run(
                                 if enabled {
                                     println!("{}Vim mode enabled\x1b[0m (note: basic vim keybindings are a work in progress)", theme::c_ok());
                                 } else {
-                                    println!("{}Vim mode disabled\x1b[0m — normal editing mode active", theme::c_ok());
+                                    println!(
+                                        "{}Vim mode disabled\x1b[0m — normal editing mode active",
+                                        theme::c_ok()
+                                    );
                                 }
                             }
                             CommandResult::Image { path } => {
                                 if path.is_empty() {
                                     println!("Usage: /image <path>  — attach an image to the next message");
-                                    println!("       Tip: you can also type @path/to/image.png inline");
+                                    println!(
+                                        "       Tip: you can also type @path/to/image.png inline"
+                                    );
                                     println!("       Tip: press Alt+V to paste from clipboard");
                                     continue;
                                 }
@@ -760,7 +886,10 @@ pub async fn run(
                                         println!(
                                             "{}✓ Image queued: {} ({} image{} pending)\x1b[0m",
                                             theme::c_ok(),
-                                            img_path.file_name().unwrap_or_default().to_string_lossy(),
+                                            img_path
+                                                .file_name()
+                                                .unwrap_or_default()
+                                                .to_string_lossy(),
                                             pending_images.len(),
                                             if pending_images.len() == 1 { "" } else { "s" },
                                         );
@@ -790,13 +919,18 @@ pub async fn run(
                             }
                             CommandResult::Tag { name } => {
                                 if name.is_empty() {
-                                    println!("Usage: /tag <name>  — add a searchable tag to the session");
+                                    println!(
+                                        "Usage: /tag <name>  — add a searchable tag to the session"
+                                    );
                                 } else {
                                     println!("{}Tagged session: {name}\x1b[0m", theme::c_ok());
                                 }
                             }
                             CommandResult::ReleaseNotes => {
-                                println!("\x1b[1mClawed Code v{}\x1b[0m", env!("CARGO_PKG_VERSION"));
+                                println!(
+                                    "\x1b[1mClawed Code v{}\x1b[0m",
+                                    env!("CARGO_PKG_VERSION")
+                                );
                                 println!();
                                 println!("Recent changes:");
                                 println!("  • Full cursor position tracking with word navigation");
@@ -831,11 +965,18 @@ pub async fn run(
                                     Ok(mut f) => {
                                         use std::io::Write;
                                         let _ = f.write_all(entry.as_bytes());
-                                        println!("{}Thank you for your feedback! Saved to {}\x1b[0m",
-                                            theme::c_ok(), feedback_path.display());
+                                        println!(
+                                            "{}Thank you for your feedback! Saved to {}\x1b[0m",
+                                            theme::c_ok(),
+                                            feedback_path.display()
+                                        );
                                     }
                                     Err(e) => {
-                                        eprintln!("{}Could not save feedback: {}\x1b[0m", theme::c_err(), e);
+                                        eprintln!(
+                                            "{}Could not save feedback: {}\x1b[0m",
+                                            theme::c_err(),
+                                            e
+                                        );
                                     }
                                 }
                             }
@@ -850,12 +991,17 @@ pub async fn run(
                 // Non-slash input: InputReader handles multiline via
                 // Ctrl+J / Shift+Enter (rustyline).
                 let input = line.trim();
-                if input.is_empty() { continue; }
+                if input.is_empty() {
+                    continue;
+                }
                 rl.add_history(input);
 
                 // Check auto-compact before submitting
                 if engine.should_auto_compact().await {
-                    println!("{}[Context limit approaching — auto-compacting…]\x1b[0m", theme::c_warn());
+                    println!(
+                        "{}[Context limit approaching — auto-compacting…]\x1b[0m",
+                        theme::c_warn()
+                    );
                     if let Err(e) = engine.compact("auto", None).await {
                         eprintln!("{}Auto-compact failed: {}\x1b[0m", theme::c_err(), e);
                     } else {
@@ -916,16 +1062,19 @@ pub async fn run(
                 // Submit via bus (preferred) or direct engine (fallback)
                 if let Some(ref mut client) = client {
                     // Bus-based path: send request → render notifications
-                    let bus_images: Vec<clawed_bus::ImageAttachment> = all_images.iter().filter_map(|block| {
-                        if let clawed_core::message::ContentBlock::Image { source } = block {
-                            Some(clawed_bus::ImageAttachment {
-                                data: source.data.clone(),
-                                media_type: source.media_type.clone(),
-                            })
-                        } else {
-                            None
-                        }
-                    }).collect();
+                    let bus_images: Vec<clawed_bus::ImageAttachment> = all_images
+                        .iter()
+                        .filter_map(|block| {
+                            if let clawed_core::message::ContentBlock::Image { source } = block {
+                                Some(clawed_bus::ImageAttachment {
+                                    data: source.data.clone(),
+                                    media_type: source.media_type.clone(),
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
 
                     if !bus_images.is_empty() {
                         println!(
@@ -935,7 +1084,10 @@ pub async fn run(
                         );
                     }
 
-                    let request = AgentRequest::Submit { text, images: bus_images };
+                    let request = AgentRequest::Submit {
+                        text,
+                        images: bus_images,
+                    };
 
                     if let Err(e) = client.send_request(request) {
                         eprintln!("{}Failed to send request: {}\x1b[0m", theme::c_err(), e);
@@ -945,7 +1097,9 @@ pub async fn run(
                         // Render notifications until TurnComplete (10min per-notification timeout)
                         let mut renderer = OutputRenderer::new(&model);
                         let render_timeout = Duration::from_secs(600);
-                        while let Some(notification) = recv_with_timeout(client, render_timeout).await {
+                        while let Some(notification) =
+                            recv_with_timeout(client, render_timeout).await
+                        {
                             if engine.abort_signal().is_aborted() {
                                 break;
                             }
@@ -981,7 +1135,14 @@ pub async fn run(
                         engine.submit_with_content(content).await
                     };
 
-                    match print_stream(stream, &model, Some(engine.cost_tracker()), Some(&engine.abort_signal())).await {
+                    match print_stream(
+                        stream,
+                        &model,
+                        Some(engine.cost_tracker()),
+                        Some(&engine.abort_signal()),
+                    )
+                    .await
+                    {
                         Ok(queued_input) => {
                             // Buffer any text the user typed during streaming for the next prompt.
                             if !queued_input.trim().is_empty() {
@@ -1011,7 +1172,10 @@ pub async fn run(
                 // Context usage warning (80% threshold)
                 if let Some(pct) = engine.context_usage_percent().await {
                     if pct >= 90 {
-                        eprintln!("{}⚠ Context {pct}% full — consider /compact or /clear\x1b[0m", theme::c_err());
+                        eprintln!(
+                            "{}⚠ Context {pct}% full — consider /compact or /clear\x1b[0m",
+                            theme::c_err()
+                        );
                     } else if pct >= 80 {
                         eprintln!("{}⚠ Context {pct}% full\x1b[0m", theme::c_warn());
                     }
@@ -1046,17 +1210,32 @@ pub async fn run(
                         for notif in &notifications {
                             if let clawed_core::message::Message::User(u) = notif {
                                 // Concatenate all text blocks from the notification
-                                let text: String = u.content.iter().filter_map(|b| {
-                                    if let clawed_core::message::ContentBlock::Text { text } = b {
-                                        Some(text.as_str())
-                                    } else {
-                                        None
-                                    }
-                                }).collect::<Vec<_>>().join("\n");
-                                if text.is_empty() { continue; }
+                                let text: String = u
+                                    .content
+                                    .iter()
+                                    .filter_map(|b| {
+                                        if let clawed_core::message::ContentBlock::Text { text } = b
+                                        {
+                                            Some(text.as_str())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                if text.is_empty() {
+                                    continue;
+                                }
                                 eprintln!("{}[Task notification received]\x1b[0m", theme::c_warn());
                                 let stream = engine.submit(&text).await;
-                                if let Err(e) = print_stream(stream, &model, Some(engine.cost_tracker()), Some(&engine.abort_signal())).await {
+                                if let Err(e) = print_stream(
+                                    stream,
+                                    &model,
+                                    Some(engine.cost_tracker()),
+                                    Some(&engine.abort_signal()),
+                                )
+                                .await
+                                {
                                     eprintln!("{}Error: {}\x1b[0m", theme::c_err(), e);
                                 }
                             }
@@ -1064,8 +1243,13 @@ pub async fn run(
                     }
                 }
             }
-            Ok(InputResult::Interrupted) => { continue; }
-            Ok(InputResult::Eof) => { println!("Goodbye!"); break; }
+            Ok(InputResult::Interrupted) => {
+                continue;
+            }
+            Ok(InputResult::Eof) => {
+                println!("Goodbye!");
+                break;
+            }
             Err(err) => {
                 eprintln!("{}Input error: {}\x1b[0m", theme::c_err(), err);
                 break;
@@ -1084,7 +1268,10 @@ pub async fn run(
         if let Err(e) = engine.save_session().await {
             eprintln!("\x1b[2m(Session auto-save failed: {})\x1b[0m", e);
         } else {
-            eprintln!("\x1b[2m(Session saved: {})\x1b[0m", &engine.session_id()[..8]);
+            eprintln!(
+                "\x1b[2m(Session saved: {})\x1b[0m",
+                &engine.session_id()[..8]
+            );
         }
     }
 
@@ -1148,12 +1335,14 @@ fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .or_else(|_| Command::new("xsel")
-                .args(["--clipboard", "--input"])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn())?
+            .or_else(|_| {
+                Command::new("xsel")
+                    .args(["--clipboard", "--input"])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+            })?
     };
 
     if let Some(stdin) = child.stdin.as_mut() {
@@ -1271,7 +1460,8 @@ async fn fetch_image_url(url: &str) -> anyhow::Result<clawed_core::message::Cont
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
 
-    let response = client.get(url)
+    let response = client
+        .get(url)
         .send()
         .await
         .with_context(|| format!("Failed to fetch image from {url}"))?;
@@ -1299,7 +1489,12 @@ async fn fetch_image_url(url: &str) -> anyhow::Result<clawed_core::message::Cont
     } else {
         // Fall back to extension in URL
         let path = std::path::Path::new(url);
-        match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+        match path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .as_deref()
+        {
             Some("png") => "image/png",
             Some("jpg" | "jpeg") => "image/jpeg",
             Some("gif") => "image/gif",
@@ -1311,11 +1506,16 @@ async fn fetch_image_url(url: &str) -> anyhow::Result<clawed_core::message::Cont
     };
 
     // Read body with size limit
-    let bytes = response.bytes().await
+    let bytes = response
+        .bytes()
+        .await
         .with_context(|| format!("Failed to read image body from {url}"))?;
 
     if bytes.len() > 20 * 1024 * 1024 {
-        anyhow::bail!("Image from {url} is too large ({} bytes, max 20 MB)", bytes.len());
+        anyhow::bail!(
+            "Image from {url} is too large ({} bytes, max 20 MB)",
+            bytes.len()
+        );
     }
 
     let data = base64::engine::general_purpose::STANDARD.encode(&bytes);

@@ -7,6 +7,12 @@
 use clawed_agent::engine::QueryEngine;
 use std::path::Path;
 
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedPrComments {
+    pub(crate) display: String,
+    pub(crate) prompt: String,
+}
+
 /// A single review comment from a PR.
 #[derive(Debug, Clone)]
 pub struct PrComment {
@@ -85,21 +91,25 @@ fn parse_github_remote(url: &str) -> Option<(String, String)> {
 
 /// Parse JSON response from GitHub API into PrComment list.
 fn parse_comments_json(json: &str) -> Result<Vec<PrComment>, String> {
-    let value: serde_json::Value = serde_json::from_str(json)
-        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
-    let arr = value.as_array()
-        .ok_or("Expected JSON array")?;
+    let arr = value.as_array().ok_or("Expected JSON array")?;
 
     let mut comments = Vec::new();
     for item in arr {
         let comment = PrComment {
             id: item["id"].as_u64().unwrap_or(0),
             file: item["path"].as_str().unwrap_or("unknown").to_string(),
-            line: item["line"].as_u64().or_else(|| item["original_line"].as_u64()),
+            line: item["line"]
+                .as_u64()
+                .or_else(|| item["original_line"].as_u64()),
             diff_hunk: item["diff_hunk"].as_str().unwrap_or("").to_string(),
             body: item["body"].as_str().unwrap_or("").to_string(),
-            author: item["user"]["login"].as_str().unwrap_or("unknown").to_string(),
+            author: item["user"]["login"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string(),
             in_reply_to_id: item["in_reply_to_id"].as_u64(),
             created_at: item["created_at"].as_str().unwrap_or("").to_string(),
         };
@@ -116,7 +126,10 @@ fn group_into_threads(comments: Vec<PrComment>) -> Vec<CommentThread> {
     // Group by (file, line_or_reply_root)
     let mut file_groups: BTreeMap<String, Vec<PrComment>> = BTreeMap::new();
     for c in &comments {
-        file_groups.entry(c.file.clone()).or_default().push(c.clone());
+        file_groups
+            .entry(c.file.clone())
+            .or_default()
+            .push(c.clone());
     }
 
     let mut threads = Vec::new();
@@ -141,9 +154,10 @@ fn group_into_threads(comments: Vec<PrComment>) -> Vec<CommentThread> {
 
             // Find replies to this root
             thread_comments.extend(
-                replies.iter()
+                replies
+                    .iter()
                     .filter(|r| r.in_reply_to_id == Some(root_id))
-                    .cloned()
+                    .cloned(),
             );
 
             threads.push(CommentThread {
@@ -164,23 +178,28 @@ fn format_threads_display(threads: &[CommentThread]) -> String {
     let total_comments: usize = threads.iter().map(|t| t.comments.len()).sum();
     out.push_str(&format!(
         "\x1b[1mPR Review Comments\x1b[0m — {} thread(s), {} comment(s)\n\n",
-        threads.len(), total_comments
+        threads.len(),
+        total_comments
     ));
 
     for (i, thread) in threads.iter().enumerate() {
-        let line_info = thread.line
-            .map(|l| format!(":{}", l))
-            .unwrap_or_default();
+        let line_info = thread.line.map(|l| format!(":{}", l)).unwrap_or_default();
 
         out.push_str(&format!(
             "\x1b[1m[{}] {}{}\x1b[0m\n",
-            i + 1, thread.file, line_info
+            i + 1,
+            thread.file,
+            line_info
         ));
 
         // Show truncated diff hunk
         if !thread.diff_hunk.is_empty() {
             let hunk_lines: Vec<&str> = thread.diff_hunk.lines().collect();
-            let show = if hunk_lines.len() > 5 { &hunk_lines[hunk_lines.len()-5..] } else { &hunk_lines };
+            let show = if hunk_lines.len() > 5 {
+                &hunk_lines[hunk_lines.len() - 5..]
+            } else {
+                &hunk_lines
+            };
             for line in show {
                 let color = if line.starts_with('+') {
                     "\x1b[32m"
@@ -199,7 +218,9 @@ fn format_threads_display(threads: &[CommentThread]) -> String {
             let prefix = if is_reply { "↳ " } else { "" };
             out.push_str(&format!(
                 "{}\x1b[36m{}@{}\x1b[0m: {}\n",
-                indent, prefix, comment.author,
+                indent,
+                prefix,
+                comment.author,
                 comment.body.lines().next().unwrap_or("")
             ));
             // Show remaining lines indented
@@ -219,7 +240,7 @@ fn build_analysis_prompt(threads: &[CommentThread]) -> String {
         "Analyze these PR review comments. For each thread, explain:\n\
          1. What the reviewer is asking for\n\
          2. Whether the feedback is actionable\n\
-         3. Suggest a fix if applicable\n\n"
+         3. Suggest a fix if applicable\n\n",
     );
 
     for (i, thread) in threads.iter().enumerate() {
@@ -230,8 +251,15 @@ fn build_analysis_prompt(threads: &[CommentThread]) -> String {
             prompt.push_str("\n```\n");
         }
         for comment in &thread.comments {
-            let prefix = if comment.in_reply_to_id.is_some() { "Reply" } else { "Comment" };
-            prompt.push_str(&format!("{} by @{}: {}\n", prefix, comment.author, comment.body));
+            let prefix = if comment.in_reply_to_id.is_some() {
+                "Reply"
+            } else {
+                "Comment"
+            };
+            prompt.push_str(&format!(
+                "{} by @{}: {}\n",
+                prefix, comment.author, comment.body
+            ));
         }
         prompt.push('\n');
     }
@@ -240,47 +268,46 @@ fn build_analysis_prompt(threads: &[CommentThread]) -> String {
 }
 
 /// Handle `/pr-comments <PR#>` command.
-pub(crate) async fn handle_pr_comments(
-    engine: &QueryEngine,
+pub(crate) async fn handle_pr_comments(engine: &QueryEngine, pr_number: u64, cwd: &Path) {
+    match prepare_pr_comments(pr_number, cwd) {
+        Ok(prepared) => {
+            println!("{}", prepared.display);
+            let stream = engine.submit(&prepared.prompt).await;
+            let cost = engine.cost_tracker();
+            let model = {
+                let s = engine.state().read().await;
+                s.model.clone()
+            };
+            if let Err(e) = crate::output::print_stream(stream, &model, Some(cost), None).await {
+                eprintln!("\x1b[31mAnalysis error: {}\x1b[0m", e);
+            }
+        }
+        Err(message) => eprintln!("{}", message),
+    }
+}
+
+pub(crate) fn prepare_pr_comments(
     pr_number: u64,
     cwd: &Path,
-) {
+) -> Result<PreparedPrComments, String> {
     if pr_number == 0 {
-        eprintln!("\x1b[33mUsage: /pr-comments <PR#>\x1b[0m");
-        eprintln!("Example: /pr-comments 42");
-        return;
+        return Err(
+            "\x1b[33mUsage: /pr-comments <PR#>\x1b[0m\nExample: /pr-comments 42".to_string(),
+        );
     }
 
-    eprintln!("\x1b[2mFetching review comments for PR #{}...\x1b[0m", pr_number);
-
-    let comments = match fetch_pr_comments(pr_number, cwd) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("\x1b[31mFailed to fetch PR comments: {}\x1b[0m", e);
-            return;
-        }
-    };
+    let comments = fetch_pr_comments(pr_number, cwd)
+        .map_err(|error| format!("\x1b[31mFailed to fetch PR comments: {}\x1b[0m", error))?;
 
     if comments.is_empty() {
-        println!("No review comments on PR #{}.", pr_number);
-        return;
+        return Err(format!("No review comments on PR #{}.", pr_number));
     }
 
     let threads = group_into_threads(comments);
-    let display = format_threads_display(&threads);
-    println!("{}", display);
-
-    // Send to AI for analysis
-    let prompt = build_analysis_prompt(&threads);
-    let stream = engine.submit(&prompt).await;
-    let cost = engine.cost_tracker();
-    let model = {
-        let s = engine.state().read().await;
-        s.model.clone()
-    };
-    if let Err(e) = crate::output::print_stream(stream, &model, Some(cost), None).await {
-        eprintln!("\x1b[31mAnalysis error: {}\x1b[0m", e);
-    }
+    Ok(PreparedPrComments {
+        display: format_threads_display(&threads),
+        prompt: build_analysis_prompt(&threads),
+    })
 }
 
 #[cfg(test)]
@@ -289,7 +316,8 @@ mod tests {
 
     #[test]
     fn parse_github_remote_ssh() {
-        let (owner, repo) = parse_github_remote("git@github.com:anthropics/claude-code.git").unwrap();
+        let (owner, repo) =
+            parse_github_remote("git@github.com:anthropics/claude-code.git").unwrap();
         assert_eq!(owner, "anthropics");
         assert_eq!(repo, "claude-code");
     }
@@ -349,16 +377,34 @@ mod tests {
     fn group_threads_basic() {
         let comments = vec![
             PrComment {
-                id: 1, file: "a.rs".into(), line: Some(10), diff_hunk: "hunk".into(),
-                body: "fix".into(), author: "rev".into(), in_reply_to_id: None, created_at: String::new(),
+                id: 1,
+                file: "a.rs".into(),
+                line: Some(10),
+                diff_hunk: "hunk".into(),
+                body: "fix".into(),
+                author: "rev".into(),
+                in_reply_to_id: None,
+                created_at: String::new(),
             },
             PrComment {
-                id: 2, file: "a.rs".into(), line: Some(10), diff_hunk: "hunk".into(),
-                body: "ok".into(), author: "dev".into(), in_reply_to_id: Some(1), created_at: String::new(),
+                id: 2,
+                file: "a.rs".into(),
+                line: Some(10),
+                diff_hunk: "hunk".into(),
+                body: "ok".into(),
+                author: "dev".into(),
+                in_reply_to_id: Some(1),
+                created_at: String::new(),
             },
             PrComment {
-                id: 3, file: "b.rs".into(), line: Some(5), diff_hunk: "hunk2".into(),
-                body: "other".into(), author: "rev".into(), in_reply_to_id: None, created_at: String::new(),
+                id: 3,
+                file: "b.rs".into(),
+                line: Some(5),
+                diff_hunk: "hunk2".into(),
+                body: "other".into(),
+                author: "rev".into(),
+                in_reply_to_id: None,
+                created_at: String::new(),
             },
         ];
 
@@ -377,9 +423,14 @@ mod tests {
             line: Some(42),
             diff_hunk: "+new code".into(),
             comments: vec![PrComment {
-                id: 1, file: "src/main.rs".into(), line: Some(42),
-                diff_hunk: "+new code".into(), body: "Looks good".into(),
-                author: "reviewer".into(), in_reply_to_id: None, created_at: String::new(),
+                id: 1,
+                file: "src/main.rs".into(),
+                line: Some(42),
+                diff_hunk: "+new code".into(),
+                body: "Looks good".into(),
+                author: "reviewer".into(),
+                in_reply_to_id: None,
+                created_at: String::new(),
             }],
         }];
 

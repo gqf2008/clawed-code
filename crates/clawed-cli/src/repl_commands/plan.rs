@@ -16,86 +16,134 @@ use crate::theme;
 pub(crate) async fn handle_plan_command(args: &str, engine: &QueryEngine, cwd: &Path) {
     let args = args.trim();
 
-    // Check if already in plan mode
+    match args {
+        "" => println!("{}", toggle_plan_mode(engine).await),
+        "open" => match open_plan_in_editor(cwd) {
+            Ok(message) => println!("{}", message),
+            Err(message) => eprintln!("{}", message),
+        },
+        "show" | "view" => match show_plan_text(cwd) {
+            Ok(Some(content)) => println!("{}", content),
+            Ok(None) => println!(
+                "{}No plan file found. Use /plan open to create one.{}",
+                theme::DIM,
+                theme::RESET
+            ),
+            Err(message) => eprintln!("{}", message),
+        },
+        description => match save_plan_description(engine, cwd, description).await {
+            Ok(message) => println!("{}", message),
+            Err(message) => eprintln!("{}", message),
+        },
+    }
+}
+
+pub(crate) async fn toggle_plan_mode(engine: &QueryEngine) -> String {
     let in_plan_mode = {
         let state = engine.state().read().await;
         state.permission_mode == PermissionMode::Plan
     };
 
-    if args.is_empty() {
-        // Toggle plan mode
-        if in_plan_mode {
-            {
-                let mut state = engine.state().write().await;
-                state.exit_plan_mode();
+    if in_plan_mode {
+        let mut state = engine.state().write().await;
+        state.exit_plan_mode();
+        format!(
+            "{}📋 Plan mode disabled{}\n{}  Switched back to previous permission mode.{}",
+            theme::c_tool(),
+            theme::RESET,
+            theme::DIM,
+            theme::RESET
+        )
+    } else {
+        let mut state = engine.state().write().await;
+        state.enter_plan_mode();
+        format!(
+            "{}📋 Plan mode enabled{}\n{}  Tools restricted to read-only. Describe your goal and the AI will create a plan.{}\n{}  Use /plan again to exit plan mode.{}",
+            theme::c_tool(),
+            theme::RESET,
+            theme::DIM,
+            theme::RESET,
+            theme::DIM,
+            theme::RESET
+        )
+    }
+}
+
+pub(crate) fn open_plan_in_editor(cwd: &Path) -> Result<String, String> {
+    let plan_path = get_plan_path(cwd);
+    ensure_plan_file_exists(&plan_path)?;
+
+    let editor = std::env::var("EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .unwrap_or_else(|_| {
+            if cfg!(windows) {
+                "notepad".to_string()
+            } else {
+                "vi".to_string()
             }
-            println!("{}📋 Plan mode disabled{}", theme::c_tool(), theme::RESET);
-            println!("{}  Switched back to previous permission mode.{}", theme::DIM, theme::RESET);
-        } else {
-            {
-                let mut state = engine.state().write().await;
-                state.enter_plan_mode();
-            }
-            println!("{}📋 Plan mode enabled{}", theme::c_tool(), theme::RESET);
-            println!("{}  Tools restricted to read-only. Describe your goal and the AI will create a plan.{}", theme::DIM, theme::RESET);
-            println!("{}  Use /plan again to exit plan mode.{}", theme::DIM, theme::RESET);
-        }
-        return;
+        });
+
+    match std::process::Command::new(&editor).arg(&plan_path).status() {
+        Ok(status) if status.success() => Ok(format!(
+            "{}✓ Plan file saved: {}{}",
+            theme::c_ok(),
+            plan_path.display(),
+            theme::RESET
+        )),
+        Ok(status) => Err(format!(
+            "{}Editor exited with: {}{}",
+            theme::c_err(),
+            status,
+            theme::RESET
+        )),
+        Err(error) => Err(format!(
+            "{}Failed to open editor '{}': {}{}\n{}  Set $EDITOR to your preferred editor.{}",
+            theme::c_err(),
+            editor,
+            error,
+            theme::RESET,
+            theme::DIM,
+            theme::RESET
+        )),
+    }
+}
+
+pub(crate) fn show_plan_text(cwd: &Path) -> Result<Option<String>, String> {
+    let plan_path = get_plan_path(cwd);
+    if !plan_path.exists() {
+        return Ok(None);
     }
 
-    if args == "open" {
-        let plan_path = get_plan_path(cwd);
-        if !plan_path.exists() {
-            let initial = "# Plan\n\n_Describe your goals here._\n";
-            if let Some(parent) = plan_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let _ = std::fs::write(&plan_path, initial);
-        }
+    let content = std::fs::read_to_string(&plan_path).map_err(|error| {
+        format!(
+            "{}Failed to read plan: {}{}",
+            theme::c_err(),
+            error,
+            theme::RESET
+        )
+    })?;
 
-        let editor = std::env::var("EDITOR")
-            .or_else(|_| std::env::var("VISUAL"))
-            .unwrap_or_else(|_| {
-                if cfg!(windows) { "notepad".to_string() } else { "vi".to_string() }
-            });
+    Ok(Some(format!(
+        "{}Current Plan{}\n{}{}{}\n\n{}",
+        theme::BOLD,
+        theme::RESET,
+        theme::DIM,
+        plan_path.display(),
+        theme::RESET,
+        content
+    )))
+}
 
-        println!("{}Opening {} in {}...{}", theme::DIM, plan_path.display(), editor, theme::RESET);
-        match std::process::Command::new(&editor).arg(&plan_path).status() {
-            Ok(status) if status.success() => {
-                println!("{}✓ Plan file saved: {}{}", theme::c_ok(), plan_path.display(), theme::RESET);
-            }
-            Ok(status) => {
-                eprintln!("{}Editor exited with: {}{}", theme::c_err(), status, theme::RESET);
-            }
-            Err(e) => {
-                eprintln!("{}Failed to open editor '{}': {}{}", theme::c_err(), editor, e, theme::RESET);
-                eprintln!("{}  Set $EDITOR to your preferred editor.{}", theme::DIM, theme::RESET);
-            }
-        }
-        return;
-    }
+pub(crate) async fn save_plan_description(
+    engine: &QueryEngine,
+    cwd: &Path,
+    description: &str,
+) -> Result<String, String> {
+    let in_plan_mode = {
+        let state = engine.state().read().await;
+        state.permission_mode == PermissionMode::Plan
+    };
 
-    if args == "show" || args == "view" {
-        let plan_path = get_plan_path(cwd);
-        if plan_path.exists() {
-            match std::fs::read_to_string(&plan_path) {
-                Ok(content) => {
-                    println!("{}Current Plan{}", theme::BOLD, theme::RESET);
-                    println!("{}{}{}", theme::DIM, plan_path.display(), theme::RESET);
-                    println!();
-                    println!("{}", content);
-                }
-                Err(e) => {
-                    eprintln!("{}Failed to read plan: {}{}", theme::c_err(), e, theme::RESET);
-                }
-            }
-        } else {
-            println!("{}No plan file found. Use /plan open to create one.{}", theme::DIM, theme::RESET);
-        }
-        return;
-    }
-
-    // Any other text: enable plan mode with description
     if !in_plan_mode {
         let mut state = engine.state().write().await;
         state.enter_plan_mode();
@@ -103,30 +151,85 @@ pub(crate) async fn handle_plan_command(args: &str, engine: &QueryEngine, cwd: &
 
     let plan_path = get_plan_path(cwd);
     if let Some(parent) = plan_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "{}Failed to create plan directory: {}{}",
+                theme::c_err(),
+                error,
+                theme::RESET
+            )
+        })?;
     }
-    let content = format!("# Plan\n\n{}\n", args);
-    let _ = std::fs::write(&plan_path, &content);
-    println!("{}📋 Plan mode enabled{}", theme::c_tool(), theme::RESET);
-    println!("{}  Plan: {}{}", theme::DIM, args, theme::RESET);
-    println!("{}  Saved to: {}{}", theme::DIM, plan_path.display(), theme::RESET);
+
+    let content = format!("# Plan\n\n{}\n", description);
+    std::fs::write(&plan_path, content).map_err(|error| {
+        format!(
+            "{}Failed to write plan: {}{}",
+            theme::c_err(),
+            error,
+            theme::RESET
+        )
+    })?;
+
+    Ok(format!(
+        "{}📋 Plan mode enabled{}\n{}  Plan: {}{}\n{}  Saved to: {}{}",
+        theme::c_tool(),
+        theme::RESET,
+        theme::DIM,
+        description,
+        theme::RESET,
+        theme::DIM,
+        plan_path.display(),
+        theme::RESET
+    ))
 }
 
 /// Get the plan file path for the current project.
-fn get_plan_path(cwd: &Path) -> PathBuf {
-    let base = clawed_core::config::Settings::claude_dir()
-        .unwrap_or_else(|| PathBuf::from(".claude"));
+pub(crate) fn get_plan_path(cwd: &Path) -> PathBuf {
+    let base =
+        clawed_core::config::Settings::claude_dir().unwrap_or_else(|| PathBuf::from(".claude"));
     let plans_dir = base.join("plans");
-    // Use a slug derived from the cwd path for uniqueness
     let slug = cwd_to_slug(cwd);
     plans_dir.join(format!("{}.md", slug))
 }
 
+fn ensure_plan_file_exists(plan_path: &Path) -> Result<(), String> {
+    if plan_path.exists() {
+        return Ok(());
+    }
+
+    if let Some(parent) = plan_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "{}Failed to create plan directory: {}{}",
+                theme::c_err(),
+                error,
+                theme::RESET
+            )
+        })?;
+    }
+
+    std::fs::write(plan_path, "# Plan\n\n_Describe your goals here._\n").map_err(|error| {
+        format!(
+            "{}Failed to create plan file: {}{}",
+            theme::c_err(),
+            error,
+            theme::RESET
+        )
+    })
+}
+
 /// Convert a cwd path to a filesystem-safe slug.
 fn cwd_to_slug(cwd: &Path) -> String {
-    let s = cwd.to_string_lossy();
-    s.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+    let path = cwd.to_string_lossy();
+    path.chars()
+        .map(|ch| {
+            if ch.is_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
         .collect::<String>()
         .trim_matches('_')
         .to_string()

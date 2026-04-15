@@ -1,9 +1,9 @@
 //! Plugin loader — discover and load plugins from standard paths.
 
 use std::path::{Path, PathBuf};
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
-use super::manifest::{PluginManifest, PluginCommand, PluginSkill};
+use super::manifest::{PluginCommand, PluginManifest, PluginSkill};
 
 /// A loaded and validated plugin.
 #[derive(Debug, Clone)]
@@ -46,12 +46,18 @@ impl PluginLoader {
     /// 1. `~/.claude/plugins/` — user-global
     /// 2. `<cwd>/.claude/plugins/` — project-local
     pub fn discover(cwd: &Path) -> Self {
+        Self::discover_with_sources(cwd, true)
+    }
+
+    fn discover_with_sources(cwd: &Path, include_user_plugins: bool) -> Self {
         let mut plugins = Vec::new();
 
-        // User-global plugins
-        if let Some(home) = dirs::home_dir() {
-            let user_dir = home.join(".claude").join("plugins");
-            load_plugins_from_dir(&user_dir, PluginSource::User, &mut plugins);
+        if include_user_plugins {
+            // User-global plugins
+            if let Some(home) = dirs::home_dir() {
+                let user_dir = home.join(".claude").join("plugins");
+                load_plugins_from_dir(&user_dir, PluginSource::User, &mut plugins);
+            }
         }
 
         // Project-local plugins
@@ -78,7 +84,8 @@ impl PluginLoader {
 
     /// Get all commands from all enabled plugins.
     pub fn all_commands(&self) -> Vec<(&LoadedPlugin, &super::manifest::PluginCommand)> {
-        self.plugins.iter()
+        self.plugins
+            .iter()
             .filter(|p| p.manifest.enabled)
             .flat_map(|p| p.manifest.commands.iter().map(move |c| (p, c)))
             .collect()
@@ -86,15 +93,20 @@ impl PluginLoader {
 
     /// Get all skills from all enabled plugins.
     pub fn all_skills(&self) -> Vec<(&LoadedPlugin, &super::manifest::PluginSkill)> {
-        self.plugins.iter()
+        self.plugins
+            .iter()
             .filter(|p| p.manifest.enabled)
             .flat_map(|p| p.manifest.skills.iter().map(move |s| (p, s)))
             .collect()
     }
 
     /// Get all hooks for a specific event from all enabled plugins.
-    pub fn hooks_for_event(&self, event: super::manifest::HookEvent) -> Vec<(&LoadedPlugin, &super::manifest::PluginHook)> {
-        self.plugins.iter()
+    pub fn hooks_for_event(
+        &self,
+        event: super::manifest::HookEvent,
+    ) -> Vec<(&LoadedPlugin, &super::manifest::PluginHook)> {
+        self.plugins
+            .iter()
             .filter(|p| p.manifest.enabled)
             .flat_map(|p| p.manifest.hooks.iter().map(move |h| (p, h)))
             .filter(|(_, h)| h.event == event)
@@ -114,7 +126,10 @@ impl PluginLoader {
     }
 
     /// Get the effective prompt for a command (file or inline).
-    pub fn command_prompt(plugin: &LoadedPlugin, cmd: &super::manifest::PluginCommand) -> Option<String> {
+    pub fn command_prompt(
+        plugin: &LoadedPlugin,
+        cmd: &super::manifest::PluginCommand,
+    ) -> Option<String> {
         if let Some(ref file) = cmd.prompt_file {
             Self::read_prompt_file(plugin, file)
         } else {
@@ -127,7 +142,8 @@ impl PluginLoader {
     /// Returns a vec of (server_name, config_value) pairs.
     /// The config value is expected to have at minimum a "command" field.
     pub fn all_mcp_servers(&self) -> Vec<(String, &serde_json::Value)> {
-        self.plugins.iter()
+        self.plugins
+            .iter()
             .filter(|p| p.manifest.enabled)
             .flat_map(|p| p.manifest.mcp.iter())
             .map(|(name, config)| (name.clone(), config))
@@ -171,7 +187,12 @@ impl PluginLoader {
             }
             copy_dir_recursive(source, &dest)?;
 
-            info!("Installed plugin '{}' v{} to {}", manifest.name, manifest.version, dest.display());
+            info!(
+                "Installed plugin '{}' v{} to {}",
+                manifest.name,
+                manifest.version,
+                dest.display()
+            );
             Ok(manifest.name)
         } else if source.extension().and_then(|e| e.to_str()) == Some("zip") {
             Self::install_from_zip(source)
@@ -259,11 +280,36 @@ fn load_single_plugin(
 
     // Validate: command names must not conflict with built-in commands
     let builtins = [
-        "help", "clear", "model", "compact", "cost", "skills", "memory",
-        "session", "diff", "status", "permissions", "config", "undo",
-        "review", "doctor", "init", "commit", "pr", "bug", "search",
-        "version", "login", "logout", "context", "export", "mcp",
-        "commit-push-pr", "cpp", "exit", "quit",
+        "help",
+        "clear",
+        "model",
+        "compact",
+        "cost",
+        "skills",
+        "memory",
+        "session",
+        "diff",
+        "status",
+        "permissions",
+        "config",
+        "undo",
+        "review",
+        "doctor",
+        "init",
+        "commit",
+        "pr",
+        "bug",
+        "search",
+        "version",
+        "login",
+        "logout",
+        "context",
+        "export",
+        "mcp",
+        "commit-push-pr",
+        "cpp",
+        "exit",
+        "quit",
     ];
     for cmd in &manifest.commands {
         if builtins.contains(&cmd.name.as_str()) {
@@ -289,9 +335,12 @@ fn load_single_plugin(
                             // Extract description from first heading
                             let desc = std::fs::read_to_string(&path)
                                 .ok()
-                                .and_then(|c| c.lines().next()
-                                    .and_then(|l| l.strip_prefix('#'))
-                                    .map(|s| s.trim().to_string()))
+                                .and_then(|c| {
+                                    c.lines()
+                                        .next()
+                                        .and_then(|l| l.strip_prefix('#'))
+                                        .map(|s| s.trim().to_string())
+                                })
                                 .unwrap_or_default();
                             manifest.commands.push(PluginCommand {
                                 name: stem.to_string(),
@@ -365,8 +414,8 @@ fn load_single_plugin(
 
 /// Get the user-global plugins directory (`~/.claude/plugins/`).
 fn user_plugins_dir() -> anyhow::Result<PathBuf> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
+    let home =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
     let dir = home.join(".claude").join("plugins");
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
@@ -377,8 +426,11 @@ fn validate_plugin_name(name: &str) -> anyhow::Result<()> {
     if name.is_empty() {
         anyhow::bail!("Plugin name cannot be empty");
     }
-    if name.contains("..") || name.contains('/') || name.contains('\\')
-        || name.contains('\0') || name.starts_with('.')
+    if name.contains("..")
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0')
+        || name.starts_with('.')
     {
         anyhow::bail!(
             "Plugin name '{}' contains invalid characters (path separators, '..', or leading '.')",
@@ -413,8 +465,12 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
+
+    fn discover_test_plugins(cwd: &Path) -> PluginLoader {
+        PluginLoader::discover_with_sources(cwd, false)
+    }
 
     fn create_plugin_dir(base: &Path, name: &str, manifest_json: &str) -> PathBuf {
         let dir = base.join(name);
@@ -426,7 +482,7 @@ mod tests {
     #[test]
     fn test_discover_empty() {
         let tmp = TempDir::new().unwrap();
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         assert_eq!(loader.count(), 0);
     }
 
@@ -434,9 +490,13 @@ mod tests {
     fn test_discover_project_plugin() {
         let tmp = TempDir::new().unwrap();
         let plugins_dir = tmp.path().join(".claude").join("plugins");
-        create_plugin_dir(&plugins_dir, "test-plugin", r#"{"name": "test-plugin", "description": "A test"}"#);
+        create_plugin_dir(
+            &plugins_dir,
+            "test-plugin",
+            r#"{"name": "test-plugin", "description": "A test"}"#,
+        );
 
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         assert_eq!(loader.count(), 1);
         assert_eq!(loader.plugins()[0].manifest.name, "test-plugin");
         assert_eq!(loader.plugins()[0].source, PluginSource::Project);
@@ -446,14 +506,18 @@ mod tests {
     fn test_discover_with_commands() {
         let tmp = TempDir::new().unwrap();
         let plugins_dir = tmp.path().join(".claude").join("plugins");
-        let _plugin_dir = create_plugin_dir(&plugins_dir, "cmd-plugin", r#"{
+        let _plugin_dir = create_plugin_dir(
+            &plugins_dir,
+            "cmd-plugin",
+            r#"{
             "name": "cmd-plugin",
             "commands": [
                 {"name": "greet", "description": "Say hello", "prompt": "Greet the user"}
             ]
-        }"#);
+        }"#,
+        );
 
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         assert_eq!(loader.count(), 1);
 
         let cmds = loader.all_commands();
@@ -468,34 +532,49 @@ mod tests {
     fn test_discover_with_prompt_file() {
         let tmp = TempDir::new().unwrap();
         let plugins_dir = tmp.path().join(".claude").join("plugins");
-        let plugin_dir = create_plugin_dir(&plugins_dir, "file-plugin", r#"{
+        let plugin_dir = create_plugin_dir(
+            &plugins_dir,
+            "file-plugin",
+            r#"{
             "name": "file-plugin",
             "commands": [
                 {"name": "analyze", "description": "Analyze code", "promptFile": "prompts/analyze.md"}
             ]
-        }"#);
+        }"#,
+        );
 
         // Create the prompt file
         let prompts_dir = plugin_dir.join("prompts");
         fs::create_dir_all(&prompts_dir).unwrap();
-        fs::write(prompts_dir.join("analyze.md"), "Analyze the code for quality issues.").unwrap();
+        fs::write(
+            prompts_dir.join("analyze.md"),
+            "Analyze the code for quality issues.",
+        )
+        .unwrap();
 
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         let cmds = loader.all_commands();
         let prompt = PluginLoader::command_prompt(cmds[0].0, cmds[0].1);
-        assert_eq!(prompt.as_deref(), Some("Analyze the code for quality issues."));
+        assert_eq!(
+            prompt.as_deref(),
+            Some("Analyze the code for quality issues.")
+        );
     }
 
     #[test]
     fn test_builtin_command_conflict() {
         let tmp = TempDir::new().unwrap();
         let plugins_dir = tmp.path().join(".claude").join("plugins");
-        create_plugin_dir(&plugins_dir, "bad-plugin", r#"{
+        create_plugin_dir(
+            &plugins_dir,
+            "bad-plugin",
+            r#"{
             "name": "bad-plugin",
             "commands": [{"name": "help", "description": "Override help"}]
-        }"#);
+        }"#,
+        );
 
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         // Should fail to load due to conflict
         assert_eq!(loader.count(), 0);
     }
@@ -504,13 +583,17 @@ mod tests {
     fn test_disabled_plugin() {
         let tmp = TempDir::new().unwrap();
         let plugins_dir = tmp.path().join(".claude").join("plugins");
-        create_plugin_dir(&plugins_dir, "off-plugin", r#"{
+        create_plugin_dir(
+            &plugins_dir,
+            "off-plugin",
+            r#"{
             "name": "off-plugin",
             "enabled": false,
             "commands": [{"name": "noop", "description": "Does nothing"}]
-        }"#);
+        }"#,
+        );
 
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         assert_eq!(loader.count(), 1);
         assert_eq!(loader.enabled_count(), 0);
         assert!(loader.all_commands().is_empty());
@@ -520,16 +603,20 @@ mod tests {
     fn test_hooks_for_event() {
         let tmp = TempDir::new().unwrap();
         let plugins_dir = tmp.path().join(".claude").join("plugins");
-        create_plugin_dir(&plugins_dir, "hook-plugin", r#"{
+        create_plugin_dir(
+            &plugins_dir,
+            "hook-plugin",
+            r#"{
             "name": "hook-plugin",
             "hooks": [
                 {"event": "pre_tool", "command": "echo pre"},
                 {"event": "post_tool", "command": "echo post"},
                 {"event": "pre_tool", "command": "echo pre2"}
             ]
-        }"#);
+        }"#,
+        );
 
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         let pre_hooks = loader.hooks_for_event(super::super::manifest::HookEvent::PreTool);
         assert_eq!(pre_hooks.len(), 2);
         let post_hooks = loader.hooks_for_event(super::super::manifest::HookEvent::PostTool);
@@ -543,7 +630,7 @@ mod tests {
         create_plugin_dir(&plugins_dir, "alpha", r#"{"name": "alpha"}"#);
         create_plugin_dir(&plugins_dir, "beta", r#"{"name": "beta"}"#);
 
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         assert!(loader.get("alpha").is_some());
         assert!(loader.get("beta").is_some());
         assert!(loader.get("gamma").is_none());
@@ -563,7 +650,7 @@ mod tests {
         fs::create_dir_all(&bad_dir).unwrap();
         fs::write(bad_dir.join("plugin.json"), "not valid json {{{").unwrap();
 
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         assert_eq!(loader.count(), 0);
     }
 
@@ -573,7 +660,7 @@ mod tests {
         let plugins_dir = tmp.path().join(".claude").join("plugins");
         create_plugin_dir(&plugins_dir, "nameless", r#"{"name": ""}"#);
 
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         assert_eq!(loader.count(), 0);
     }
 
@@ -584,9 +671,13 @@ mod tests {
         let plugin_dir = plugins_dir.join("dxt-plugin");
         let manifest_dir = plugin_dir.join(".claude-plugin");
         fs::create_dir_all(&manifest_dir).unwrap();
-        fs::write(manifest_dir.join("plugin.json"), r#"{"name": "dxt-plugin", "version": "2.0.0"}"#).unwrap();
+        fs::write(
+            manifest_dir.join("plugin.json"),
+            r#"{"name": "dxt-plugin", "version": "2.0.0"}"#,
+        )
+        .unwrap();
 
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         assert_eq!(loader.count(), 1);
         assert_eq!(loader.plugins()[0].manifest.name, "dxt-plugin");
         assert_eq!(loader.plugins()[0].manifest.version, "2.0.0");
@@ -604,7 +695,7 @@ mod tests {
         fs::write(cmds_dir.join("deploy.md"), "# Deploy\nDeploy to production").unwrap();
         fs::write(cmds_dir.join("test.md"), "# Test\nRun tests").unwrap();
 
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         assert_eq!(loader.count(), 1);
         let cmds = loader.all_commands();
         assert_eq!(cmds.len(), 2);
@@ -630,7 +721,7 @@ mod tests {
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(skill_dir.join("SKILL.md"), "Review code changes carefully").unwrap();
 
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         let skills = loader.all_skills();
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].1.name, "code-review");
@@ -640,17 +731,21 @@ mod tests {
     fn test_manifest_commands_take_precedence_over_auto_discover() {
         let tmp = TempDir::new().unwrap();
         let plugins_dir = tmp.path().join(".claude").join("plugins");
-        let plugin_dir = create_plugin_dir(&plugins_dir, "precedence", r#"{
+        let plugin_dir = create_plugin_dir(
+            &plugins_dir,
+            "precedence",
+            r#"{
             "name": "precedence",
             "commands": [{"name": "deploy", "description": "From manifest", "prompt": "manifest deploy"}]
-        }"#);
+        }"#,
+        );
 
         // commands/deploy.md should NOT override manifest
         let cmds_dir = plugin_dir.join("commands");
         fs::create_dir_all(&cmds_dir).unwrap();
         fs::write(cmds_dir.join("deploy.md"), "# Deploy\nFrom directory").unwrap();
 
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         let cmds = loader.all_commands();
         assert_eq!(cmds.len(), 1);
         // Manifest command wins — uses inline prompt
@@ -667,9 +762,13 @@ mod tests {
         // Create both formats
         fs::create_dir_all(plugin_dir.join(".claude-plugin")).unwrap();
         fs::write(plugin_dir.join("plugin.json"), r#"{"name": "simple-wins"}"#).unwrap();
-        fs::write(plugin_dir.join(".claude-plugin").join("plugin.json"), r#"{"name": "dxt-loses"}"#).unwrap();
+        fs::write(
+            plugin_dir.join(".claude-plugin").join("plugin.json"),
+            r#"{"name": "dxt-loses"}"#,
+        )
+        .unwrap();
 
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         assert_eq!(loader.count(), 1);
         // Simple format (plugin.json at root) wins
         assert_eq!(loader.plugins()[0].manifest.name, "simple-wins");
@@ -679,15 +778,19 @@ mod tests {
     fn test_all_mcp_servers() {
         let tmp = TempDir::new().unwrap();
         let plugins_dir = tmp.path().join(".claude").join("plugins");
-        create_plugin_dir(&plugins_dir, "mcp-plugin", r#"{
+        create_plugin_dir(
+            &plugins_dir,
+            "mcp-plugin",
+            r#"{
             "name": "mcp-plugin",
             "mcp": {
                 "git-mcp": {"command": "git-mcp-server", "args": ["--stdio"]},
                 "db-mcp": {"command": "db-mcp-server"}
             }
-        }"#);
+        }"#,
+        );
 
-        let loader = PluginLoader::discover(tmp.path());
+        let loader = discover_test_plugins(tmp.path());
         let servers = loader.all_mcp_servers();
         assert_eq!(servers.len(), 2);
 
@@ -701,7 +804,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("my-plugin");
         fs::create_dir_all(&source).unwrap();
-        fs::write(source.join("plugin.json"), r#"{"name": "test-install", "version": "1.0.0"}"#).unwrap();
+        fs::write(
+            source.join("plugin.json"),
+            r#"{"name": "test-install", "version": "1.0.0"}"#,
+        )
+        .unwrap();
 
         let result = PluginLoader::install_from_path(&source);
         assert!(result.is_ok());
@@ -709,7 +816,11 @@ mod tests {
 
         // Verify it was installed
         let home = dirs::home_dir().unwrap();
-        let installed = home.join(".claude").join("plugins").join("test-install").join("plugin.json");
+        let installed = home
+            .join(".claude")
+            .join("plugins")
+            .join("test-install")
+            .join("plugin.json");
         assert!(installed.exists());
 
         // Clean up
@@ -737,7 +848,10 @@ mod tests {
         fs::write(source.join("plugin.json"), r#"{"name": "../../etc/evil"}"#).unwrap();
         let result = PluginLoader::install_from_path(&source);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("invalid characters"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("invalid characters"));
     }
 
     #[test]

@@ -119,7 +119,9 @@ impl Overlay {
                     OverlayAction::Consumed
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    *scroll_offset = scroll_offset.saturating_add(1).min(lines.len().saturating_sub(1));
+                    *scroll_offset = scroll_offset
+                        .saturating_add(1)
+                        .min(lines.len().saturating_sub(1));
                     OverlayAction::Consumed
                 }
                 KeyCode::PageUp => {
@@ -127,7 +129,9 @@ impl Overlay {
                     OverlayAction::Consumed
                 }
                 KeyCode::PageDown => {
-                    *scroll_offset = scroll_offset.saturating_add(10).min(lines.len().saturating_sub(1));
+                    *scroll_offset = scroll_offset
+                        .saturating_add(10)
+                        .min(lines.len().saturating_sub(1));
                     OverlayAction::Consumed
                 }
                 KeyCode::Home => {
@@ -213,7 +217,9 @@ fn render_selection_list(
                     .bg(Color::Blue)
                     .add_modifier(Modifier::BOLD)
             } else if item.is_current {
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().add_modifier(Modifier::BOLD) // bold = bright regardless of palette
             };
@@ -304,7 +310,9 @@ fn render_info_panel(
         .cloned()
         .collect();
 
-    let paragraph = Paragraph::new(visible).block(block).wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(visible)
+        .block(block)
+        .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
 }
 
@@ -330,10 +338,7 @@ pub fn build_model_overlay(current_model: &str) -> Overlay {
     items.dedup_by(|a, b| a.value == b.value);
 
     // Pre-select the current model
-    let selected = items
-        .iter()
-        .position(|i| i.is_current)
-        .unwrap_or(0);
+    let selected = items.iter().position(|i| i.is_current).unwrap_or(0);
 
     Overlay::SelectionList {
         title: "Switch Model".to_string(),
@@ -345,21 +350,18 @@ pub fn build_model_overlay(current_model: &str) -> Overlay {
 
 /// Build a theme selection overlay.
 pub fn build_theme_overlay(current_theme: &str) -> Overlay {
-    let themes = ["dark", "light", "solarized", "monokai", "dracula", "nord"];
-    let items: Vec<SelectionItem> = themes
+    let items: Vec<SelectionItem> = crate::theme::ThemeSetting::ALL
         .iter()
-        .map(|t| SelectionItem {
-            label: (*t).to_string(),
-            description: String::new(),
-            value: (*t).to_string(),
-            is_current: *t == current_theme,
+        .map(|setting| SelectionItem {
+            label: setting.display_name().to_string(),
+            description: theme_setting_value(*setting).to_string(),
+            value: theme_setting_value(*setting).to_string(),
+            is_current: crate::repl_commands::setting_to_name(*setting)
+                .is_some_and(|theme_name| theme_name.as_str() == current_theme),
         })
         .collect();
 
-    let selected = items
-        .iter()
-        .position(|i| i.is_current)
-        .unwrap_or(0);
+    let selected = items.iter().position(|i| i.is_current).unwrap_or(0);
 
     Overlay::SelectionList {
         title: "Theme".to_string(),
@@ -372,14 +374,14 @@ pub fn build_theme_overlay(current_theme: &str) -> Overlay {
 /// Strip ANSI/VT100 escape sequences from a string.
 /// The help text is generated with ANSI codes for REPL mode; we must remove
 /// them before passing the text to ratatui which manages styling itself.
-fn strip_ansi(s: &str) -> String {
+pub(crate) fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch == '\x1b' {
             if chars.peek() == Some(&'[') {
                 chars.next(); // consume '['
-                // skip CSI parameters and intermediate bytes until final byte
+                              // skip CSI parameters and intermediate bytes until final byte
                 for c in chars.by_ref() {
                     if c.is_ascii_alphabetic() {
                         break;
@@ -392,6 +394,18 @@ fn strip_ansi(s: &str) -> String {
         }
     }
     out
+}
+
+fn theme_setting_value(setting: crate::theme::ThemeSetting) -> &'static str {
+    match setting {
+        crate::theme::ThemeSetting::Auto => "auto",
+        crate::theme::ThemeSetting::Dark => "dark",
+        crate::theme::ThemeSetting::Light => "light",
+        crate::theme::ThemeSetting::DarkDaltonized => "dark-daltonized",
+        crate::theme::ThemeSetting::LightDaltonized => "light-daltonized",
+        crate::theme::ThemeSetting::DarkAnsi => "dark-ansi",
+        crate::theme::ThemeSetting::LightAnsi => "light-ansi",
+    }
 }
 
 /// Build an info panel overlay from a title and multi-line text.
@@ -427,7 +441,9 @@ fn style_info_line(line: &str) -> Line<'static> {
     if indent_len == 0 {
         return Line::styled(
             line.to_string(),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         );
     }
 
@@ -447,14 +463,20 @@ fn style_info_line(line: &str) -> Line<'static> {
             let desc = trimmed[space_pos..].trim_start();
             return Line::from(vec![
                 Span::raw(indent),
-                Span::styled(cmd.to_string(), Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    cmd.to_string(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("  "),
                 Span::styled(desc.to_string(), Style::default()),
             ]);
         }
         return Line::from(vec![
             Span::raw(indent),
-            Span::styled(trimmed.to_string(), Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                trimmed.to_string(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
         ]);
     }
 
@@ -482,7 +504,9 @@ pub fn build_status_overlay(
 ) -> Overlay {
     let display = clawed_core::model::display_name_any(model);
     let total = input_tokens + output_tokens;
-    let label = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let label = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
     let value = Style::default(); // use terminal default to avoid ANSI color remapping
 
     let lines = vec![
@@ -529,7 +553,9 @@ pub async fn build_doctor_overlay(
     let warn = Style::default().fg(Color::Yellow);
     let err = Style::default().fg(Color::Red);
     let dim = Style::default();
-    let label = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let label = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
 
     let mut lines: Vec<Line<'static>> = vec![Line::from("")];
     let mut warnings = 0u32;
@@ -799,8 +825,18 @@ mod tests {
     #[test]
     fn selection_navigate_down() {
         let items = vec![
-            SelectionItem { label: "a".into(), description: String::new(), value: "a".into(), is_current: true },
-            SelectionItem { label: "b".into(), description: String::new(), value: "b".into(), is_current: false },
+            SelectionItem {
+                label: "a".into(),
+                description: String::new(),
+                value: "a".into(),
+                is_current: true,
+            },
+            SelectionItem {
+                label: "b".into(),
+                description: String::new(),
+                value: "b".into(),
+                is_current: false,
+            },
         ];
         let mut overlay = Overlay::SelectionList {
             title: "test".into(),
@@ -817,9 +853,12 @@ mod tests {
 
     #[test]
     fn selection_enter_returns_value() {
-        let items = vec![
-            SelectionItem { label: "sonnet".into(), description: String::new(), value: "sonnet".into(), is_current: false },
-        ];
+        let items = vec![SelectionItem {
+            label: "sonnet".into(),
+            description: String::new(),
+            value: "sonnet".into(),
+            is_current: false,
+        }];
         let mut overlay = Overlay::SelectionList {
             title: "test".into(),
             items,

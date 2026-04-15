@@ -26,6 +26,7 @@ pub use input::InputWidget;
 
 use std::sync::Arc;
 use std::time::Instant;
+use std::{io, path::PathBuf};
 
 use clawed_agent::engine::QueryEngine;
 use clawed_bus::bus::ClientHandle;
@@ -49,6 +50,8 @@ use self::messages::{Message, MessageContent};
 use self::overlay::{Overlay, OverlayAction};
 use self::permission::PendingPermission;
 use self::status::{ToolInfo, TuiStatusState};
+
+type TuiTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;
 
 /// Subdued text color for hints, separators, status indicators, and input text.
 /// Uses a true-color gray that is readable on both dark and light backgrounds,
@@ -76,6 +79,32 @@ fn restore_terminal_after_tui() {
     let _ = crossterm::terminal::disable_raw_mode();
 }
 
+fn reenter_tui_terminal(terminal: &mut TuiTerminal) -> io::Result<()> {
+    crossterm::terminal::enable_raw_mode()?;
+    crossterm::execute!(std::io::stdout(), EnableBracketedPaste)?;
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::PushKeyboardEnhancementFlags(
+            crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | crossterm::event::KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                | crossterm::event::KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
+        )
+    );
+    terminal.clear()?;
+    clawed_tools::diff_ui::set_tui_mode(true);
+    Ok(())
+}
+
+fn with_tui_suspended<T, F>(terminal: &mut TuiTerminal, action: F) -> anyhow::Result<T>
+where
+    F: FnOnce() -> T,
+{
+    restore_terminal_after_tui();
+    let result = action();
+    reenter_tui_terminal(terminal)?;
+    Ok(result)
+}
+
 struct TuiTerminalGuard;
 
 impl Drop for TuiTerminalGuard {
@@ -85,6 +114,15 @@ impl Drop for TuiTerminalGuard {
 }
 
 // -- App State ----------------------------------------------------------------
+
+#[derive(Debug)]
+enum PendingWorkflow {
+    CommitPushPr {
+        cwd: PathBuf,
+        user_message: String,
+        baseline_status: String,
+    },
+}
 
 struct App {
     messages: Vec<Message>,
@@ -126,6 +164,7 @@ struct App {
     /// Layout state from the previous frame, used to detect geometry changes
     /// that need a full terminal clear to avoid ghost cells.
     last_layout_sig: LayoutSignature,
+    pending_workflow: Option<PendingWorkflow>,
 }
 
 impl App {
@@ -154,6 +193,7 @@ impl App {
             is_generating: false,
             expecting_turn_start: false,
             last_layout_sig: LayoutSignature::default(),
+            pending_workflow: None,
         }
     }
 
@@ -202,6 +242,16 @@ impl App {
         self.expecting_turn_start = false;
         self.status.active_tools.clear();
         self.status.active_shells = 0;
+    }
+
+    fn take_queued_inputs(&mut self) -> Option<String> {
+        if self.queued_inputs.is_empty() {
+            None
+        } else {
+            let merged = self.queued_inputs.join("\n\n");
+            self.queued_inputs.clear();
+            Some(merged)
+        }
     }
 
     /// Append text to the last AssistantText message, or create one.
@@ -259,9 +309,7 @@ impl App {
                         started: Instant::now(),
                     },
                 );
-                self.push_message(MessageContent::ToolUseStart {
-                    name: tool_name,
-                });
+                self.push_message(MessageContent::ToolUseStart { name: tool_name });
             }
             AgentNotification::ToolUseComplete {
                 tool_name,
@@ -320,10 +368,11 @@ impl App {
                 // Drain queue: merge all pending inputs and submit as one message.
                 // Only drain when NOT expecting a new turn (if expecting_turn_start,
                 // the direct submit already happened at the call site).
-                if !self.expecting_turn_start && !self.queued_inputs.is_empty() {
-                    let merged = self.queued_inputs.join("\n\n");
-                    self.queued_inputs.clear();
-                    return Some(merged);
+                if !self.expecting_turn_start
+                    && self.pending_workflow.is_none()
+                    && !self.queued_inputs.is_empty()
+                {
+                    return self.take_queued_inputs();
                 }
             }
             AgentNotification::TurnStart { turn } => {
@@ -335,16 +384,16 @@ impl App {
                 // We now have a confirmed new turn — allow TextDelta through.
                 self.expecting_turn_start = false;
                 self.status.thinking = true;
-                self.push_message(MessageContent::System(format!("\u{2500}\u{2500} turn {turn} \u{2500}\u{2500}")));
+                self.push_message(MessageContent::System(format!(
+                    "\u{2500}\u{2500} turn {turn} \u{2500}\u{2500}"
+                )));
             }
             AgentNotification::AgentSpawned { agent_id, name, .. } => {
-                let label = name.unwrap_or_else(|| {
-                    agent_id.chars().take(8).collect::<String>()
-                });
+                let label = name.unwrap_or_else(|| agent_id.chars().take(8).collect::<String>());
                 self.task_plan.add_task(agent_id.clone(), label.clone());
-                self.push_message(MessageContent::System(
-                    format!("\u{1F916} Agent spawned: {label}"),
-                ));
+                self.push_message(MessageContent::System(format!(
+                    "\u{1F916} Agent spawned: {label}"
+                )));
                 self.status.active_agents.insert(agent_id, label);
             }
             AgentNotification::AgentComplete {
@@ -355,21 +404,19 @@ impl App {
                 self.task_plan.complete_task(&agent_id, is_error);
                 self.status.active_agents.remove(&agent_id);
                 let icon = if is_error { "\u{2717}" } else { "\u{2713}" };
-                self.push_message(MessageContent::System(
-                    format!("{icon} Agent finished: {result}"),
-                ));
+                self.push_message(MessageContent::System(format!(
+                    "{icon} Agent finished: {result}"
+                )));
             }
             AgentNotification::AgentTerminated { agent_id, reason } => {
                 self.task_plan.terminate_task(&agent_id);
                 self.status.active_agents.remove(&agent_id);
-                self.push_message(MessageContent::System(
-                    format!("\u{26A0} Agent terminated: {reason}"),
-                ));
+                self.push_message(MessageContent::System(format!(
+                    "\u{26A0} Agent terminated: {reason}"
+                )));
             }
             AgentNotification::SessionEnd { reason } => {
-                self.push_message(MessageContent::System(
-                    format!("Session ended: {reason}"),
-                ));
+                self.push_message(MessageContent::System(format!("Session ended: {reason}")));
             }
             AgentNotification::CompactStart => {
                 self.push_message(MessageContent::System(
@@ -377,23 +424,17 @@ impl App {
                 ));
             }
             AgentNotification::CompactComplete { .. } => {
-                self.push_message(MessageContent::System(
-                    "Context compacted".to_string(),
-                ));
+                self.push_message(MessageContent::System("Context compacted".to_string()));
             }
             AgentNotification::Error { message, .. } => {
-                self.push_message(MessageContent::System(
-                    format!("\u{2717} Error: {message}"),
-                ));
+                self.push_message(MessageContent::System(format!("\u{2717} Error: {message}")));
             }
             AgentNotification::ModelChanged {
                 model,
                 display_name,
             } => {
                 self.model = model;
-                self.push_message(MessageContent::System(
-                    format!("Model: {display_name}"),
-                ));
+                self.push_message(MessageContent::System(format!("Model: {display_name}")));
             }
             // Notifications that now produce visible output
             AgentNotification::SessionStatus {
@@ -426,9 +467,7 @@ impl App {
                 )));
             }
             AgentNotification::McpServerDisconnected { name } => {
-                self.push_message(MessageContent::System(format!(
-                    "MCP disconnected: {name}",
-                )));
+                self.push_message(MessageContent::System(format!("MCP disconnected: {name}",)));
             }
             AgentNotification::McpServerError { name, error } => {
                 self.push_message(MessageContent::System(format!(
@@ -444,9 +483,10 @@ impl App {
                     let mut lines = String::from("MCP Servers:\n");
                     for s in &servers {
                         let status = if s.connected { "✓" } else { "✗" };
-                        lines.push_str(&format!(
-                            "  {status} {} ({} tools)\n", s.name, s.tool_count,
-                        ));
+                        lines
+                            .push_str(
+                                &format!("  {status} {} ({} tools)\n", s.name, s.tool_count,),
+                            );
                     }
                     self.push_message(MessageContent::System(lines));
                 }
@@ -522,9 +562,7 @@ impl App {
             }
             // Background agent progress
             AgentNotification::AgentProgress { agent_id, text } => {
-                self.push_message(MessageContent::System(format!(
-                    "  ↳ [{agent_id}] {text}",
-                )));
+                self.push_message(MessageContent::System(format!("  ↳ [{agent_id}] {text}",)));
             }
             // Conflict warning for concurrent agents
             AgentNotification::ConflictDetected { file_path, agents } => {
@@ -534,7 +572,10 @@ impl App {
                 )));
             }
             // Swarm lifecycle events
-            AgentNotification::SwarmTeamCreated { team_name, agent_count } => {
+            AgentNotification::SwarmTeamCreated {
+                team_name,
+                agent_count,
+            } => {
                 self.push_message(MessageContent::System(format!(
                     "\u{1F41D} Swarm team '{team_name}' created ({agent_count} agents)",
                 )));
@@ -544,22 +585,38 @@ impl App {
                     "\u{1F41D} Swarm team '{team_name}' deleted",
                 )));
             }
-            AgentNotification::SwarmAgentSpawned { team_name, agent_id, model } => {
+            AgentNotification::SwarmAgentSpawned {
+                team_name,
+                agent_id,
+                model,
+            } => {
                 self.push_message(MessageContent::System(format!(
                     "  ↳ [{team_name}] Agent {agent_id} spawned ({model})",
                 )));
             }
-            AgentNotification::SwarmAgentTerminated { team_name, agent_id } => {
+            AgentNotification::SwarmAgentTerminated {
+                team_name,
+                agent_id,
+            } => {
                 self.push_message(MessageContent::System(format!(
                     "  ↳ [{team_name}] Agent {agent_id} terminated",
                 )));
             }
-            AgentNotification::SwarmAgentQuery { team_name, agent_id, prompt_preview } => {
+            AgentNotification::SwarmAgentQuery {
+                team_name,
+                agent_id,
+                prompt_preview,
+            } => {
                 self.push_message(MessageContent::System(format!(
                     "  ↳ [{team_name}/{agent_id}] ▶ {prompt_preview}",
                 )));
             }
-            AgentNotification::SwarmAgentReply { team_name, agent_id, text_preview, is_error } => {
+            AgentNotification::SwarmAgentReply {
+                team_name,
+                agent_id,
+                text_preview,
+                is_error,
+            } => {
                 let icon = if is_error { "\u{2717}" } else { "\u{2713}" };
                 self.push_message(MessageContent::System(format!(
                     "  ↳ [{team_name}/{agent_id}] {icon} {text_preview}",
@@ -570,14 +627,12 @@ impl App {
     }
 
     fn handle_slash_command(&mut self, client: &ClientHandle, cmd: &str) {
-        let skills = clawed_core::skills::get_skills(
-            &std::env::current_dir().unwrap_or_default(),
-        );
-        let parsed = match crate::commands::SlashCommand::parse(cmd, &skills) {
-            Some(p) => p,
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let skills = clawed_core::skills::get_skills(&cwd);
+        let result = match crate::commands::resolve_command_result(cmd, &cwd, &skills) {
+            Some(result) => result,
             None => return,
         };
-        let result = parsed.execute(&skills, &[]);
         match result {
             crate::commands::CommandResult::Print(text) => {
                 // /help output → scrollable info overlay
@@ -593,39 +648,47 @@ impl App {
                     // No args → open model picker overlay
                     self.overlay = Some(overlay::build_model_overlay(&self.model));
                 } else {
-                    let _ = client.send_request(clawed_bus::events::AgentRequest::SetModel {
-                        model: name,
-                    });
+                    let _ = client
+                        .send_request(clawed_bus::events::AgentRequest::SetModel { model: name });
                 }
             }
             crate::commands::CommandResult::ShowCost { .. } => {
                 let elapsed = self.status.session_start.elapsed().as_secs();
                 self.overlay = Some(overlay::build_status_overlay(
-                    &self.model, self.total_turns,
-                    self.context_tokens, self.total_output_tokens, elapsed,
+                    &self.model,
+                    self.total_turns,
+                    self.context_tokens,
+                    self.total_output_tokens,
+                    elapsed,
                 ));
             }
             crate::commands::CommandResult::Compact { instructions } => {
-                let _ = client.send_request(clawed_bus::events::AgentRequest::Compact {
-                    instructions,
-                });
+                let _ =
+                    client.send_request(clawed_bus::events::AgentRequest::Compact { instructions });
             }
             crate::commands::CommandResult::Status => {
                 let elapsed = self.status.session_start.elapsed().as_secs();
                 self.overlay = Some(overlay::build_status_overlay(
-                    &self.model, self.total_turns,
-                    self.context_tokens, self.total_output_tokens, elapsed,
+                    &self.model,
+                    self.total_turns,
+                    self.context_tokens,
+                    self.total_output_tokens,
+                    elapsed,
                 ));
             }
             crate::commands::CommandResult::Think { args } => {
-                let mode = if args.is_empty() { "on".to_string() } else { args };
+                let mode = if args.is_empty() {
+                    "on".to_string()
+                } else {
+                    args
+                };
                 let _ = client.send_request(clawed_bus::events::AgentRequest::SetThinking { mode });
             }
             crate::commands::CommandResult::BreakCache => {
                 let _ = client.send_request(clawed_bus::events::AgentRequest::BreakCache);
             }
             crate::commands::CommandResult::Mcp { .. } => {
-                let _ = client.send_request(clawed_bus::events::AgentRequest::McpListServers);
+                self.pending_command = Some(result);
             }
             crate::commands::CommandResult::Env => {
                 let cwd = std::env::current_dir().unwrap_or_default();
@@ -649,27 +712,26 @@ impl App {
                 let valid = ["low", "medium", "high", "max", "auto"];
                 if level.is_empty() {
                     self.push_message(MessageContent::System(format!(
-                        "Current effort: auto\nOptions: {}", valid.join(", "),
+                        "Current effort: auto\nOptions: {}",
+                        valid.join(", "),
                     )));
                 } else if valid.contains(&level.to_lowercase().as_str()) {
                     self.push_message(MessageContent::System(format!(
-                        "✓ Effort set to: {}", level.to_lowercase(),
+                        "✓ Effort set to: {}",
+                        level.to_lowercase(),
                     )));
                 } else {
                     self.push_message(MessageContent::System(format!(
-                        "Invalid effort: '{level}'. Options: {}", valid.join(", "),
+                        "Invalid effort: '{level}'. Options: {}",
+                        valid.join(", "),
                     )));
                 }
             }
             crate::commands::CommandResult::Tag { name } => {
                 if name.is_empty() {
-                    self.push_message(MessageContent::System(
-                        "Usage: /tag <name>".to_string(),
-                    ));
+                    self.push_message(MessageContent::System("Usage: /tag <name>".to_string()));
                 } else {
-                    self.push_message(MessageContent::System(format!(
-                        "✓ Tagged session: {name}",
-                    )));
+                    self.push_message(MessageContent::System(format!("✓ Tagged session: {name}",)));
                 }
             }
             crate::commands::CommandResult::Stickers => {
@@ -678,9 +740,7 @@ impl App {
                 ));
             }
             crate::commands::CommandResult::Vim { .. } => {
-                self.push_message(MessageContent::System(
-                    "Vim mode is not supported in TUI.".to_string(),
-                ));
+                self.pending_command = Some(result);
             }
             crate::commands::CommandResult::Exit => {
                 self.running = false;
@@ -723,16 +783,10 @@ impl App {
                 self.pending_command = Some(result);
             }
             // Commands that submit a prompt to the agent or need engine access
-            crate::commands::CommandResult::Review { ref prompt }
-            | crate::commands::CommandResult::Bug { ref prompt }
-            | crate::commands::CommandResult::Pr { ref prompt } => {
-                if prompt.is_empty() {
-                    self.push_message(MessageContent::System(
-                        "This command requires a prompt argument.".to_string(),
-                    ));
-                } else {
-                    self.pending_command = Some(result);
-                }
+            crate::commands::CommandResult::Review { .. }
+            | crate::commands::CommandResult::Bug { .. }
+            | crate::commands::CommandResult::Pr { .. } => {
+                self.pending_command = Some(result);
             }
             crate::commands::CommandResult::Commit { .. }
             | crate::commands::CommandResult::CommitPushPr { .. }
@@ -786,12 +840,12 @@ fn render(frame: &mut Frame, app: &App) {
     let input_sep_rows = u16::from(!has_permission);
 
     let constraints = [
-        Constraint::Min(1),                       // messages
-        Constraint::Length(task_plan_rows),        // task plan (0 if empty)
-        Constraint::Length(1),                     // info line (static + dynamic, always 1 row)
-        Constraint::Length(queue_rows),            // queue items (0 or n)
-        Constraint::Length(input_sep_rows),        // input separator (always 1, except perm)
-        Constraint::Length(footer_rows),           // input/permission footer
+        Constraint::Min(1),                 // messages
+        Constraint::Length(task_plan_rows), // task plan (0 if empty)
+        Constraint::Length(1),              // info line (static + dynamic, always 1 row)
+        Constraint::Length(queue_rows),     // queue items (0 or n)
+        Constraint::Length(input_sep_rows), // input separator (always 1, except perm)
+        Constraint::Length(footer_rows),    // input/permission footer
     ];
 
     let chunks = Layout::vertical(constraints).split(area);
@@ -876,9 +930,7 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
                         let line_count = text.lines().count();
                         return vec![Line::styled(
                             format!("\u{25B6} thinking ({line_count} lines, Ctrl+O to expand)"),
-                            Style::default()
-                                .fg(MUTED)
-                                .add_modifier(Modifier::ITALIC),
+                            Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
                         )];
                     }
                 }
@@ -922,7 +974,11 @@ fn render_queue_banner(frame: &mut Frame, area: Rect, queued: &[String]) {
         .map(|msg| {
             let first_line = msg.lines().next().unwrap_or(msg.as_str());
             let truncated: String = if first_line.chars().count() > max_text_width {
-                first_line.chars().take(max_text_width.saturating_sub(1)).collect::<String>() + "…"
+                first_line
+                    .chars()
+                    .take(max_text_width.saturating_sub(1))
+                    .collect::<String>()
+                    + "…"
             } else {
                 first_line.to_string()
             };
@@ -947,7 +1003,9 @@ fn render_input_separator(frame: &mut Frame, area: Rect) {
 fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &App) {
     let width = area.width as usize;
     let dim = Style::default().fg(MUTED);
-    let hi = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let hi = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
 
     // --- Left side: static info (model │ turn N │ Xk↑ Yk↓ │ Z% ctx │ 📥N) ---
     let mut info_parts: Vec<String> = Vec::new();
@@ -1081,10 +1139,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
                     spans.push(Span::styled((*line_text).to_string(), text_style));
                 }
                 if img_count > 0 {
-                    spans.push(Span::styled(
-                        format!(" 📎{img_count}"),
-                        image_style,
-                    ));
+                    spans.push(Span::styled(format!(" 📎{img_count}"), image_style));
                 }
                 Line::from(spans)
             } else {
@@ -1152,12 +1207,7 @@ fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
     // Position popup above input line, aligned to the left bar
     let popup_y = input_area.y.saturating_sub(popup_height);
     let popup_x = input_area.x;
-    let popup_area = Rect::new(
-        popup_x,
-        popup_y,
-        popup_width as u16,
-        popup_height,
-    );
+    let popup_area = Rect::new(popup_x, popup_y, popup_width as u16, popup_height);
 
     // Build lines — borderless, with left "│" margin, matching original style
     let bar_style = Style::default();
@@ -1170,7 +1220,9 @@ fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
             let desc = command_description(cmd);
             let is_selected = i == selected;
             let cmd_style = if is_selected {
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().add_modifier(Modifier::BOLD)
             };
@@ -1203,7 +1255,9 @@ fn render_welcome_lines(width: u16, model: &str) -> Vec<Line<'static>> {
     let tip = "Tip: Use /compact to free context  \u{2022}  Ctrl+V to paste images";
 
     let border_style = Style::default().fg(Color::Cyan);
-    let text_style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+    let text_style = Style::default()
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD);
     let model_style = Style::default().fg(Color::Cyan);
     let hint_style = Style::default().fg(MUTED);
     let tip_style = Style::default().fg(MUTED);
@@ -1373,9 +1427,10 @@ pub async fn run_tui(
 
                     // Key debug mode: log raw key events
                     if app.key_debug {
-                        app.push_message(MessageContent::System(
-                            format!("KEY: code={:?} mod={:?} kind={:?}", key.code, key.modifiers, key.kind),
-                        ));
+                        app.push_message(MessageContent::System(format!(
+                            "KEY: code={:?} mod={:?} kind={:?}",
+                            key.code, key.modifiers, key.kind
+                        )));
                     }
 
                     // Esc while LLM is generating always aborts immediately,
@@ -1383,11 +1438,10 @@ pub async fn run_tui(
                     if key.code == KeyCode::Esc && app.is_generating {
                         let _ = client.abort();
                         app.mark_done();
+                        app.pending_workflow = None;
                         app.queued_inputs.clear();
                         app.overlay = None;
-                        app.push_message(MessageContent::System(
-                            "[Aborted]".to_string(),
-                        ));
+                        app.push_message(MessageContent::System("[Aborted]".to_string()));
                         continue;
                     }
 
@@ -1405,7 +1459,10 @@ pub async fn run_tui(
                                     _ => String::new(),
                                 };
                                 app.overlay = None;
-                                handle_overlay_selection(&title, &value, &client, &engine, &mut app).await;
+                                handle_overlay_selection(
+                                    &title, &value, &client, &engine, &mut app,
+                                )
+                                .await;
                             }
                             OverlayAction::Consumed => {}
                         }
@@ -1429,22 +1486,28 @@ pub async fn run_tui(
                                 if let Some(perm) = app.permission.take() {
                                     let resp = perm.to_response();
                                     let label = if resp.granted {
-                                        if resp.remember { "Allowed (always)" } else { "Allowed" }
+                                        if resp.remember {
+                                            "Allowed (always)"
+                                        } else {
+                                            "Allowed"
+                                        }
                                     } else {
                                         "Denied"
                                     };
-                                    app.push_message(MessageContent::System(
-                                        format!("{label}: {}", perm.request.tool_name),
-                                    ));
+                                    app.push_message(MessageContent::System(format!(
+                                        "{label}: {}",
+                                        perm.request.tool_name
+                                    )));
                                     let _ = client.send_permission_response(resp);
                                 }
                             }
                             KeyCode::Esc => {
                                 if let Some(perm) = app.permission.take() {
                                     let resp = perm.deny_response();
-                                    app.push_message(MessageContent::System(
-                                        format!("Denied: {}", perm.request.tool_name),
-                                    ));
+                                    app.push_message(MessageContent::System(format!(
+                                        "Denied: {}",
+                                        perm.request.tool_name
+                                    )));
                                     let _ = client.send_permission_response(resp);
                                 }
                             }
@@ -1459,10 +1522,9 @@ pub async fn run_tui(
                             if app.is_generating {
                                 let _ = client.abort();
                                 app.mark_done();
+                                app.pending_workflow = None;
                                 app.queued_inputs.clear();
-                                app.push_message(MessageContent::System(
-                                    "[Aborted]".to_string(),
-                                ));
+                                app.push_message(MessageContent::System("[Aborted]".to_string()));
                             } else {
                                 app.running = false;
                             }
@@ -1472,10 +1534,9 @@ pub async fn run_tui(
                         (KeyCode::Esc, _) if app.is_generating => {
                             let _ = client.abort();
                             app.mark_done();
+                            app.pending_workflow = None;
                             app.queued_inputs.clear();
-                            app.push_message(MessageContent::System(
-                                "[Aborted]".to_string(),
-                            ));
+                            app.push_message(MessageContent::System("[Aborted]".to_string()));
                             continue;
                         }
                         (KeyCode::Char('t'), KeyModifiers::CONTROL) => {
@@ -1494,11 +1555,8 @@ pub async fn run_tui(
                         }
                         (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
                             // Toggle expand/collapse on the last collapsible tool result
-                            if let Some(msg) = app
-                                .messages
-                                .iter_mut()
-                                .rev()
-                                .find(|m| m.is_collapsible())
+                            if let Some(msg) =
+                                app.messages.iter_mut().rev().find(|m| m.is_collapsible())
                             {
                                 msg.toggle_collapsed();
                             }
@@ -1512,9 +1570,10 @@ pub async fn run_tui(
                         // Toggle key debug mode
                         (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
                             app.key_debug = !app.key_debug;
-                            app.push_message(MessageContent::System(
-                                format!("Key debug: {}", if app.key_debug { "ON" } else { "OFF" }),
-                            ));
+                            app.push_message(MessageContent::System(format!(
+                                "Key debug: {}",
+                                if app.key_debug { "ON" } else { "OFF" }
+                            )));
                             continue;
                         }
                         // Scroll back
@@ -1538,14 +1597,15 @@ pub async fn run_tui(
                             match read_clipboard_image() {
                                 Ok(attachment) => {
                                     app.pending_images.push(attachment);
-                                    app.push_message(MessageContent::System(
-                                        format!("📎 Image attached ({} total)", app.pending_images.len()),
-                                    ));
+                                    app.push_message(MessageContent::System(format!(
+                                        "📎 Image attached ({} total)",
+                                        app.pending_images.len()
+                                    )));
                                 }
                                 Err(e) => {
-                                    app.push_message(MessageContent::System(
-                                        format!("Clipboard: {e}"),
-                                    ));
+                                    app.push_message(MessageContent::System(format!(
+                                        "Clipboard: {e}"
+                                    )));
                                 }
                             }
                             continue;
@@ -1573,6 +1633,7 @@ pub async fn run_tui(
                                     if text == "/abort" {
                                         let _ = client.abort();
                                         app.mark_done();
+                                        app.pending_workflow = None;
                                         app.queued_inputs.clear();
                                         app.push_message(MessageContent::System(
                                             "[Aborted]".to_string(),
@@ -1582,8 +1643,13 @@ pub async fn run_tui(
                                         app.handle_slash_command(client_ref, &text);
                                         if let Some(cmd) = app.pending_command.take() {
                                             handle_async_command(
-                                                cmd, &engine, &client, &mut app,
-                                            ).await;
+                                                cmd,
+                                                &engine,
+                                                &client,
+                                                &mut app,
+                                                Some(&mut terminal),
+                                            )
+                                            .await;
                                         }
                                     }
                                     app.pending_images.clear();
@@ -1592,10 +1658,7 @@ pub async fn run_tui(
                                     let display = if app.pending_images.is_empty() {
                                         text.clone()
                                     } else {
-                                        format!(
-                                            "{text} [+{} image(s)]",
-                                            app.pending_images.len()
-                                        )
+                                        format!("{text} [+{} image(s)]", app.pending_images.len())
                                     };
                                     app.push_message(MessageContent::UserInput(display));
                                     let images = std::mem::take(&mut app.pending_images);
@@ -1611,10 +1674,9 @@ pub async fn run_tui(
                         input::InputAction::Abort => {
                             let _ = client.abort();
                             app.mark_done();
+                            app.pending_workflow = None;
                             app.queued_inputs.clear();
-                            app.push_message(MessageContent::System(
-                                "[Aborted]".to_string(),
-                            ));
+                            app.push_message(MessageContent::System("[Aborted]".to_string()));
                         }
                         input::InputAction::Changed | input::InputAction::None => {}
                     }
@@ -1646,11 +1708,24 @@ pub async fn run_tui(
                     _ => {}
                 }
             }
-            if let Some(merged) = app.handle_notification(notification) {
-                // Queued inputs from while LLM was generating — submit as one message
+            let turn_complete = matches!(notification, AgentNotification::TurnComplete { .. });
+            let merged = app.handle_notification(notification);
+            let workflow_submitted = if turn_complete {
+                handle_pending_workflow(&client, &mut app).await
+            } else {
+                false
+            };
+
+            if workflow_submitted {
+                continue;
+            }
+
+            if let Some(merged) = merged {
                 app.push_message(MessageContent::UserInput(merged.clone()));
                 let _ = client.submit(&merged);
                 app.mark_generating();
+            } else if turn_complete && app.pending_workflow.is_none() && !app.expecting_turn_start {
+                submit_queued_inputs(&client, &mut app);
             }
         }
 
@@ -1685,6 +1760,68 @@ pub async fn run_tui(
 
 // -- Overlay selection handler -------------------------------------------------
 
+fn submit_prepared_prompt(
+    client: &ClientHandle,
+    app: &mut App,
+    prepared: crate::repl_commands::PreparedPrompt,
+) {
+    let summary = overlay::strip_ansi(&prepared.summary);
+    if !summary.trim().is_empty() {
+        app.push_message(MessageContent::System(summary));
+    }
+    let _ = client.submit(&prepared.prompt);
+    app.mark_generating();
+}
+
+fn submit_queued_inputs(client: &ClientHandle, app: &mut App) {
+    if let Some(merged) = app.take_queued_inputs() {
+        app.push_message(MessageContent::UserInput(merged.clone()));
+        let _ = client.submit(&merged);
+        app.mark_generating();
+    }
+}
+
+fn git_status_porcelain(cwd: &std::path::Path) -> String {
+    std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(cwd)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+async fn handle_pending_workflow(client: &ClientHandle, app: &mut App) -> bool {
+    match app.pending_workflow.take() {
+        Some(PendingWorkflow::CommitPushPr {
+            cwd,
+            user_message,
+            baseline_status,
+        }) => {
+            let new_status = git_status_porcelain(&cwd);
+            if new_status == baseline_status {
+                app.push_message(MessageContent::System(
+                    "提交似乎未完成，中止工作流。".to_string(),
+                ));
+                return false;
+            }
+
+            match crate::repl_commands::prepare_pr_prompt(&cwd, &user_message) {
+                Ok(prepared) => {
+                    submit_prepared_prompt(client, app, prepared);
+                    true
+                }
+                Err(message) => {
+                    app.push_message(MessageContent::System(message));
+                    false
+                }
+            }
+        }
+        None => false,
+    }
+}
+
 /// Handle a value selected from an overlay (e.g. model picker, theme picker).
 async fn handle_overlay_selection(
     overlay_title: &str,
@@ -1704,9 +1841,12 @@ async fn handle_overlay_selection(
             });
             app.push_message(MessageContent::System(format!("✓ Model → {display}")));
         }
-        "Theme" => {
-            app.push_message(MessageContent::System(format!("✓ Theme → {value}")));
-        }
+        "Theme" => match crate::repl_commands::apply_theme(value) {
+            Ok(message) | Err(message) => {
+                app.push_message(MessageContent::System(overlay::strip_ansi(&message)));
+                app.needs_full_clear = true;
+            }
+        },
         _ => {
             app.push_message(MessageContent::System(format!("Selected: {value}")));
         }
@@ -1721,6 +1861,7 @@ async fn handle_async_command(
     engine: &Arc<QueryEngine>,
     client: &ClientHandle,
     app: &mut App,
+    terminal: Option<&mut TuiTerminal>,
 ) {
     use crate::commands::CommandResult;
     use clawed_core::message::{ContentBlock, Message as CoreMsg};
@@ -1754,7 +1895,8 @@ async fn handle_async_command(
                 app.push_message(MessageContent::System("Nothing to undo.".to_string()));
             } else {
                 app.push_message(MessageContent::System(format!(
-                    "✓ Undid 1 turn ({} messages remaining)", removed.1,
+                    "✓ Undid 1 turn ({} messages remaining)",
+                    removed.1,
                 )));
             }
         }
@@ -1777,9 +1919,7 @@ async fn handle_async_command(
                 } else {
                     prompt.clone()
                 };
-                app.push_message(MessageContent::System(format!(
-                    "Retrying: {preview}",
-                )));
+                app.push_message(MessageContent::System(format!("Retrying: {preview}",)));
                 let _ = client.submit(&prompt);
                 app.mark_generating();
             } else {
@@ -1808,7 +1948,8 @@ async fn handle_async_command(
                 match arboard::Clipboard::new().and_then(|mut c| c.set_text(&text)) {
                     Ok(()) => {
                         app.push_message(MessageContent::System(format!(
-                            "✓ Copied to clipboard ({} chars)", text.len(),
+                            "✓ Copied to clipboard ({} chars)",
+                            text.len(),
                         )));
                     }
                     Err(e) => {
@@ -1853,7 +1994,8 @@ async fn handle_async_command(
             match std::fs::write(&filename, &md) {
                 Ok(()) => {
                     app.push_message(MessageContent::System(format!(
-                        "✓ Session exported to {filename} ({} bytes)", md.len(),
+                        "✓ Session exported to {filename} ({} bytes)",
+                        md.len(),
                     )));
                 }
                 Err(e) => {
@@ -1895,9 +2037,7 @@ async fn handle_async_command(
             let filename = format!("session-export-{ts}.{ext}");
             match std::fs::write(&filename, &content) {
                 Ok(()) => {
-                    app.push_message(MessageContent::System(format!(
-                        "✓ Exported to {filename}",
-                    )));
+                    app.push_message(MessageContent::System(format!("✓ Exported to {filename}",)));
                 }
                 Err(e) => {
                     app.push_message(MessageContent::System(format!("Export failed: {e}")));
@@ -1906,7 +2046,9 @@ async fn handle_async_command(
         }
         CommandResult::Rename { name } => {
             if name.is_empty() {
-                app.push_message(MessageContent::System("Usage: /rename <new name>".to_string()));
+                app.push_message(MessageContent::System(
+                    "Usage: /rename <new name>".to_string(),
+                ));
             } else {
                 match engine.rename_session(&name).await {
                     Ok(()) => {
@@ -1929,25 +2071,30 @@ async fn handle_async_command(
                 state.write().await.model = default.clone();
                 app.model = default.clone();
                 app.push_message(MessageContent::System(format!(
-                    "✓ Switched to: {}", clawed_core::model::display_name_any(&default),
+                    "✓ Switched to: {}",
+                    clawed_core::model::display_name_any(&default),
                 )));
             } else if current == fast_model {
                 let default = clawed_core::model::resolve_model_string("sonnet");
                 state.write().await.model = default.clone();
                 app.model = default.clone();
                 app.push_message(MessageContent::System(format!(
-                    "✓ Fast mode off → {}", clawed_core::model::display_name_any(&default),
+                    "✓ Fast mode off → {}",
+                    clawed_core::model::display_name_any(&default),
                 )));
             } else {
                 state.write().await.model = fast_model.clone();
                 app.model = fast_model.clone();
                 app.push_message(MessageContent::System(format!(
-                    "✓ Fast mode on → {}", clawed_core::model::display_name_any(&fast_model),
+                    "✓ Fast mode on → {}",
+                    clawed_core::model::display_name_any(&fast_model),
                 )));
             }
         }
         CommandResult::Context => {
-            let _ = client.send_request(clawed_bus::events::AgentRequest::GetStatus);
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let info = crate::repl_commands::handle_context_str(engine, &cwd).await;
+            app.overlay = Some(overlay::build_info_overlay("Loaded Context", &info));
         }
         CommandResult::Stats => {
             let state = engine.state().read().await;
@@ -2000,53 +2147,16 @@ async fn handle_async_command(
             }
         }
         CommandResult::Session { sub } => {
-            // /session or /resume — handle session listing and resume
-            let sessions = clawed_core::session::list_sessions();
-            if sub.is_empty() || sub == "list" {
-                if sessions.is_empty() {
-                    app.push_message(MessageContent::System("No saved sessions.".to_string()));
-                } else {
-                    let mut lines = String::from("Recent sessions:\n");
-                    for (i, s) in sessions.iter().take(10).enumerate() {
-                        let title = s.custom_title.as_deref()
-                            .or(s.last_prompt.as_deref())
-                            .unwrap_or(&s.title);
-                        let age = chrono::Utc::now().signed_duration_since(s.updated_at);
-                        let age_str = format_duration(age);
-                        lines.push_str(&format!(
-                            "  {}: {} ({}, {} turns, {})\n",
-                            i + 1, title, s.id, s.turn_count, age_str,
-                        ));
+            match crate::repl_commands::handle_session_command_output(&sub, engine).await {
+                crate::repl_commands::SessionCommandOutput::Message(message) => {
+                    if message.contains('\n') {
+                        app.overlay = Some(overlay::build_info_overlay("Sessions", &message));
+                    } else {
+                        app.push_message(MessageContent::System(overlay::strip_ansi(&message)));
                     }
-                    lines.push_str("\nUse /resume <id> to restore.");
-                    app.overlay = Some(overlay::build_info_overlay("Sessions", &lines));
                 }
-            } else {
-                // /resume <id> or /session resume [id]
-                let sid = sub.trim();
-                let target_id = if sid.is_empty() || sid == "latest" {
-                    sessions.first().map(|s| s.id.clone())
-                } else {
-                    Some(sid.to_string())
-                };
-                if let Some(id) = target_id {
-                    match engine.restore_session(&id).await {
-                        Ok(title) => {
-                            app.push_message(MessageContent::System(format!(
-                                "Resumed session: {title}",
-                            )));
-                            replay_session_messages(engine, app).await;
-                        }
-                        Err(e) => {
-                            app.push_message(MessageContent::System(format!(
-                                "Resume failed: {e}",
-                            )));
-                        }
-                    }
-                } else {
-                    app.push_message(MessageContent::System(
-                        "No sessions to resume.".to_string(),
-                    ));
+                crate::repl_commands::SessionCommandOutput::Restored { .. } => {
+                    replay_session_messages(engine, app).await;
                 }
             }
         }
@@ -2104,7 +2214,8 @@ async fn handle_async_command(
                     use std::io::Write;
                     let _ = f.write_all(entry.as_bytes());
                     app.push_message(MessageContent::System(format!(
-                        "✓ Feedback saved to {}", feedback_path.display(),
+                        "✓ Feedback saved to {}",
+                        feedback_path.display(),
                     )));
                 }
                 Err(e) => {
@@ -2128,111 +2239,89 @@ async fn handle_async_command(
             app.push_message(MessageContent::System(output));
         }
         // Commands that submit a prompt to the agent
-        CommandResult::Review { prompt }
-        | CommandResult::Bug { prompt }
-        | CommandResult::Pr { prompt } => {
-            if !prompt.is_empty() {
-                let _ = client.submit(&prompt);
-                app.mark_generating();
+        CommandResult::Review { prompt } => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            match crate::repl_commands::prepare_review_submission(&prompt, &cwd) {
+                Ok(prepared) => submit_prepared_prompt(client, app, prepared),
+                Err(message) => app.push_message(MessageContent::System(message)),
+            }
+        }
+        CommandResult::Bug { prompt } => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            submit_prepared_prompt(
+                client,
+                app,
+                crate::repl_commands::prepare_bug_prompt(&cwd, &prompt),
+            );
+        }
+        CommandResult::Pr { prompt } => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            match crate::repl_commands::prepare_pr_prompt(&cwd, &prompt) {
+                Ok(prepared) => submit_prepared_prompt(client, app, prepared),
+                Err(message) => app.push_message(MessageContent::System(message)),
             }
         }
         CommandResult::Commit { message } => {
-            let prompt = if message.is_empty() {
-                "Review the staged changes and create a commit with an appropriate message.".to_string()
-            } else {
-                format!("Create a commit with message: {message}")
-            };
-            let _ = client.submit(&prompt);
-            app.mark_generating();
+            let cwd = std::env::current_dir().unwrap_or_default();
+            match crate::repl_commands::prepare_commit_prompt(&cwd, &message) {
+                Ok(prepared) => submit_prepared_prompt(client, app, prepared),
+                Err(message) => app.push_message(MessageContent::System(message)),
+            }
         }
         CommandResult::CommitPushPr { message } => {
-            let prompt = if message.is_empty() {
-                "Commit staged changes, push, and create a PR with appropriate title and description.".to_string()
-            } else {
-                format!("Commit with message '{message}', push, and create a PR.")
-            };
-            let _ = client.submit(&prompt);
-            app.mark_generating();
+            let cwd = std::env::current_dir().unwrap_or_default();
+            match crate::repl_commands::prepare_commit_push_pr(&cwd, &message) {
+                crate::repl_commands::CommitPushPrPlan::Message(message) => {
+                    app.push_message(MessageContent::System(message));
+                }
+                crate::repl_commands::CommitPushPrPlan::SubmitPrompt(prepared) => {
+                    submit_prepared_prompt(client, app, prepared);
+                }
+                crate::repl_commands::CommitPushPrPlan::CommitThenPr {
+                    commit,
+                    baseline_status,
+                    user_message,
+                } => {
+                    submit_prepared_prompt(client, app, commit);
+                    app.pending_workflow = Some(PendingWorkflow::CommitPushPr {
+                        cwd,
+                        user_message,
+                        baseline_status,
+                    });
+                }
+            }
         }
         CommandResult::Search { query } => {
-            if query.is_empty() {
-                app.push_message(MessageContent::System(
-                    "Usage: /search <query>".to_string(),
-                ));
-            } else {
-                let state = engine.state().read().await;
-                let mut results = Vec::new();
-                for (i, msg) in state.messages.iter().enumerate() {
-                    let text = match msg {
-                        CoreMsg::User(u) => u.content.iter().find_map(|b| {
-                            if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
-                        }),
-                        CoreMsg::Assistant(a) => a.content.iter().find_map(|b| {
-                            if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
-                        }),
-                        CoreMsg::System(s) => Some(s.message.as_str()),
-                    };
-                    if let Some(text) = text {
-                        if text.to_lowercase().contains(&query.to_lowercase()) {
-                            let preview: String = text.chars().take(80).collect();
-                            results.push(format!("  [{}] {}", i, preview));
-                        }
-                    }
-                }
-                drop(state);
-                if results.is_empty() {
-                    app.push_message(MessageContent::System(format!(
-                        "No results for '{query}'",
-                    )));
-                } else {
-                    let mut out = format!("Search results for '{query}':\n");
-                    for r in results.iter().take(20) {
-                        out.push_str(r);
-                        out.push('\n');
-                    }
-                    app.push_message(MessageContent::System(out));
-                }
-            }
+            let text = crate::repl_commands::handle_search_str(engine, &query).await;
+            app.overlay = Some(overlay::build_info_overlay("Search", &text));
         }
         CommandResult::History { page } => {
-            let state = engine.state().read().await;
-            let per_page = 10;
-            let start = (page.saturating_sub(1)) * per_page;
-            let total = state.messages.len();
-            let end = total.min(start + per_page);
-            let mut out = format!("History (page {page}, {total} messages total):\n");
-            for (i, msg) in state.messages.iter().enumerate().skip(start).take(end - start) {
-                let role = match msg {
-                    CoreMsg::User(_) => "user",
-                    CoreMsg::Assistant(_) => "assistant",
-                    CoreMsg::System(_) => "system",
-                };
-                out.push_str(&format!("  [{i}] {role}\n"));
-            }
-            drop(state);
-            app.push_message(MessageContent::System(out));
+            let text = crate::repl_commands::handle_history_str(engine, page).await;
+            app.overlay = Some(overlay::build_info_overlay("History", &text));
         }
         CommandResult::PrComments { pr_number } => {
-            if pr_number == 0 {
-                app.push_message(MessageContent::System(
-                    "Usage: /pr-comments <PR#>".to_string(),
-                ));
-            } else {
-                let prompt = format!("Fetch and address review comments for PR #{pr_number}.");
-                let _ = client.submit(&prompt);
-                app.mark_generating();
+            let cwd = std::env::current_dir().unwrap_or_default();
+            match crate::repl_commands::prepare_pr_comments(pr_number, &cwd) {
+                Ok(prepared) => {
+                    app.overlay = Some(overlay::build_info_overlay(
+                        "PR Comments",
+                        &prepared.display,
+                    ));
+                    let _ = client.submit(&prepared.prompt);
+                    app.mark_generating();
+                }
+                Err(message) => {
+                    if message.contains('\n') {
+                        app.overlay = Some(overlay::build_info_overlay("PR Comments", &message));
+                    } else {
+                        app.push_message(MessageContent::System(overlay::strip_ansi(&message)));
+                    }
+                }
             }
         }
         CommandResult::Branch { name } => {
-            if name.is_empty() {
-                app.push_message(MessageContent::System(
-                    "Usage: /branch <name>".to_string(),
-                ));
-            } else {
-                app.push_message(MessageContent::System(
-                    "Branch conversations are not yet supported in TUI. Use --session-id to create separate sessions.".to_string(),
-                ));
-            }
+            let text = crate::repl_commands::handle_branch_str(engine, &name).await;
+            app.overlay = Some(overlay::build_info_overlay("Branch", &text));
         }
         CommandResult::AddDir { path } => {
             if path.is_empty() {
@@ -2240,10 +2329,15 @@ async fn handle_async_command(
             } else {
                 let cwd = std::env::current_dir().unwrap_or_default();
                 let dir_path = std::path::Path::new(&path);
-                let dir_path = if dir_path.is_relative() { cwd.join(dir_path) } else { dir_path.to_path_buf() };
+                let dir_path = if dir_path.is_relative() {
+                    cwd.join(dir_path)
+                } else {
+                    dir_path.to_path_buf()
+                };
                 if !dir_path.is_dir() {
                     app.push_message(MessageContent::System(format!(
-                        "Directory not found: {}", dir_path.display(),
+                        "Directory not found: {}",
+                        dir_path.display(),
                     )));
                 } else {
                     let mut ctx = format!("<context source=\"{}\">\n", dir_path.display());
@@ -2254,7 +2348,10 @@ async fn handle_async_command(
                             if p.is_file() {
                                 if let Ok(content) = std::fs::read_to_string(&p) {
                                     let name = p.file_name().unwrap_or_default().to_string_lossy();
-                                    ctx.push_str(&format!("--- {name} ---\n{}\n\n", content.trim()));
+                                    ctx.push_str(&format!(
+                                        "--- {name} ---\n{}\n\n",
+                                        content.trim()
+                                    ));
                                     file_count += 1;
                                 }
                             }
@@ -2263,39 +2360,35 @@ async fn handle_async_command(
                     ctx.push_str("</context>");
                     engine.update_system_prompt_context(&ctx).await;
                     app.push_message(MessageContent::System(format!(
-                        "✓ Added {file_count} file(s) from {}", dir_path.display(),
+                        "✓ Added {file_count} file(s) from {}",
+                        dir_path.display(),
                     )));
                 }
             }
         }
         CommandResult::Summary => {
-            let prompt = "Provide a brief summary of our conversation so far.";
-            let _ = client.submit(prompt);
-            app.mark_generating();
+            submit_prepared_prompt(client, app, crate::repl_commands::prepare_summary_prompt());
         }
         // Commands that are not meaningfully different in TUI
         CommandResult::Permissions { mode } => {
             if mode.is_empty() {
-                app.push_message(MessageContent::System(
-                    "Permission mode: default\n  Set with: /permissions <default|bypass|acceptEdits|plan>".to_string(),
-                ));
-            } else {
+                let state = engine.state().read().await;
                 app.push_message(MessageContent::System(format!(
-                    "Permission mode set to: {mode}",
+                    "Permission mode: {:?}\n  Set with: /permissions <default|bypass|acceptEdits|plan>",
+                    state.permission_mode
+                )));
+            } else {
+                let new_mode = crate::config::parse_permission_mode(&mode);
+                engine.state().write().await.permission_mode = new_mode;
+                app.push_message(MessageContent::System(format!(
+                    "Permission mode: {:?}",
+                    new_mode
                 )));
             }
         }
         CommandResult::Config => {
             let cwd = std::env::current_dir().unwrap_or_default();
-            let project_settings = cwd.join(".claude").join("settings.json");
-            let exists = project_settings.exists();
-            let info = format!(
-                "Config:\n  Project settings: {} ({})\n  Model: {}\n  CWD: {}",
-                project_settings.display(),
-                if exists { "found" } else { "not found" },
-                app.model,
-                cwd.display(),
-            );
+            let info = crate::repl_commands::handle_config_command_str(&cwd);
             app.overlay = Some(overlay::build_info_overlay("Configuration", &info));
         }
         CommandResult::Doctor => {
@@ -2304,38 +2397,120 @@ async fn handle_async_command(
             app.overlay = Some(doctor_overlay);
         }
         CommandResult::Init => {
-            let prompt = "Create a CLAUDE.md file for this project with build commands, architecture, and conventions.";
-            let _ = client.submit(prompt);
-            app.mark_generating();
+            let cwd = std::env::current_dir().unwrap_or_default();
+            submit_prepared_prompt(client, app, crate::repl_commands::prepare_init_prompt(&cwd));
         }
         CommandResult::Plan { args } => {
-            if args.is_empty() {
-                app.push_message(MessageContent::System(
-                    "Usage: /plan <description>  — Generate an implementation plan".to_string(),
-                ));
-            } else {
-                let prompt = format!("Create a detailed implementation plan for: {args}");
-                let _ = client.submit(&prompt);
-                app.mark_generating();
+            let cwd = std::env::current_dir().unwrap_or_default();
+            match args.trim() {
+                "" => {
+                    let message = crate::repl_commands::toggle_plan_mode(engine).await;
+                    app.push_message(MessageContent::System(overlay::strip_ansi(&message)));
+                }
+                "show" | "view" => match crate::repl_commands::show_plan_text(&cwd) {
+                    Ok(Some(text)) => {
+                        app.overlay = Some(overlay::build_info_overlay("Plan", &text));
+                    }
+                    Ok(None) => {
+                        app.push_message(MessageContent::System(
+                            "No plan file found. Use /plan open to create one.".to_string(),
+                        ));
+                    }
+                    Err(message) => {
+                        app.push_message(MessageContent::System(overlay::strip_ansi(&message)));
+                    }
+                },
+                "open" => {
+                    if let Some(terminal) = terminal {
+                        match with_tui_suspended(terminal, || {
+                            crate::repl_commands::open_plan_in_editor(&cwd)
+                        }) {
+                            Ok(Ok(message)) => {
+                                app.push_message(MessageContent::System(overlay::strip_ansi(
+                                    &message,
+                                )));
+                            }
+                            Ok(Err(message)) => {
+                                app.push_message(MessageContent::System(overlay::strip_ansi(
+                                    &message,
+                                )));
+                            }
+                            Err(error) => {
+                                app.push_message(MessageContent::System(format!(
+                                    "Plan editing failed: {error}"
+                                )));
+                            }
+                        }
+                        app.needs_full_clear = true;
+                    } else {
+                        app.push_message(MessageContent::System(
+                            "Plan editing requires an interactive terminal.".to_string(),
+                        ));
+                    }
+                }
+                description => {
+                    match crate::repl_commands::save_plan_description(engine, &cwd, description)
+                        .await
+                    {
+                        Ok(message) => {
+                            app.push_message(MessageContent::System(overlay::strip_ansi(&message)));
+                        }
+                        Err(message) => {
+                            app.push_message(MessageContent::System(overlay::strip_ansi(&message)));
+                        }
+                    }
+                }
             }
         }
-        CommandResult::Login | CommandResult::Logout => {
-            app.push_message(MessageContent::System(
-                "Auth commands require a terminal restart. Use --api-key or set ANTHROPIC_API_KEY.".to_string(),
-            ));
+        CommandResult::Login => {
+            if let Some(terminal) = terminal {
+                let result = with_tui_suspended(terminal, || {
+                    match crate::repl_commands::prompt_for_api_key_interactive() {
+                        Ok(Some(key)) => crate::repl_commands::save_api_key(&key),
+                        Ok(None) => Ok("No key provided. Cancelled.".to_string()),
+                        Err(message) => Err(message),
+                    }
+                });
+                match result {
+                    Ok(Ok(message)) => {
+                        app.push_message(MessageContent::System(overlay::strip_ansi(&message)));
+                    }
+                    Ok(Err(message)) => {
+                        app.push_message(MessageContent::System(overlay::strip_ansi(&message)));
+                    }
+                    Err(error) => {
+                        app.push_message(MessageContent::System(format!("Login failed: {error}")));
+                    }
+                }
+                app.needs_full_clear = true;
+            } else {
+                app.push_message(MessageContent::System(
+                    "Login requires an interactive terminal.".to_string(),
+                ));
+            }
         }
+        CommandResult::Logout => match crate::repl_commands::handle_logout_str() {
+            Ok(message) | Err(message) => {
+                app.push_message(MessageContent::System(overlay::strip_ansi(&message)));
+            }
+        },
         CommandResult::ReloadContext => {
-            app.push_message(MessageContent::System(
-                "Context reloaded on next submission.".to_string(),
-            ));
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let info = crate::repl_commands::handle_reload_context_str(engine, &cwd).await;
+            app.overlay = Some(overlay::build_info_overlay("Reload Context", &info));
         }
         CommandResult::Theme { name } => {
             if name.is_empty() {
-                app.overlay = Some(overlay::build_theme_overlay("dark"));
+                app.overlay = Some(overlay::build_theme_overlay(
+                    crate::theme::current_theme_name().as_str(),
+                ));
             } else {
-                app.push_message(MessageContent::System(format!(
-                    "✓ Theme set to: {name}",
-                )));
+                match crate::repl_commands::apply_theme(&name) {
+                    Ok(message) | Err(message) => {
+                        app.push_message(MessageContent::System(overlay::strip_ansi(&message)));
+                        app.needs_full_clear = true;
+                    }
+                }
             }
         }
         CommandResult::Agents { sub } => {
@@ -2343,11 +2518,63 @@ async fn handle_async_command(
             let text = format_agents_tui(&sub, &cwd, &app.status.active_agents);
             app.overlay = Some(overlay::build_info_overlay("Agents", &text));
         }
-        CommandResult::Plugin { .. }
-        | CommandResult::RunPluginCommand { .. } | CommandResult::RunSkill { .. } => {
-            app.push_message(MessageContent::System(
-                "This command is not yet available in TUI mode.".to_string(),
-            ));
+        CommandResult::Mcp { sub } => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let text = crate::repl_commands::handle_mcp_command_str(&sub, &cwd);
+            app.overlay = Some(overlay::build_info_overlay("MCP", &text));
+        }
+        CommandResult::Plugin { sub } => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let text = crate::repl_commands::handle_plugin_command_str(&sub, &cwd);
+            app.overlay = Some(overlay::build_info_overlay("Plugins", &text));
+        }
+        CommandResult::RunPluginCommand { name, prompt } => {
+            app.push_message(MessageContent::System(format!(
+                "Running plugin command: /{name}",
+            )));
+            let _ = client.submit(&prompt);
+            app.mark_generating();
+        }
+        CommandResult::RunSkill { name, prompt } => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let skills = clawed_core::skills::get_skills(&cwd);
+            if prompt.trim().is_empty() {
+                app.push_message(MessageContent::System(format!("Usage: /{name} <prompt>",)));
+            } else {
+                match crate::repl_commands::find_skill(&skills, &name) {
+                    Ok(skill) => {
+                        app.push_message(MessageContent::System(format!("Running skill: {name}",)));
+                        if !skill.allowed_tools.is_empty() {
+                            app.push_message(MessageContent::System(format!(
+                                "Skill restricts tools to: {}",
+                                skill.allowed_tools.join(", "),
+                            )));
+                        }
+                        let augmented = crate::repl_commands::build_skill_prompt(skill, &prompt);
+                        let _ = client.submit(&augmented);
+                        app.mark_generating();
+                    }
+                    Err(message) => {
+                        app.push_message(MessageContent::System(message));
+                    }
+                }
+            }
+        }
+        CommandResult::Vim { toggle } => {
+            let enabled = match toggle.to_lowercase().as_str() {
+                "" | "on" | "true" | "1" => true,
+                "off" | "false" | "0" => false,
+                _ => {
+                    app.push_message(MessageContent::System("Usage: /vim [on|off]".to_string()));
+                    return;
+                }
+            };
+            let message = if enabled {
+                "Vim mode enabled (note: basic vim keybindings are a work in progress)"
+            } else {
+                "Vim mode disabled — normal editing mode active"
+            };
+            app.push_message(MessageContent::System(message.to_string()));
         }
         // These are handled synchronously in handle_slash_command
         CommandResult::Print(_)
@@ -2358,12 +2585,10 @@ async fn handle_async_command(
         | CommandResult::Status
         | CommandResult::Think { .. }
         | CommandResult::BreakCache
-        | CommandResult::Mcp { .. }
         | CommandResult::Env
         | CommandResult::Effort { .. }
         | CommandResult::Tag { .. }
         | CommandResult::Stickers
-        | CommandResult::Vim { .. }
         | CommandResult::Exit => {
             // Should not reach here — these are handled in handle_slash_command
         }
@@ -2492,7 +2717,7 @@ fn format_agents_tui(
                 }
             }
         }
-        "help" | _ => {
+        _ => {
             "Agent Definitions\n\n  /agents               List all agent definitions\n  /agents list           Same as above\n  /agents status         Show live running agents\n  /agents info <name>    Show details of an agent\n  /agents create <name>  Create a new agent scaffold\n  /agents delete <name>  Delete an agent definition\n\nAgents are .md files in .claude/agents/ with YAML frontmatter.\nThey define sub-agents with custom tools, models, and prompts.".to_string()
         }
     }
@@ -2508,11 +2733,9 @@ fn read_clipboard_image() -> anyhow::Result<ImageAttachment> {
     use anyhow::Context as _;
     use base64::Engine as _;
 
-    let mut clip = arboard::Clipboard::new()
-        .context("Cannot open clipboard")?;
+    let mut clip = arboard::Clipboard::new().context("Cannot open clipboard")?;
 
-    let img = clip.get_image()
-        .context("No image in clipboard")?;
+    let img = clip.get_image().context("No image in clipboard")?;
 
     // Encode RGBA pixels as PNG
     let mut png_bytes: Vec<u8> = Vec::new();
@@ -2573,9 +2796,7 @@ async fn replay_session_messages(engine: &Arc<QueryEngine>, app: &mut App) {
                             app.push_message(MessageContent::ThinkingText(thinking.clone()));
                         }
                         ContentBlock::ToolUse { name, .. } => {
-                            app.push_message(MessageContent::ToolUseStart {
-                                name: name.clone(),
-                            });
+                            app.push_message(MessageContent::ToolUseStart { name: name.clone() });
                         }
                         _ => {}
                     }
@@ -2594,25 +2815,13 @@ async fn replay_session_messages(engine: &Arc<QueryEngine>, app: &mut App) {
     )));
 }
 
-/// Format a chrono Duration as a human-readable string.
-fn format_duration(dur: chrono::Duration) -> String {
-    let secs = dur.num_seconds();
-    if secs < 60 {
-        format!("{secs}s ago")
-    } else if secs < 3600 {
-        format!("{}m ago", secs / 60)
-    } else if secs < 86400 {
-        format!("{}h ago", secs / 3600)
-    } else {
-        format!("{}d ago", secs / 86400)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clawed_bus::events::{PermissionRequest, RiskLevel};
+    use clawed_bus::bus::EventBus;
+    use clawed_bus::events::{AgentRequest, PermissionRequest, RiskLevel};
     use serde_json::json;
+    use tempfile::TempDir;
 
     #[test]
     fn welcome_lines_are_nonempty() {
@@ -2700,7 +2909,8 @@ mod tests {
         let mut app = App::new("test".to_string());
         let base = app.layout_signature();
 
-        app.task_plan.add_task("agent-1".to_string(), "Task".to_string());
+        app.task_plan
+            .add_task("agent-1".to_string(), "Task".to_string());
         assert_ne!(base, app.layout_signature());
 
         app.task_plan = taskplan::TaskPlan::new();
@@ -2712,5 +2922,39 @@ mod tests {
             description: "Bash: command=ls".to_string(),
         }));
         assert_ne!(base, app.layout_signature());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn run_plugin_command_submits_prompt_in_tui() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (mut bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::RunPluginCommand {
+                name: "greet".to_string(),
+                prompt: "Greet the user".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        assert!(app.is_generating);
+        match bus.recv_request().await {
+            Some(AgentRequest::Submit { text, images }) => {
+                assert_eq!(text, "Greet the user");
+                assert!(images.is_empty());
+            }
+            _ => panic!("expected submit request"),
+        }
     }
 }

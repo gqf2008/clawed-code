@@ -8,53 +8,75 @@
 //! - `review` — /review (code review on git changes / PRs)
 //! - `prompt` — /init, /commit, /pr, /bug (AI-driven)
 //! - `skill` — skill runner
+use std::fmt::Write as _;
 
-mod memory;
-mod session;
+mod agents;
+mod branch;
 mod config;
 mod doctor;
-mod review;
-mod prompt;
-mod skill;
 mod mcp;
-mod pr_comments;
-mod branch;
-mod agents;
-mod theme;
+mod memory;
 mod plan;
+mod pr_comments;
+mod prompt;
+mod review;
+mod session;
+mod skill;
+mod theme;
 
 // Re-export all handlers so callers can `use crate::repl_commands::*`
-pub(crate) use memory::{handle_memory_command, handle_memory_command_str};
-pub(crate) use session::{handle_session_command, handle_undo, handle_export, handle_search, handle_history};
-pub(crate) use config::{handle_config_command, handle_context, handle_login, handle_logout, handle_reload_context};
-pub(crate) use doctor::handle_doctor;
-pub(crate) use review::handle_review;
-pub(crate) use prompt::{handle_init, handle_commit, handle_pr, handle_bug, handle_commit_push_pr, handle_summary};
-pub(crate) use skill::run_skill;
-pub(crate) use mcp::handle_mcp_command;
-pub(crate) use pr_comments::handle_pr_comments;
-pub(crate) use branch::handle_branch;
 pub(crate) use agents::handle_agents_command;
-pub(crate) use theme::handle_theme_command;
-pub(crate) use plan::handle_plan_command;
+pub(crate) use branch::{handle_branch, handle_branch_str};
+pub(crate) use config::{
+    handle_config_command, handle_config_command_str, handle_context, handle_context_str,
+    handle_login, handle_logout, handle_logout_str, handle_reload_context,
+    handle_reload_context_str, prompt_for_api_key_interactive, save_api_key,
+};
+pub(crate) use doctor::handle_doctor;
+pub(crate) use mcp::{handle_mcp_command, handle_mcp_command_str};
+pub(crate) use memory::{handle_memory_command, handle_memory_command_str};
+pub(crate) use plan::{
+    handle_plan_command, open_plan_in_editor, save_plan_description, show_plan_text,
+    toggle_plan_mode,
+};
+pub(crate) use pr_comments::{handle_pr_comments, prepare_pr_comments};
+pub(crate) use prompt::{
+    handle_bug, handle_commit, handle_commit_push_pr, handle_init, handle_pr, handle_summary,
+    prepare_bug_prompt, prepare_commit_prompt, prepare_commit_push_pr, prepare_init_prompt,
+    prepare_pr_prompt, prepare_summary_prompt, CommitPushPrPlan, PreparedPrompt,
+};
+pub(crate) use review::{handle_review, prepare_review_submission};
+pub(crate) use session::{
+    handle_export, handle_history, handle_history_str, handle_search, handle_search_str,
+    handle_session_command, handle_session_command_output, handle_undo, SessionCommandOutput,
+};
+pub(crate) use skill::{build_skill_prompt, find_skill, run_skill};
+pub(crate) use theme::{apply_theme, handle_theme_command, setting_to_name};
 
 use clawed_agent::engine::QueryEngine;
 use clawed_agent::plugin::PluginLoader;
 
 /// Show loaded plugins and their status.
 pub(crate) fn handle_plugin_command(sub: &str, cwd: &std::path::Path) {
+    println!("{}", handle_plugin_command_str(sub, cwd));
+}
+
+/// Show loaded plugins and their status as a formatted string.
+pub(crate) fn handle_plugin_command_str(sub: &str, cwd: &std::path::Path) -> String {
     let loader = PluginLoader::discover(cwd);
 
     match sub.split_whitespace().next().unwrap_or("list") {
         "list" | "" => {
             if loader.count() == 0 {
-                println!("No plugins found.");
-                println!("\x1b[2mAdd plugins to .claude/plugins/ or ~/.claude/plugins/\x1b[0m");
-                return;
+                return "No plugins found.\n\x1b[2mAdd plugins to .claude/plugins/ or ~/.claude/plugins/\x1b[0m"
+                    .to_string();
             }
 
-            println!("\x1b[1mLoaded Plugins\x1b[0m ({} total, {} enabled)\n",
-                loader.count(), loader.enabled_count());
+            let mut out = format!(
+                "\x1b[1mLoaded Plugins\x1b[0m ({} total, {} enabled)\n",
+                loader.count(),
+                loader.enabled_count()
+            );
 
             for plugin in loader.plugins() {
                 let status = if plugin.manifest.enabled {
@@ -62,77 +84,90 @@ pub(crate) fn handle_plugin_command(sub: &str, cwd: &std::path::Path) {
                 } else {
                     "\x1b[31m○\x1b[0m"
                 };
-                println!("  {} \x1b[1m{}\x1b[0m v{} \x1b[2m({})\x1b[0m",
-                    status,
-                    plugin.manifest.name,
-                    plugin.manifest.version,
-                    plugin.source,
+                let _ = writeln!(
+                    out,
+                    "  {} \x1b[1m{}\x1b[0m v{} \x1b[2m({})\x1b[0m",
+                    status, plugin.manifest.name, plugin.manifest.version, plugin.source
                 );
                 if !plugin.manifest.description.is_empty() {
-                    println!("    {}", plugin.manifest.description);
+                    let _ = writeln!(out, "    {}", plugin.manifest.description);
                 }
                 if !plugin.manifest.commands.is_empty() {
-                    let cmd_names: Vec<&str> = plugin.manifest.commands.iter()
-                        .map(|c| c.name.as_str())
+                    let cmd_names: Vec<&str> = plugin
+                        .manifest
+                        .commands
+                        .iter()
+                        .map(|command| command.name.as_str())
                         .collect();
-                    println!("    Commands: /{}", cmd_names.join(", /"));
+                    let _ = writeln!(out, "    Commands: /{}", cmd_names.join(", /"));
                 }
                 if !plugin.manifest.skills.is_empty() {
-                    let skill_names: Vec<&str> = plugin.manifest.skills.iter()
-                        .map(|s| s.name.as_str())
+                    let skill_names: Vec<&str> = plugin
+                        .manifest
+                        .skills
+                        .iter()
+                        .map(|skill| skill.name.as_str())
                         .collect();
-                    println!("    Skills: {}", skill_names.join(", "));
+                    let _ = writeln!(out, "    Skills: {}", skill_names.join(", "));
                 }
                 if !plugin.manifest.hooks.is_empty() {
-                    println!("    Hooks: {}", plugin.manifest.hooks.len());
+                    let _ = writeln!(out, "    Hooks: {}", plugin.manifest.hooks.len());
                 }
             }
+
+            out
         }
         "info" => {
             let name = sub.split_whitespace().nth(1);
             match name {
-                Some(name) => {
-                    match loader.get(name) {
-                        Some(plugin) => {
-                            println!("\x1b[1m{}\x1b[0m v{}", plugin.manifest.name, plugin.manifest.version);
-                            println!("Source:  {}", plugin.source);
-                            println!("Path:    {}", plugin.dir.display());
-                            println!("Enabled: {}", plugin.manifest.enabled);
-                            if !plugin.manifest.description.is_empty() {
-                                println!("Desc:    {}", plugin.manifest.description);
+                Some(name) => match loader.get(name) {
+                    Some(plugin) => {
+                        let mut out = format!(
+                            "\x1b[1m{}\x1b[0m v{}\nSource:  {}\nPath:    {}\nEnabled: {}",
+                            plugin.manifest.name,
+                            plugin.manifest.version,
+                            plugin.source,
+                            plugin.dir.display(),
+                            plugin.manifest.enabled
+                        );
+                        if !plugin.manifest.description.is_empty() {
+                            let _ = write!(out, "\nDesc:    {}", plugin.manifest.description);
+                        }
+                        for command in &plugin.manifest.commands {
+                            let _ = write!(out, "\n\n  Command: /{}", command.name);
+                            if !command.description.is_empty() {
+                                let _ = write!(out, "\n  Desc:    {}", command.description);
                             }
-                            for cmd in &plugin.manifest.commands {
-                                println!("\n  Command: /{}", cmd.name);
-                                if !cmd.description.is_empty() {
-                                    println!("  Desc:    {}", cmd.description);
-                                }
-                                if let Some(ref file) = cmd.prompt_file {
-                                    println!("  Prompt:  {}", file);
-                                }
-                            }
-                            for skill in &plugin.manifest.skills {
-                                println!("\n  Skill: {}", skill.name);
-                                println!("  File:  {}", skill.prompt_file);
+                            if let Some(ref file) = command.prompt_file {
+                                let _ = write!(out, "\n  Prompt:  {file}");
                             }
                         }
-                        None => println!("Plugin '{}' not found.", name),
+                        for skill in &plugin.manifest.skills {
+                            let _ = write!(
+                                out,
+                                "\n\n  Skill: {}\n  File:  {}",
+                                skill.name, skill.prompt_file
+                            );
+                        }
+                        out
                     }
-                }
-                None => println!("Usage: /plugin info <name>"),
+                    None => format!("Plugin '{}' not found.", name),
+                },
+                None => "Usage: /plugin info <name>".to_string(),
             }
         }
         "enable" => {
             let name = sub.split_whitespace().nth(1);
             match name {
-                Some(name) => println!("Enable not yet persistent. Plugin '{}' noted.", name),
-                None => println!("Usage: /plugin enable <name>"),
+                Some(name) => format!("Enable not yet persistent. Plugin '{}' noted.", name),
+                None => "Usage: /plugin enable <name>".to_string(),
             }
         }
         "disable" => {
             let name = sub.split_whitespace().nth(1);
             match name {
-                Some(name) => println!("Disable not yet persistent. Plugin '{}' noted.", name),
-                None => println!("Usage: /plugin disable <name>"),
+                Some(name) => format!("Disable not yet persistent. Plugin '{}' noted.", name),
+                None => "Usage: /plugin disable <name>".to_string(),
             }
         }
         "install" => {
@@ -140,32 +175,35 @@ pub(crate) fn handle_plugin_command(sub: &str, cwd: &std::path::Path) {
             match path_str {
                 Some(path_str) => {
                     let source = std::path::Path::new(path_str);
-                    // Resolve relative paths against cwd
                     let source = if source.is_relative() {
                         cwd.join(source)
                     } else {
                         source.to_path_buf()
                     };
                     match PluginLoader::install_from_path(&source) {
-                        Ok(name) => {
-                            println!("\x1b[32m✓\x1b[0m Plugin '\x1b[1m{}\x1b[0m' installed successfully.", name);
-                            println!("\x1b[2mUse /plugin list to verify, /plugin reload to activate.\x1b[0m");
-                        }
-                        Err(e) => {
-                            eprintln!("\x1b[31m✗ Install failed: {}\x1b[0m", e);
-                        }
+                        Ok(name) => format!(
+                            "\x1b[32m✓\x1b[0m Plugin '\x1b[1m{}\x1b[0m' installed successfully.\n\x1b[2mUse /plugin list to verify, /plugin reload to activate.\x1b[0m",
+                            name
+                        ),
+                        Err(error) => format!("\x1b[31m✗ Install failed: {}\x1b[0m", error),
                     }
                 }
-                None => println!("Usage: /plugin install <path-to-plugin-dir>"),
+                None => "Usage: /plugin install <path-to-plugin-dir>".to_string(),
             }
         }
         "reload" => {
             let loader = PluginLoader::discover(cwd);
-            println!("\x1b[32m✓\x1b[0m Reloaded {} plugin(s) ({} enabled).",
-                loader.count(), loader.enabled_count());
+            format!(
+                "\x1b[32m✓\x1b[0m Reloaded {} plugin(s) ({} enabled).",
+                loader.count(),
+                loader.enabled_count()
+            )
         }
         other => {
-            println!("Unknown subcommand: {}. Use: /plugin [list|info|enable|disable|install|reload] <name>", other);
+            format!(
+                "Unknown subcommand: {}. Use: /plugin [list|info|enable|disable|install|reload] <name>",
+                other
+            )
         }
     }
 }
@@ -239,21 +277,33 @@ pub(crate) fn handle_diff_command(cwd: &std::path::Path) {
 pub(crate) async fn handle_status_command(engine: &QueryEngine, cwd: &std::path::Path) {
     let s = engine.state().read().await;
     println!("Session:  {}", &engine.session_id()[..8]);
-    println!("Model:    {} ({})", clawed_core::model::display_name_any(&s.model), s.model);
+    println!(
+        "Model:    {} ({})",
+        clawed_core::model::display_name_any(&s.model),
+        s.model
+    );
     println!("Turns:    {}", s.turn_count);
     println!("Messages: {}", s.messages.len());
-    println!("Tokens:   {}↑ {}↓", format_tokens(s.total_input_tokens), format_tokens(s.total_output_tokens));
+    println!(
+        "Tokens:   {}↑ {}↓",
+        format_tokens(s.total_input_tokens),
+        format_tokens(s.total_output_tokens)
+    );
 
     // Cache statistics
     if s.total_cache_read_tokens > 0 || s.total_cache_creation_tokens > 0 {
         let cache_total = s.total_cache_read_tokens + s.total_cache_creation_tokens;
         let hit_rate = if cache_total > 0 {
             s.total_cache_read_tokens as f64 / cache_total as f64 * 100.0
-        } else { 0.0 };
-        println!("Cache:    {} read, {} write ({:.0}% hit rate)",
+        } else {
+            0.0
+        };
+        println!(
+            "Cache:    {} read, {} write ({:.0}% hit rate)",
             format_tokens(s.total_cache_read_tokens),
             format_tokens(s.total_cache_creation_tokens),
-            hit_rate);
+            hit_rate
+        );
     }
 
     // Cost
@@ -264,7 +314,9 @@ pub(crate) async fn handle_status_command(engine: &QueryEngine, cwd: &std::path:
 
     // Errors
     if s.total_errors > 0 {
-        let breakdown: Vec<String> = s.error_counts.iter()
+        let breakdown: Vec<String> = s
+            .error_counts
+            .iter()
             .map(|(k, v)| format!("{}:{}", k, v))
             .collect();
         println!("Errors:   {} ({})", s.total_errors, breakdown.join(", "));
@@ -305,13 +357,23 @@ pub(crate) async fn handle_status_command(engine: &QueryEngine, cwd: &std::path:
         let plugins = loader.plugins();
         if !plugins.is_empty() {
             let cmd_count: usize = plugins.iter().map(|p| p.manifest.commands.len()).sum();
-            println!("Plugins:  {} loaded ({} commands)", plugins.len(), cmd_count);
+            println!(
+                "Plugins:  {} loaded ({} commands)",
+                plugins.len(),
+                cmd_count
+            );
         }
     }
 
     // Context usage
     if let Some(pct) = engine.context_usage_percent().await {
-        let color = if pct >= 90 { "\x1b[31m" } else if pct >= 80 { "\x1b[33m" } else { "" };
+        let color = if pct >= 90 {
+            "\x1b[31m"
+        } else if pct >= 80 {
+            "\x1b[33m"
+        } else {
+            ""
+        };
         let reset = if !color.is_empty() { "\x1b[0m" } else { "" };
         println!("Context:  {}{pct}%{} of window used", color, reset);
     }

@@ -1,117 +1,58 @@
 //! /session, /undo, /export command handlers.
 
+use std::fmt::Write as _;
+
 use crate::theme;
 use clawed_agent::engine::QueryEngine;
 
+pub(crate) enum SessionCommandOutput {
+    Message(String),
+    Restored { title: String, message_count: usize },
+}
+
 /// Handle /session subcommands.
 pub(crate) async fn handle_session_command(sub: &str, engine: &QueryEngine) {
+    match handle_session_command_output(sub, engine).await {
+        SessionCommandOutput::Message(message) => println!("{}", message),
+        SessionCommandOutput::Restored {
+            title,
+            message_count,
+        } => {
+            println!("{}✓ Resumed session: {}\x1b[0m", theme::c_ok(), title);
+            println!("  ({} messages restored)", message_count);
+        }
+    }
+}
+
+pub(crate) async fn handle_session_command_output(
+    sub: &str,
+    engine: &QueryEngine,
+) -> SessionCommandOutput {
     let parts: Vec<&str> = sub.splitn(2, ' ').collect();
     match parts.first().copied().unwrap_or("") {
-        "" | "list" => {
-            let sessions = clawed_core::session::list_sessions();
-            if sessions.is_empty() {
-                println!("No saved sessions.");
-            } else {
-                println!("Saved sessions:");
-                for s in &sessions {
-                    let age = clawed_core::session::format_age(&s.updated_at);
-                    println!(
-                        "  \x1b[36m{:.8}\x1b[0m  {:<50} ({} msgs, {} turns, {})",
-                        s.id, s.title, s.message_count, s.turn_count, age,
-                    );
-                }
-            }
-        }
-        "save" => {
-            match engine.save_session().await {
-                Ok(()) => {
-                    println!("{}✓ Session saved ({})\x1b[0m", theme::c_ok(), &engine.session_id()[..8]);
-                }
-                Err(e) => eprintln!("{}Failed to save session: {}\x1b[0m", theme::c_err(), e),
-            }
-        }
+        "" | "list" => SessionCommandOutput::Message(list_sessions_text()),
+        "save" => match engine.save_session().await {
+            Ok(()) => SessionCommandOutput::Message(format!(
+                "{}✓ Session saved ({})\x1b[0m",
+                theme::c_ok(),
+                &engine.session_id()[..8]
+            )),
+            Err(error) => SessionCommandOutput::Message(format!(
+                "{}Failed to save session: {}\x1b[0m",
+                theme::c_err(),
+                error
+            )),
+        },
         "load" | "resume" => {
-            let query = parts.get(1).copied().unwrap_or("").trim();
-            if query.is_empty() {
-                // Auto-resume latest session
-                let sessions = clawed_core::session::list_sessions();
-                if sessions.is_empty() {
-                    println!("No sessions to resume. Use /session list first.");
-                    return;
-                }
-                let latest = &sessions[0];
-                match engine.restore_session(&latest.id).await {
-                    Ok(title) => {
-                        println!("{}✓ Resumed session: {}\x1b[0m", theme::c_ok(), title);
-                        println!("  ({} messages restored)", latest.message_count);
-                    }
-                    Err(e) => eprintln!("{}Failed to resume: {}\x1b[0m", theme::c_err(), e),
-                }
-            } else {
-                let sessions = clawed_core::session::list_sessions();
-                // 1. Try exact ID prefix match first
-                if let Some(meta) = sessions.iter().find(|s| s.id.starts_with(query)) {
-                    match engine.restore_session(&meta.id).await {
-                        Ok(title) => {
-                            println!("{}✓ Resumed session: {}\x1b[0m", theme::c_ok(), title);
-                            println!("  ({} messages restored)", meta.message_count);
-                        }
-                        Err(e) => eprintln!("{}Failed to resume: {}\x1b[0m", theme::c_err(), e),
-                    }
-                    return;
-                }
-                // 2. Fuzzy substring match on title, custom_title, summary, last_prompt
-                let matches: Vec<_> = sessions.iter().filter(|s| {
-                    session_matches_query(s, query)
-                }).collect();
-
-                match matches.len() {
-                    0 => println!("No session found matching '{}'. Use /session list.", query),
-                    1 => {
-                        let meta = matches[0];
-                        match engine.restore_session(&meta.id).await {
-                            Ok(title) => {
-                                println!("{}✓ Resumed session: {}\x1b[0m", theme::c_ok(), title);
-                                println!("  ({} messages restored)", meta.message_count);
-                            }
-                            Err(e) => eprintln!("{}Failed to resume: {}\x1b[0m", theme::c_err(), e),
-                        }
-                    }
-                    n => {
-                        println!("Found {} sessions matching '{}':", n, query);
-                        for s in &matches {
-                            let age = clawed_core::session::format_age(&s.updated_at);
-                            println!(
-                                "  \x1b[36m{:.8}\x1b[0m  {:<50} ({} msgs, {})",
-                                s.id, s.title, s.message_count, age,
-                            );
-                        }
-                        println!("\nUse /session load <id> with a more specific prefix.");
-                    }
-                }
-            }
+            restore_session_output(engine, parts.get(1).copied().unwrap_or("")).await
         }
-        "delete" | "rm" => {
-            let id = parts.get(1).copied().unwrap_or("").trim();
-            if id.is_empty() {
-                println!("Usage: /session delete <id>");
-                return;
-            }
-            let sessions = clawed_core::session::list_sessions();
-            let found = sessions.iter().find(|s| s.id.starts_with(id));
-            match found {
-                Some(meta) => {
-                    match clawed_core::session::delete_session(&meta.id) {
-                        Ok(()) => println!("{}✓ Deleted session {:.8} ({})\x1b[0m", theme::c_ok(), meta.id, meta.title),
-                        Err(e) => eprintln!("{}Failed to delete: {}\x1b[0m", theme::c_err(), e),
-                    }
-                }
-                None => println!("No session found matching '{}'. Use /session list.", id),
-            }
-        }
-        other => {
-            println!("Unknown session subcommand: '{}'. Use save, list, load <id>, or delete <id>.", other);
-        }
+        "delete" | "rm" => SessionCommandOutput::Message(delete_session_text(
+            parts.get(1).copied().unwrap_or("").trim(),
+        )),
+        other => SessionCommandOutput::Message(format!(
+            "Unknown session subcommand: '{}'. Use save, list, load <id>, or delete <id>.",
+            other
+        )),
     }
 }
 
@@ -144,7 +85,12 @@ pub(crate) async fn handle_undo(engine: &QueryEngine) {
 
     if removed_assistant {
         let new_len = s.messages.len();
-        println!("{}✓ Undone (removed {} message(s), {} remaining)\x1b[0m", theme::c_ok(), len - new_len, new_len);
+        println!(
+            "{}✓ Undone (removed {} message(s), {} remaining)\x1b[0m",
+            theme::c_ok(),
+            len - new_len,
+            new_len
+        );
     } else {
         println!("Nothing to undo.");
     }
@@ -166,16 +112,21 @@ pub(crate) async fn handle_export(engine: &QueryEngine, cwd: &std::path::Path, f
             let path = cwd.join(&filename);
 
             // Build per-model usage stats
-            let model_stats: serde_json::Value = state.model_usage.iter()
+            let model_stats: serde_json::Value = state
+                .model_usage
+                .iter()
                 .map(|(model, usage)| {
-                    (model.clone(), serde_json::json!({
-                        "input_tokens": usage.input_tokens,
-                        "output_tokens": usage.output_tokens,
-                        "cache_read_tokens": usage.cache_read_tokens,
-                        "cache_creation_tokens": usage.cache_creation_tokens,
-                        "api_calls": usage.api_calls,
-                        "cost_usd": usage.cost_usd,
-                    }))
+                    (
+                        model.clone(),
+                        serde_json::json!({
+                            "input_tokens": usage.input_tokens,
+                            "output_tokens": usage.output_tokens,
+                            "cache_read_tokens": usage.cache_read_tokens,
+                            "cache_creation_tokens": usage.cache_creation_tokens,
+                            "api_calls": usage.api_calls,
+                            "cost_usd": usage.cost_usd,
+                        }),
+                    )
                 })
                 .collect::<serde_json::Map<_, _>>()
                 .into();
@@ -268,25 +219,37 @@ pub(crate) async fn handle_export(engine: &QueryEngine, cwd: &std::path::Path, f
 
 /// Search conversation history for a query string (case-insensitive).
 pub(crate) async fn handle_search(engine: &QueryEngine, query: &str) {
+    println!("{}", handle_search_str(engine, query).await);
+}
+
+/// Browse conversation turns with pagination.
+///
+/// Shows 10 messages per page with role labels and truncated content.
+pub(crate) async fn handle_history(engine: &QueryEngine, page: usize) {
+    println!("{}", handle_history_str(engine, page).await);
+}
+
+pub(crate) async fn handle_search_str(engine: &QueryEngine, query: &str) -> String {
     if query.is_empty() {
-        println!("Usage: /search <query>  (prefix with r/ for regex, e.g. /search r/fn\\s+main)");
-        return;
-    }
-    let state = engine.state().read().await;
-    if state.messages.is_empty() {
-        println!("No conversation to search.");
-        return;
+        return "Usage: /search <query>  (prefix with r/ for regex, e.g. /search r/fn\\s+main)"
+            .to_string();
     }
 
-    // Support regex: if query starts with "r/", treat the rest as a regex pattern
+    let state = engine.state().read().await;
+    if state.messages.is_empty() {
+        return "No conversation to search.".to_string();
+    }
+
     let is_regex = query.starts_with("r/");
     let re = if is_regex {
         let pattern = &query[2..];
-        match regex::RegexBuilder::new(pattern).case_insensitive(true).build() {
-            Ok(r) => Some(r),
-            Err(e) => {
-                println!("{}Invalid regex: {}\x1b[0m", theme::c_err(), e);
-                return;
+        match regex::RegexBuilder::new(pattern)
+            .case_insensitive(true)
+            .build()
+        {
+            Ok(regex) => Some(regex),
+            Err(error) => {
+                return format!("{}Invalid regex: {}\x1b[0m", theme::c_err(), error);
             }
         }
     } else {
@@ -298,31 +261,42 @@ pub(crate) async fn handle_search(engine: &QueryEngine, query: &str) {
 
     for (idx, msg) in state.messages.iter().enumerate() {
         let (role, texts): (&str, Vec<&str>) = match msg {
-            clawed_core::message::Message::User(u) => (
+            clawed_core::message::Message::User(user) => (
                 "user",
-                u.content.iter().filter_map(|b| match b {
-                    clawed_core::message::ContentBlock::Text { text } => Some(text.as_str()),
-                    _ => None,
-                }).collect(),
+                user.content
+                    .iter()
+                    .filter_map(|block| match block {
+                        clawed_core::message::ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect(),
             ),
-            clawed_core::message::Message::Assistant(a) => (
+            clawed_core::message::Message::Assistant(assistant) => (
                 "assistant",
-                a.content.iter().filter_map(|b| match b {
-                    clawed_core::message::ContentBlock::Text { text } => Some(text.as_str()),
-                    _ => None,
-                }).collect(),
+                assistant
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        clawed_core::message::ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect(),
             ),
-            clawed_core::message::Message::System(s) => ("system", vec![s.message.as_str()]),
+            clawed_core::message::Message::System(system) => {
+                ("system", vec![system.message.as_str()])
+            }
         };
 
         for text in texts {
-            let found = if let Some(ref re) = re {
-                re.find(text).map(|m| (m.start(), m.end()))
+            let found = if let Some(ref regex) = re {
+                regex
+                    .find(text)
+                    .map(|match_| (match_.start(), match_.end()))
             } else {
                 let lower = text.to_lowercase();
-                lower.find(&query_lower).map(|pos| {
-                    let byte_end = pos + query_lower.len();
-                    (pos, byte_end)
+                lower.find(&query_lower).map(|position| {
+                    let byte_end = position + query_lower.len();
+                    (position, byte_end)
                 })
             };
 
@@ -330,14 +304,20 @@ pub(crate) async fn handle_search(engine: &QueryEngine, query: &str) {
                 let char_pos = text[..byte_start].chars().count();
                 let match_char_len = text[byte_start..byte_end].chars().count();
                 let total_chars = text.chars().count();
-                let ctx = 40;
-                let start_char = char_pos.saturating_sub(ctx);
-                let end_char = (char_pos + match_char_len + ctx).min(total_chars);
-                let snippet: String = text.chars().skip(start_char).take(end_char - start_char).collect();
-                let snippet = snippet.replace('\n', " ");
+                let start_char = char_pos.saturating_sub(40);
+                let end_char = (char_pos + match_char_len + 40).min(total_chars);
+                let snippet: String = text
+                    .chars()
+                    .skip(start_char)
+                    .take(end_char - start_char)
+                    .collect();
                 let prefix = if start_char > 0 { "…" } else { "" };
                 let suffix = if end_char < total_chars { "…" } else { "" };
-                hits.push((idx, role, format!("{}{}{}", prefix, snippet, suffix)));
+                hits.push((
+                    idx,
+                    role,
+                    format!("{}{}{}", prefix, snippet.replace('\n', " "), suffix),
+                ));
                 break;
             }
         }
@@ -345,28 +325,36 @@ pub(crate) async fn handle_search(engine: &QueryEngine, query: &str) {
 
     let display_query = if is_regex { &query[2..] } else { query };
     if hits.is_empty() {
-        println!("No matches for \"{}\".", display_query);
-    } else {
-        println!("\x1b[1m{} match(es) for \"{}\":\x1b[0m\n", hits.len(), display_query);
-        for (idx, role, snippet) in &hits {
-            let role_color = match *role {
-                "user" => "\x1b[36m",
-                "assistant" => "\x1b[33m",
-                _ => "\x1b[2m",
-            };
-            println!("  #{:<3} {}[{}]\x1b[0m {}", idx + 1, role_color, role, snippet);
-        }
+        return format!("No matches for \"{}\".", display_query);
     }
+
+    let mut out = format!(
+        "\x1b[1m{} match(es) for \"{}\":\x1b[0m\n\n",
+        hits.len(),
+        display_query
+    );
+    for (idx, role, snippet) in &hits {
+        let role_color = match *role {
+            "user" => "\x1b[36m",
+            "assistant" => "\x1b[33m",
+            _ => "\x1b[2m",
+        };
+        let _ = writeln!(
+            out,
+            "  #{:<3} {}[{}]\x1b[0m {}",
+            idx + 1,
+            role_color,
+            role,
+            snippet
+        );
+    }
+    out.trim_end().to_string()
 }
 
-/// Browse conversation turns with pagination.
-///
-/// Shows 10 messages per page with role labels and truncated content.
-pub(crate) async fn handle_history(engine: &QueryEngine, page: usize) {
+pub(crate) async fn handle_history_str(engine: &QueryEngine, page: usize) -> String {
     let state = engine.state().read().await;
     if state.messages.is_empty() {
-        println!("No conversation history.");
-        return;
+        return "No conversation history.".to_string();
     }
 
     let per_page = 10;
@@ -376,27 +364,41 @@ pub(crate) async fn handle_history(engine: &QueryEngine, page: usize) {
     let start = (page - 1) * per_page;
     let end = (start + per_page).min(total);
 
-    println!(
-        "\x1b[1mConversation History\x1b[0m — page {}/{} ({} messages total)\n",
+    let mut out = format!(
+        "\x1b[1mConversation History\x1b[0m — page {}/{} ({} messages total)\n\n",
         page, total_pages, total
     );
 
     for idx in start..end {
         let msg = &state.messages[idx];
         let (role, role_color, preview) = match msg {
-            clawed_core::message::Message::User(u) => {
-                let text = u.content.iter().find_map(|b| match b {
-                    clawed_core::message::ContentBlock::Text { text } => Some(text.as_str()),
-                    _ => None,
-                }).unwrap_or("");
+            clawed_core::message::Message::User(user) => {
+                let text = user
+                    .content
+                    .iter()
+                    .find_map(|block| match block {
+                        clawed_core::message::ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .unwrap_or("");
                 ("user", "\x1b[36m", truncate_preview(text, 80))
             }
-            clawed_core::message::Message::Assistant(a) => {
-                let text_blocks: Vec<&str> = a.content.iter().filter_map(|b| match b {
-                    clawed_core::message::ContentBlock::Text { text } => Some(text.as_str()),
-                    _ => None,
-                }).collect();
-                let tool_count = a.content.iter().filter(|b| matches!(b, clawed_core::message::ContentBlock::ToolUse { .. })).count();
+            clawed_core::message::Message::Assistant(assistant) => {
+                let text_blocks: Vec<&str> = assistant
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        clawed_core::message::ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                let tool_count = assistant
+                    .content
+                    .iter()
+                    .filter(|block| {
+                        matches!(block, clawed_core::message::ContentBlock::ToolUse { .. })
+                    })
+                    .count();
                 let preview = if text_blocks.is_empty() && tool_count > 0 {
                     format!("[{} tool call(s)]", tool_count)
                 } else {
@@ -410,23 +412,30 @@ pub(crate) async fn handle_history(engine: &QueryEngine, page: usize) {
                 };
                 ("assistant", "\x1b[33m", preview)
             }
-            clawed_core::message::Message::System(s) => {
-                ("system", "\x1b[2m", truncate_preview(&s.message, 80))
+            clawed_core::message::Message::System(system) => {
+                ("system", "\x1b[2m", truncate_preview(&system.message, 80))
             }
         };
 
-        println!(
+        let _ = writeln!(
+            out,
             "  \x1b[2m#{:<3}\x1b[0m {}[{}]\x1b[0m {}",
             idx + 1,
             role_color,
             role,
-            preview,
+            preview
         );
     }
 
     if total_pages > 1 {
-        println!("\n\x1b[2mUse /history {} for next page\x1b[0m", if page < total_pages { page + 1 } else { 1 });
+        let _ = write!(
+            out,
+            "\n\x1b[2mUse /history {} for next page\x1b[0m",
+            if page < total_pages { page + 1 } else { 1 }
+        );
     }
+
+    out.trim_end().to_string()
 }
 
 /// Truncate a string to `max_chars` and add ellipsis if needed.
@@ -441,13 +450,148 @@ fn truncate_preview(text: &str, max_chars: usize) -> String {
     }
 }
 
+fn list_sessions_text() -> String {
+    let sessions = clawed_core::session::list_sessions();
+    if sessions.is_empty() {
+        return "No saved sessions.".to_string();
+    }
+
+    let mut out = String::from("Saved sessions:\n");
+    for session in &sessions {
+        let age = clawed_core::session::format_age(&session.updated_at);
+        let _ = writeln!(
+            out,
+            "  \x1b[36m{:.8}\x1b[0m  {:<50} ({} msgs, {} turns, {})",
+            session.id, session.title, session.message_count, session.turn_count, age
+        );
+    }
+    out.trim_end().to_string()
+}
+
+async fn restore_session_output(engine: &QueryEngine, query: &str) -> SessionCommandOutput {
+    let query = query.trim();
+    let sessions = clawed_core::session::list_sessions();
+
+    if query.is_empty() {
+        let Some(latest) = sessions.first() else {
+            return SessionCommandOutput::Message(
+                "No sessions to resume. Use /session list first.".to_string(),
+            );
+        };
+
+        return match engine.restore_session(&latest.id).await {
+            Ok(title) => SessionCommandOutput::Restored {
+                title,
+                message_count: latest.message_count,
+            },
+            Err(error) => SessionCommandOutput::Message(format!(
+                "{}Failed to resume: {}\x1b[0m",
+                theme::c_err(),
+                error
+            )),
+        };
+    }
+
+    if let Some(meta) = sessions
+        .iter()
+        .find(|session| session.id.starts_with(query))
+    {
+        return match engine.restore_session(&meta.id).await {
+            Ok(title) => SessionCommandOutput::Restored {
+                title,
+                message_count: meta.message_count,
+            },
+            Err(error) => SessionCommandOutput::Message(format!(
+                "{}Failed to resume: {}\x1b[0m",
+                theme::c_err(),
+                error
+            )),
+        };
+    }
+
+    let matches: Vec<_> = sessions
+        .iter()
+        .filter(|session| session_matches_query(session, query))
+        .collect();
+
+    match matches.len() {
+        0 => SessionCommandOutput::Message(format!(
+            "No session found matching '{}'. Use /session list.",
+            query
+        )),
+        1 => {
+            let meta = matches[0];
+            match engine.restore_session(&meta.id).await {
+                Ok(title) => SessionCommandOutput::Restored {
+                    title,
+                    message_count: meta.message_count,
+                },
+                Err(error) => SessionCommandOutput::Message(format!(
+                    "{}Failed to resume: {}\x1b[0m",
+                    theme::c_err(),
+                    error
+                )),
+            }
+        }
+        count => {
+            let mut out = format!("Found {} sessions matching '{}':\n", count, query);
+            for session in &matches {
+                let age = clawed_core::session::format_age(&session.updated_at);
+                let _ = writeln!(
+                    out,
+                    "  \x1b[36m{:.8}\x1b[0m  {:<50} ({} msgs, {})",
+                    session.id, session.title, session.message_count, age
+                );
+            }
+            out.push_str("\nUse /session load <id> with a more specific prefix.");
+            SessionCommandOutput::Message(out)
+        }
+    }
+}
+
+fn delete_session_text(id: &str) -> String {
+    if id.is_empty() {
+        return "Usage: /session delete <id>".to_string();
+    }
+
+    let sessions = clawed_core::session::list_sessions();
+    let found = sessions.iter().find(|session| session.id.starts_with(id));
+    match found {
+        Some(meta) => match clawed_core::session::delete_session(&meta.id) {
+            Ok(()) => format!(
+                "{}✓ Deleted session {:.8} ({})\x1b[0m",
+                theme::c_ok(),
+                meta.id,
+                meta.title
+            ),
+            Err(error) => format!("{}Failed to delete: {}\x1b[0m", theme::c_err(), error),
+        },
+        None => format!("No session found matching '{}'. Use /session list.", id),
+    }
+}
+
 /// Fuzzy match a query against session metadata (case-insensitive substring).
 fn session_matches_query(meta: &clawed_core::session::SessionMeta, query: &str) -> bool {
     let q = query.to_lowercase();
     meta.title.to_lowercase().contains(&q)
-        || meta.custom_title.as_deref().unwrap_or("").to_lowercase().contains(&q)
-        || meta.summary.as_deref().unwrap_or("").to_lowercase().contains(&q)
-        || meta.last_prompt.as_deref().unwrap_or("").to_lowercase().contains(&q)
+        || meta
+            .custom_title
+            .as_deref()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains(&q)
+        || meta
+            .summary
+            .as_deref()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains(&q)
+        || meta
+            .last_prompt
+            .as_deref()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains(&q)
 }
 
 #[cfg(test)]
@@ -472,7 +616,10 @@ mod tests {
 
     #[test]
     fn test_truncate_preview_newlines() {
-        assert_eq!(truncate_preview("line1\nline2\nline3", 20), "line1 line2 line3");
+        assert_eq!(
+            truncate_preview("line1\nline2\nline3", 20),
+            "line1 line2 line3"
+        );
     }
 
     #[test]
@@ -480,7 +627,12 @@ mod tests {
         assert_eq!(truncate_preview("  hello  ", 10), "hello");
     }
 
-    fn make_meta(title: &str, custom_title: Option<&str>, summary: Option<&str>, last_prompt: Option<&str>) -> clawed_core::session::SessionMeta {
+    fn make_meta(
+        title: &str,
+        custom_title: Option<&str>,
+        summary: Option<&str>,
+        last_prompt: Option<&str>,
+    ) -> clawed_core::session::SessionMeta {
         clawed_core::session::SessionMeta {
             id: "test-id-123".into(),
             title: title.into(),

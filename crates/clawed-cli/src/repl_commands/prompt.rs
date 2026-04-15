@@ -1,10 +1,31 @@
 //! /init, /commit, /pr, /bug command handlers.
 
-use clawed_agent::engine::QueryEngine;
 use crate::output::print_stream;
+use clawed_agent::engine::QueryEngine;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PreparedPrompt {
+    pub summary: String,
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CommitPushPrPlan {
+    Message(String),
+    SubmitPrompt(PreparedPrompt),
+    CommitThenPr {
+        commit: PreparedPrompt,
+        baseline_status: String,
+        user_message: String,
+    },
+}
 
 /// Initialize CLAUDE.md for the current project.
 pub(crate) async fn handle_init(engine: &QueryEngine, cwd: &std::path::Path) {
+    submit_prepared(engine, prepare_init_prompt(cwd), "Init error").await;
+}
+
+pub(crate) fn prepare_init_prompt(cwd: &std::path::Path) -> PreparedPrompt {
     let claude_md_path = cwd.join("CLAUDE.md");
     let existing = if claude_md_path.exists() {
         std::fs::read_to_string(&claude_md_path).ok()
@@ -15,32 +36,43 @@ pub(crate) async fn handle_init(engine: &QueryEngine, cwd: &std::path::Path) {
     let mut context_parts: Vec<String> = Vec::new();
 
     for manifest in &[
-        "package.json", "Cargo.toml", "pyproject.toml", "go.mod",
-        "pom.xml", "build.gradle", "Makefile", "CMakeLists.txt",
+        "package.json",
+        "Cargo.toml",
+        "pyproject.toml",
+        "go.mod",
+        "pom.xml",
+        "build.gradle",
+        "Makefile",
+        "CMakeLists.txt",
     ] {
-        let p = cwd.join(manifest);
-        if p.exists() {
-            if let Ok(content) = std::fs::read_to_string(&p) {
-                let truncated: String = content.lines().take(50).collect::<Vec<_>>().join("\n");
+        let path = cwd.join(manifest);
+        if path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let truncated = content.lines().take(50).collect::<Vec<_>>().join("\n");
                 context_parts.push(format!("--- {} ---\n{}", manifest, truncated));
             }
         }
     }
 
     for readme in &["README.md", "README.rst", "README.txt", "README"] {
-        let p = cwd.join(readme);
-        if p.exists() {
-            if let Ok(content) = std::fs::read_to_string(&p) {
-                let truncated: String = content.lines().take(80).collect::<Vec<_>>().join("\n");
+        let path = cwd.join(readme);
+        if path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let truncated = content.lines().take(80).collect::<Vec<_>>().join("\n");
                 context_parts.push(format!("--- {} ---\n{}", readme, truncated));
             }
             break;
         }
     }
 
-    for ci in &[".github/workflows", ".gitlab-ci.yml", "Jenkinsfile", ".circleci/config.yml"] {
-        let p = cwd.join(ci);
-        if p.exists() {
+    for ci in &[
+        ".github/workflows",
+        ".gitlab-ci.yml",
+        "Jenkinsfile",
+        ".circleci/config.yml",
+    ] {
+        let path = cwd.join(ci);
+        if path.exists() {
             context_parts.push(format!("CI config found: {}", ci));
         }
     }
@@ -51,13 +83,15 @@ pub(crate) async fn handle_init(engine: &QueryEngine, cwd: &std::path::Path) {
         context_parts.join("\n\n")
     };
 
-    let prompt = if let Some(ref existing_content) = existing {
+    let prompt = if let Some(existing_content) = existing {
         format!(
             "The project at {} already has a CLAUDE.md. Analyze the current content and the project \
              context below. Suggest specific improvements as diffs. Do NOT silently overwrite.\n\n\
              Existing CLAUDE.md:\n```\n{}\n```\n\nProject context:\n{}\n\n\
              Propose concrete changes to improve the CLAUDE.md.",
-            cwd.display(), existing_content, context
+            cwd.display(),
+            existing_content,
+            context
         )
     } else {
         format!(
@@ -71,32 +105,40 @@ pub(crate) async fn handle_init(engine: &QueryEngine, cwd: &std::path::Path) {
              Do NOT include: file-by-file structure, standard language conventions, generic advice.\n\n\
              Project context:\n{}\n\n\
              Use the Write tool to create CLAUDE.md in the project root.",
-            cwd.display(), context
+            cwd.display(),
+            context
         )
     };
 
-    println!("\x1b[35m[Init]\x1b[0m Analyzing project…");
-    let model = { engine.state().read().await.model.clone() };
-    let stream = engine.submit(&prompt).await;
-    if let Err(e) = print_stream(stream, &model, Some(engine.cost_tracker()), None).await {
-        eprintln!("\x1b[31mInit error: {}\x1b[0m", e);
+    PreparedPrompt {
+        summary: "\x1b[35m[Init]\x1b[0m Analyzing project…".to_string(),
+        prompt,
     }
 }
 
 /// Stage changes and commit with an AI-generated message.
 pub(crate) async fn handle_commit(engine: &QueryEngine, cwd: &std::path::Path, user_message: &str) {
+    match prepare_commit_prompt(cwd, user_message) {
+        Ok(prepared) => submit_prepared(engine, prepared, "提交错误").await,
+        Err(message) => println!("{}", message),
+    }
+}
+
+pub(crate) fn prepare_commit_prompt(
+    cwd: &std::path::Path,
+    user_message: &str,
+) -> Result<PreparedPrompt, String> {
     let status = match git_cmd(cwd, &["status", "--porcelain"]) {
-        Some(s) => s,
+        Some(output) => output,
         None => {
             let err_check = std::process::Command::new("git")
                 .args(["status"])
                 .current_dir(cwd)
                 .output();
-            match err_check {
-                Err(e) => eprintln!("\x1b[31m不是 git 仓库或找不到 git: {}\x1b[0m", e),
-                Ok(_) => println!("没有需要提交的更改。"),
-            }
-            return;
+            return match err_check {
+                Err(error) => Err(format!("不是 git 仓库或找不到 git: {}", error)),
+                Ok(_) => Err("没有需要提交的更改。".to_string()),
+            };
         }
     };
 
@@ -104,10 +146,12 @@ pub(crate) async fn handle_commit(engine: &QueryEngine, cwd: &std::path::Path, u
     let unstaged_diff = git_cmd(cwd, &["diff"]).unwrap_or_default();
     let log = git_cmd(cwd, &["log", "--oneline", "-10"]).unwrap_or_default();
 
-    let combined_diff = if diff.is_empty() { &unstaged_diff } else { &diff };
+    let combined_diff = if diff.is_empty() {
+        &unstaged_diff
+    } else {
+        &diff
+    };
     let has_staged = !diff.is_empty();
-
-    // Detect conventional commits style from recent commits
     let uses_conventional = detect_conventional_commits(&log);
     let style_hint = if uses_conventional {
         "- 使用 Conventional Commits 格式 (feat:, fix:, refactor:, docs:, test:, chore: 等)\n"
@@ -115,11 +159,11 @@ pub(crate) async fn handle_commit(engine: &QueryEngine, cwd: &std::path::Path, u
         ""
     };
 
-    // Get git user info for Co-authored-by
     let user_name = git_cmd(cwd, &["config", "user.name"]).unwrap_or_default();
     let user_email = git_cmd(cwd, &["config", "user.email"]).unwrap_or_default();
     let coauthor_trailer = if !user_name.is_empty() && !user_email.is_empty() {
-        "- 在提交信息末尾添加: Co-authored-by: claude-code-rs <noreply@claude-code.rs>\n".to_string()
+        "- 在提交信息末尾添加: Co-authored-by: claude-code-rs <noreply@claude-code.rs>\n"
+            .to_string()
     } else {
         String::new()
     };
@@ -156,111 +200,156 @@ pub(crate) async fn handle_commit(engine: &QueryEngine, cwd: &std::path::Path, u
         log = log.trim(),
         status = status.trim(),
         diff = if combined_diff.len() > 8000 {
-            format!("{}…\n[已截断, 共 {} 字节]", &combined_diff[..8000], combined_diff.len())
+            format!(
+                "{}…\n[已截断, 共 {} 字节]",
+                &combined_diff[..8000],
+                combined_diff.len()
+            )
         } else {
             combined_diff.to_string()
         },
     );
 
-    println!("\x1b[35m[Commit]\x1b[0m 分析更改…");
-    let model = { engine.state().read().await.model.clone() };
-    let stream = engine.submit(&prompt).await;
-    if let Err(e) = print_stream(stream, &model, Some(engine.cost_tracker()), None).await {
-        eprintln!("\x1b[31m提交错误: {}\x1b[0m", e);
-    }
+    Ok(PreparedPrompt {
+        summary: "\x1b[35m[Commit]\x1b[0m 分析更改…".to_string(),
+        prompt,
+    })
 }
 
 /// Detect if recent commits follow conventional commits format.
 fn detect_conventional_commits(log: &str) -> bool {
     let conventional_prefixes = [
-        "feat:", "fix:", "refactor:", "docs:", "test:", "chore:",
-        "style:", "perf:", "ci:", "build:", "revert:",
-        "feat(", "fix(", "refactor(", "docs(", "test(", "chore(",
+        "feat:",
+        "fix:",
+        "refactor:",
+        "docs:",
+        "test:",
+        "chore:",
+        "style:",
+        "perf:",
+        "ci:",
+        "build:",
+        "revert:",
+        "feat(",
+        "fix(",
+        "refactor(",
+        "docs(",
+        "test(",
+        "chore(",
     ];
     let lines: Vec<&str> = log.lines().collect();
     if lines.len() < 3 {
         return false;
     }
-    // If more than half of recent commits use conventional format, adopt it
-    let conventional_count = lines.iter()
+    let conventional_count = lines
+        .iter()
         .filter(|line| {
-            let msg = line.split_whitespace().skip(1).collect::<Vec<_>>().join(" ").to_lowercase();
-            conventional_prefixes.iter().any(|p| msg.starts_with(p))
+            let msg = line
+                .split_whitespace()
+                .skip(1)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase();
+            conventional_prefixes
+                .iter()
+                .any(|prefix| msg.starts_with(prefix))
         })
         .count();
     conventional_count * 2 >= lines.len()
 }
 
 /// Create or review a pull request.
-///
-/// This command performs the full workflow:
-/// 1. Detect current branch and default branch
-/// 2. Collect commits and diff between them
-/// 3. Generate PR title/description via AI
-/// 4. Offer to run `gh pr create` (if gh CLI is available)
 pub(crate) async fn handle_pr(engine: &QueryEngine, custom_prompt: &str, cwd: &std::path::Path) {
-    // Check if gh CLI is available
+    match prepare_pr_prompt(cwd, custom_prompt) {
+        Ok(prepared) => submit_prepared(engine, prepared, "PR 错误").await,
+        Err(message) => println!("{}", message),
+    }
+}
+
+pub(crate) fn prepare_pr_prompt(
+    cwd: &std::path::Path,
+    custom_prompt: &str,
+) -> Result<PreparedPrompt, String> {
     let gh_available = std::process::Command::new("gh")
         .args(["--version"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .map(|s| s.success())
+        .map(|status| status.success())
         .unwrap_or(false);
 
-    // Get current branch and default branch
-    let current_branch = git_cmd(cwd, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .unwrap_or_default();
-
+    let current_branch = git_cmd(cwd, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
     if current_branch.is_empty() || current_branch == "HEAD" {
-        eprintln!("\x1b[31m无法获取当前分支名。请确保在 git 仓库中。\x1b[0m");
-        return;
+        return Err("无法获取当前分支名。请确保在 git 仓库中。".to_string());
     }
 
     let default_branch = git_cmd(cwd, &["rev-parse", "--abbrev-ref", "origin/HEAD"])
-        .map(|s| s.strip_prefix("origin/").unwrap_or(&s).to_string())
-        .unwrap_or_else(|| "main".into());
+        .map(|branch| {
+            branch
+                .strip_prefix("origin/")
+                .unwrap_or(&branch)
+                .to_string()
+        })
+        .unwrap_or_else(|| "main".to_string());
 
     if current_branch == default_branch {
-        eprintln!("\x1b[33m当前在默认分支 ({})。请先创建并切换到功能分支。\x1b[0m", default_branch);
-        return;
+        return Err(format!(
+            "当前在默认分支 ({})。请先创建并切换到功能分支。",
+            default_branch
+        ));
     }
 
-    // Check if there are unpushed changes
-    let unpushed = git_cmd(cwd, &["log", "--oneline", &format!("origin/{}..HEAD", current_branch)])
-        .unwrap_or_default();
+    let unpushed = git_cmd(
+        cwd,
+        &[
+            "log",
+            "--oneline",
+            &format!("origin/{}..HEAD", current_branch),
+        ],
+    )
+    .unwrap_or_default();
 
+    let mut summary_lines = Vec::new();
     if !unpushed.is_empty() {
-        eprintln!("\x1b[33m发现未推送的提交，先推送到远程...\x1b[0m");
+        summary_lines.push("\x1b[33m发现未推送的提交，先推送到远程...\x1b[0m".to_string());
         let push_result = std::process::Command::new("git")
             .args(["push", "-u", "origin", &current_branch])
             .current_dir(cwd)
             .output();
         match push_result {
-            Ok(out) if out.status.success() => {
-                eprintln!("\x1b[32m✓ 已推送到 origin/{}\x1b[0m", current_branch);
+            Ok(output) if output.status.success() => {
+                summary_lines.push(format!(
+                    "\x1b[32m✓ 已推送到 origin/{}\x1b[0m",
+                    current_branch
+                ));
             }
-            Ok(out) => {
-                let err = String::from_utf8_lossy(&out.stderr);
-                eprintln!("\x1b[31m推送失败: {}\x1b[0m", err.trim());
-                return;
+            Ok(output) => {
+                let error = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("推送失败: {}", error.trim()));
             }
-            Err(e) => {
-                eprintln!("\x1b[31m推送失败: {}\x1b[0m", e);
-                return;
+            Err(error) => {
+                return Err(format!("推送失败: {}", error));
             }
         }
     }
 
-    let diff = git_cmd(cwd, &["diff", &format!("origin/{}...HEAD", default_branch)])
-        .unwrap_or_default();
-
-    let log = git_cmd(cwd, &["log", "--oneline", &format!("origin/{}..HEAD", default_branch)])
-        .unwrap_or_default();
+    let diff =
+        git_cmd(cwd, &["diff", &format!("origin/{}...HEAD", default_branch)]).unwrap_or_default();
+    let log = git_cmd(
+        cwd,
+        &[
+            "log",
+            "--oneline",
+            &format!("origin/{}..HEAD", default_branch),
+        ],
+    )
+    .unwrap_or_default();
 
     if diff.is_empty() && log.is_empty() {
-        println!("没有相对 {} 的新提交。请先推送一些更改。", default_branch);
-        return;
+        return Err(format!(
+            "没有相对 {} 的新提交。请先推送一些更改。",
+            default_branch
+        ));
     }
 
     let user_note = if custom_prompt.is_empty() {
@@ -269,28 +358,32 @@ pub(crate) async fn handle_pr(engine: &QueryEngine, custom_prompt: &str, cwd: &s
         format!("\n用户的说明: {}\n", custom_prompt)
     };
 
-    // Check for existing PR
     let existing_pr = if gh_available {
         std::process::Command::new("gh")
             .args(["pr", "view", "--json", "number,title,url", "--jq", ".url"])
             .current_dir(cwd)
             .output()
             .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .filter(|s| !s.is_empty())
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .filter(|output| !output.is_empty())
     } else {
         None
     };
 
     if let Some(ref pr_url) = existing_pr {
-        eprintln!("\x1b[36m已存在 PR: {}\x1b[0m", pr_url);
+        summary_lines.push(format!("\x1b[36m已存在 PR: {}\x1b[0m", pr_url));
     }
 
-    let action = if existing_pr.is_some() { "更新" } else { "创建" };
+    let action = if existing_pr.is_some() {
+        "更新"
+    } else {
+        "创建"
+    };
 
-    let prompt = format!(
-        "帮我为分支 `{branch}` → `{base}` {action}一个 Pull Request。\n\n\
+    let prompt =
+        format!(
+            "帮我为分支 `{branch}` → `{base}` {action}一个 Pull Request。\n\n\
          规则:\n\
          - 分析下面的提交和 diff\n\
          - 生成清晰的 PR 标题和描述\n\
@@ -301,74 +394,113 @@ pub(crate) async fn handle_pr(engine: &QueryEngine, custom_prompt: &str, cwd: &s
          {user_note}\n\
          提交记录:\n```\n{log}\n```\n\n\
          差异:\n```diff\n{diff}\n```",
-        branch = current_branch,
-        base = default_branch,
-        action = action,
-        gh_instruction = if gh_available {
-            format!(
+            branch = current_branch,
+            base = default_branch,
+            action = action,
+            gh_instruction =
+                if gh_available {
+                    format!(
                 "- 使用 `gh pr {} --title \"<title>\" --body \"<body>\"` 命令创建/更新 PR\n\
                  - 不要使用 --web 参数\n",
                 if existing_pr.is_some() { "edit" } else { "create" },
             )
-        } else {
-            "- gh CLI 不可用，请只输出 PR 标题和描述\n".to_string()
-        },
-        user_note = user_note,
-        log = log.trim(),
-        diff = if diff.len() > 12000 {
-            format!("{}…\n[已截断, 共 {} 字节]", &diff[..12000], diff.len())
-        } else {
-            diff
-        },
-    );
+                } else {
+                    "- gh CLI 不可用，请只输出 PR 标题和描述\n".to_string()
+                },
+            user_note = user_note,
+            log = log.trim(),
+            diff = if diff.len() > 12000 {
+                format!("{}…\n[已截断, 共 {} 字节]", &diff[..12000], diff.len())
+            } else {
+                diff
+            },
+        );
 
-    println!("\x1b[35m[PR]\x1b[0m {} → {} ({})…", current_branch, default_branch, action);
-    let model = { engine.state().read().await.model.clone() };
-    let stream = engine.submit(&prompt).await;
-    if let Err(e) = print_stream(stream, &model, Some(engine.cost_tracker()), None).await {
-        eprintln!("\x1b[31mPR 错误: {}\x1b[0m", e);
-    }
+    summary_lines.push(format!(
+        "\x1b[35m[PR]\x1b[0m {} → {} ({})…",
+        current_branch, default_branch, action
+    ));
+
+    Ok(PreparedPrompt {
+        summary: summary_lines.join("\n"),
+        prompt,
+    })
 }
 
 /// Combined commit → push → PR workflow.
-pub(crate) async fn handle_commit_push_pr(engine: &QueryEngine, cwd: &std::path::Path, user_message: &str) {
-    // Step 1: Check for changes
-    let status = match git_cmd(cwd, &["status", "--porcelain"]) {
-        Some(s) if !s.is_empty() => s,
-        _ => {
-            // No uncommitted changes — check for unpushed commits
-            let current_branch = git_cmd(cwd, &["rev-parse", "--abbrev-ref", "HEAD"])
-                .unwrap_or_default();
-            let unpushed = git_cmd(cwd, &["log", "--oneline", &format!("origin/{}..HEAD", current_branch)])
-                .unwrap_or_default();
-            if unpushed.is_empty() {
-                println!("没有待提交的更改，也没有未推送的提交。");
+pub(crate) async fn handle_commit_push_pr(
+    engine: &QueryEngine,
+    cwd: &std::path::Path,
+    user_message: &str,
+) {
+    match prepare_commit_push_pr(cwd, user_message) {
+        CommitPushPrPlan::Message(message) => println!("{}", message),
+        CommitPushPrPlan::SubmitPrompt(prepared) => {
+            submit_prepared(engine, prepared, "PR 错误").await;
+        }
+        CommitPushPrPlan::CommitThenPr {
+            baseline_status, ..
+        } => {
+            eprintln!("\x1b[35m[Step 1/3]\x1b[0m 提交更改...");
+            handle_commit(engine, cwd, user_message).await;
+
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let new_status = git_cmd(cwd, &["status", "--porcelain"]).unwrap_or_default();
+            if new_status == baseline_status {
+                eprintln!("\x1b[33m提交似乎未完成，中止工作流。\x1b[0m");
                 return;
             }
-            // Skip commit, go straight to push+PR
-            eprintln!("\x1b[36m没有新更改需要提交，但有未推送的提交，继续推送和创建 PR...\x1b[0m");
+
+            eprintln!("\x1b[35m[Step 2/3]\x1b[0m 推送和创建 PR...");
             handle_pr(engine, user_message, cwd).await;
-            return;
+            eprintln!("\x1b[35m[Step 3/3]\x1b[0m 完成！");
         }
-    };
-
-    // Step 2: Commit changes (via AI)
-    eprintln!("\x1b[35m[Step 1/3]\x1b[0m 提交更改...");
-    handle_commit(engine, cwd, user_message).await;
-
-    // Step 3: Verify commit was made
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    let new_status = git_cmd(cwd, &["status", "--porcelain"])
-        .unwrap_or_default();
-    if new_status == status {
-        eprintln!("\x1b[33m提交似乎未完成，中止工作流。\x1b[0m");
-        return;
     }
+}
 
-    // Step 4: Push + PR
-    eprintln!("\x1b[35m[Step 2/3]\x1b[0m 推送和创建 PR...");
-    handle_pr(engine, user_message, cwd).await;
-    eprintln!("\x1b[35m[Step 3/3]\x1b[0m 完成！");
+pub(crate) fn prepare_commit_push_pr(
+    cwd: &std::path::Path,
+    user_message: &str,
+) -> CommitPushPrPlan {
+    match git_cmd(cwd, &["status", "--porcelain"]) {
+        Some(status) if !status.is_empty() => match prepare_commit_prompt(cwd, user_message) {
+            Ok(commit) => CommitPushPrPlan::CommitThenPr {
+                commit,
+                baseline_status: status,
+                user_message: user_message.to_string(),
+            },
+            Err(message) => CommitPushPrPlan::Message(message),
+        },
+        _ => {
+            let current_branch =
+                git_cmd(cwd, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
+            let unpushed = git_cmd(
+                cwd,
+                &[
+                    "log",
+                    "--oneline",
+                    &format!("origin/{}..HEAD", current_branch),
+                ],
+            )
+            .unwrap_or_default();
+            if unpushed.is_empty() {
+                return CommitPushPrPlan::Message(
+                    "没有待提交的更改，也没有未推送的提交。".to_string(),
+                );
+            }
+
+            match prepare_pr_prompt(cwd, user_message) {
+                Ok(mut prepared) => {
+                    prepared.summary = format!(
+                        "\x1b[36m没有新更改需要提交，但有未推送的提交，继续推送和创建 PR...\x1b[0m\n{}",
+                        prepared.summary
+                    );
+                    CommitPushPrPlan::SubmitPrompt(prepared)
+                }
+                Err(message) => CommitPushPrPlan::Message(message),
+            }
+        }
+    }
 }
 
 /// Helper to run a git command and return trimmed stdout.
@@ -378,34 +510,41 @@ fn git_cmd(cwd: &std::path::Path, args: &[&str]) -> Option<String> {
         .current_dir(cwd)
         .output()
         .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty())
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|output| !output.is_empty())
 }
 
 /// Debug a problem with AI assistance.
 pub(crate) async fn handle_bug(engine: &QueryEngine, custom_prompt: &str, cwd: &std::path::Path) {
+    submit_prepared(
+        engine,
+        prepare_bug_prompt(cwd, custom_prompt),
+        "Debug error",
+    )
+    .await;
+}
+
+pub(crate) fn prepare_bug_prompt(cwd: &std::path::Path, custom_prompt: &str) -> PreparedPrompt {
     let mut context_parts: Vec<String> = Vec::new();
 
-    // Collect recent git log for context
-    if let Ok(out) = std::process::Command::new("git")
+    if let Ok(output) = std::process::Command::new("git")
         .args(["log", "--oneline", "-5"])
         .current_dir(cwd)
         .output()
     {
-        let log = String::from_utf8_lossy(&out.stdout).to_string();
+        let log = String::from_utf8_lossy(&output.stdout).to_string();
         if !log.is_empty() {
             context_parts.push(format!("Recent commits:\n```\n{}\n```", log.trim()));
         }
     }
 
-    // Collect recent diff
-    if let Ok(out) = std::process::Command::new("git")
+    if let Ok(output) = std::process::Command::new("git")
         .args(["diff", "HEAD~1"])
         .current_dir(cwd)
         .output()
     {
-        let diff = String::from_utf8_lossy(&out.stdout).to_string();
+        let diff = String::from_utf8_lossy(&output.stdout).to_string();
         if !diff.is_empty() {
             let truncated = if diff.len() > 6000 {
                 format!("{}…\n[truncated]", &diff[..6000])
@@ -440,23 +579,32 @@ pub(crate) async fn handle_bug(engine: &QueryEngine, custom_prompt: &str, cwd: &
         context = context,
     );
 
-    println!("\x1b[35m[Debug]\x1b[0m Investigating…");
-    let model = { engine.state().read().await.model.clone() };
-    let stream = engine.submit(&prompt).await;
-    if let Err(e) = print_stream(stream, &model, Some(engine.cost_tracker()), None).await {
-        eprintln!("\x1b[31mDebug error: {}\x1b[0m", e);
+    PreparedPrompt {
+        summary: "\x1b[35m[Debug]\x1b[0m Investigating…".to_string(),
+        prompt,
     }
 }
 
 /// /summary — ask the model to summarize the conversation so far.
 pub(crate) async fn handle_summary(engine: &QueryEngine) {
-    let prompt = "Please provide a concise summary of our conversation so far, \
-        including the key topics discussed, decisions made, and any pending items or next steps.";
-    println!("\x1b[35m[Summary]\x1b[0m Generating conversation summary…");
+    submit_prepared(engine, prepare_summary_prompt(), "Summary error").await;
+}
+
+pub(crate) fn prepare_summary_prompt() -> PreparedPrompt {
+    PreparedPrompt {
+        summary: "\x1b[35m[Summary]\x1b[0m Generating conversation summary…".to_string(),
+        prompt: "Please provide a concise summary of our conversation so far, \
+            including the key topics discussed, decisions made, and any pending items or next steps."
+            .to_string(),
+    }
+}
+
+async fn submit_prepared(engine: &QueryEngine, prepared: PreparedPrompt, error_label: &str) {
+    println!("{}", prepared.summary);
     let model = { engine.state().read().await.model.clone() };
-    let stream = engine.submit(prompt).await;
-    if let Err(e) = print_stream(stream, &model, Some(engine.cost_tracker()), None).await {
-        eprintln!("\x1b[31mSummary error: {}\x1b[0m", e);
+    let stream = engine.submit(&prepared.prompt).await;
+    if let Err(error) = print_stream(stream, &model, Some(engine.cost_tracker()), None).await {
+        eprintln!("\x1b[31m{}: {}\x1b[0m", error_label, error);
     }
 }
 
@@ -484,7 +632,6 @@ mod tests {
 
     #[test]
     fn test_detect_conventional_commits_mixed() {
-        // 3 out of 4 are conventional → should detect
         let log = "abc1234 feat: add login page\n\
                     def5678 fix: resolve crash\n\
                     ghi9012 Update README\n\

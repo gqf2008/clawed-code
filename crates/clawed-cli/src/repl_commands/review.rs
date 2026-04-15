@@ -1,20 +1,43 @@
-//! /review command handler — code review on git changes or PRs.
+//! `/review` command handler — code review on git changes or PRs.
 
-use clawed_agent::engine::QueryEngine;
 use crate::output::print_stream;
+use clawed_agent::engine::QueryEngine;
+
+use super::prompt::PreparedPrompt;
 
 /// Launch a code review on recent git changes or a specific PR.
-pub(crate) async fn handle_review(engine: &QueryEngine, custom_prompt: &str, cwd: &std::path::Path) {
-    // Check if reviewing a specific PR (e.g., "/review #123" or "/review 123")
+pub(crate) async fn handle_review(
+    engine: &QueryEngine,
+    custom_prompt: &str,
+    cwd: &std::path::Path,
+) {
+    match prepare_review_submission(custom_prompt, cwd) {
+        Ok(prepared) => {
+            eprintln!("{}", prepared.summary);
+            let model = { engine.state().read().await.model.clone() };
+            let stream = engine.submit(&prepared.prompt).await;
+            if let Err(error) =
+                print_stream(stream, &model, Some(engine.cost_tracker()), None).await
+            {
+                eprintln!("\x1b[31mReview 错误: {}\x1b[0m", error);
+            }
+        }
+        Err(message) => println!("{}", message),
+    }
+}
+
+pub(crate) fn prepare_review_submission(
+    custom_prompt: &str,
+    cwd: &std::path::Path,
+) -> Result<PreparedPrompt, String> {
     let pr_number = custom_prompt
         .trim()
         .strip_prefix('#')
         .or(Some(custom_prompt.trim()))
-        .and_then(|s| s.parse::<u64>().ok());
+        .and_then(|value| value.parse::<u64>().ok());
 
     if let Some(pr_num) = pr_number {
-        handle_review_pr(engine, pr_num, cwd).await;
-        return;
+        return prepare_pr_review_submission(pr_num, cwd);
     }
 
     let diff_output = std::process::Command::new("git")
@@ -23,50 +46,46 @@ pub(crate) async fn handle_review(engine: &QueryEngine, custom_prompt: &str, cwd
         .output();
 
     let (diff, source) = match diff_output {
-        Ok(out) => {
-            let d = String::from_utf8_lossy(&out.stdout).to_string();
-            if d.is_empty() {
+        Ok(output) => {
+            let diff = String::from_utf8_lossy(&output.stdout).to_string();
+            if diff.is_empty() {
                 let staged = std::process::Command::new("git")
                     .args(["diff", "--cached"])
                     .current_dir(cwd)
                     .output()
                     .ok()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                    .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
                     .unwrap_or_default();
                 if staged.is_empty() {
-                    println!("没有可 review 的更改。先做一些更改吧。");
-                    return;
+                    return Err("没有可 review 的更改。先做一些更改吧。".to_string());
                 }
                 (staged, "staged")
             } else {
-                (d, "unstaged")
+                (diff, "unstaged")
             }
         }
-        Err(e) => {
-            eprintln!("\x1b[31m获取 git diff 失败: {}\x1b[0m", e);
-            return;
+        Err(error) => {
+            return Err(format!("获取 git diff 失败: {}", error));
         }
     };
 
-    // Show visual diff preview with file-level stats
     let file_stats = parse_diff_file_stats(&diff);
-    if !file_stats.is_empty() {
-        let total_added: usize = file_stats.iter().map(|(_, a, _)| a).sum();
-        let total_removed: usize = file_stats.iter().map(|(_, _, r)| r).sum();
-        eprintln!(
-            "\x1b[35m[Code Review]\x1b[0m {} 更改 ({}) — \x1b[32m+{}\x1b[0m / \x1b[31m-{}\x1b[0m 行",
+    let summary = if !file_stats.is_empty() {
+        let total_added: usize = file_stats.iter().map(|(_, added, _)| added).sum();
+        let total_removed: usize = file_stats.iter().map(|(_, _, removed)| removed).sum();
+        format!(
+            "\x1b[35m[Code Review]\x1b[0m {} 更改 ({}) — \x1b[32m+{}\x1b[0m / \x1b[31m-{}\x1b[0m 行\n{}",
             file_stats.len(),
             source,
             total_added,
             total_removed,
-        );
-        print_file_stats(&file_stats);
-        eprintln!();
+            format_file_stats(&file_stats)
+        )
     } else {
-        eprintln!("\x1b[35m[Code Review]\x1b[0m");
-    }
+        "\x1b[35m[Code Review]\x1b[0m".to_string()
+    };
 
-    let review_prompt = if custom_prompt.is_empty() {
+    let prompt = if custom_prompt.is_empty() {
         format!(
             "Review 以下代码更改，检查 bug、风格问题、安全隐患和改进建议。\
              请具体指出文件路径和行号。\n\n\
@@ -77,15 +96,11 @@ pub(crate) async fn handle_review(engine: &QueryEngine, custom_prompt: &str, cwd
         format!("{}\n\n```diff\n{}\n```", custom_prompt, diff)
     };
 
-    let model = { engine.state().read().await.model.clone() };
-    let stream = engine.submit(&review_prompt).await;
-    if let Err(e) = print_stream(stream, &model, Some(engine.cost_tracker()), None).await {
-        eprintln!("\x1b[31mReview 错误: {}\x1b[0m", e);
-    }
+    Ok(PreparedPrompt { summary, prompt })
 }
 
-/// Print per-file change statistics in a compact format.
-fn print_file_stats(file_stats: &[(String, usize, usize)]) {
+fn format_file_stats(file_stats: &[(String, usize, usize)]) -> String {
+    let mut out = String::new();
     for (file, added, removed) in file_stats {
         let stat = if *added > 0 && *removed > 0 {
             format!("\x1b[32m+{}\x1b[0m/\x1b[31m-{}\x1b[0m", added, removed)
@@ -94,8 +109,12 @@ fn print_file_stats(file_stats: &[(String, usize, usize)]) {
         } else {
             format!("\x1b[31m-{}\x1b[0m", removed)
         };
-        eprintln!("  \x1b[2m•\x1b[0m {} ({})", file, stat);
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&format!("  \x1b[2m•\x1b[0m {} ({})", file, stat));
     }
+    out
 }
 
 /// Parse a unified diff to extract per-file line statistics.
@@ -108,7 +127,6 @@ fn parse_diff_file_stats(diff: &str) -> Vec<(String, usize, usize)> {
 
     for line in diff.lines() {
         if let Some(rest) = line.strip_prefix("+++ b/") {
-            // Flush previous file
             if let Some(file) = current_file.take() {
                 if added > 0 || removed > 0 {
                     results.push((file, added, removed));
@@ -123,7 +141,7 @@ fn parse_diff_file_stats(diff: &str) -> Vec<(String, usize, usize)> {
             removed += 1;
         }
     }
-    // Flush last file
+
     if let Some(file) = current_file {
         if added > 0 || removed > 0 {
             results.push((file, added, removed));
@@ -132,72 +150,78 @@ fn parse_diff_file_stats(diff: &str) -> Vec<(String, usize, usize)> {
     results
 }
 
-/// Review a specific PR by number using gh CLI.
-async fn handle_review_pr(engine: &QueryEngine, pr_number: u64, cwd: &std::path::Path) {
-    // Check gh CLI availability
+fn prepare_pr_review_submission(
+    pr_number: u64,
+    cwd: &std::path::Path,
+) -> Result<PreparedPrompt, String> {
     let gh_available = std::process::Command::new("gh")
         .args(["--version"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .map(|s| s.success())
+        .map(|status| status.success())
         .unwrap_or(false);
 
     if !gh_available {
-        eprintln!("\x1b[31m需要 gh CLI 来 review PR。请安装: https://cli.github.com\x1b[0m");
-        return;
+        return Err("需要 gh CLI 来 review PR。请安装: https://cli.github.com".to_string());
     }
 
-    // Get PR info
     let pr_info = std::process::Command::new("gh")
-        .args(["pr", "view", &pr_number.to_string(), "--json", "title,body,author,state,additions,deletions"])
+        .args([
+            "pr",
+            "view",
+            &pr_number.to_string(),
+            "--json",
+            "title,body,author,state,additions,deletions",
+        ])
         .current_dir(cwd)
         .output();
 
     let pr_meta = match pr_info {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
-        Ok(out) => {
-            let err = String::from_utf8_lossy(&out.stderr);
-            eprintln!("\x1b[31m获取 PR #{} 信息失败: {}\x1b[0m", pr_number, err.trim());
-            return;
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).to_string()
         }
-        Err(e) => {
-            eprintln!("\x1b[31m运行 gh 失败: {}\x1b[0m", e);
-            return;
+        Ok(output) => {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("获取 PR #{} 信息失败: {}", pr_number, error.trim()));
         }
+        Err(error) => return Err(format!("运行 gh 失败: {}", error)),
     };
 
-    // Get PR diff
     let pr_diff = std::process::Command::new("gh")
         .args(["pr", "diff", &pr_number.to_string()])
         .current_dir(cwd)
         .output()
         .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
         .unwrap_or_default();
 
     if pr_diff.is_empty() {
-        eprintln!("\x1b[33mPR #{} 没有差异内容。\x1b[0m", pr_number);
-        return;
+        return Err(format!("PR #{} 没有差异内容。", pr_number));
     }
 
-    // Show file-level diff stats
     let file_stats = parse_diff_file_stats(&pr_diff);
-    if !file_stats.is_empty() {
-        let total_added: usize = file_stats.iter().map(|(_, a, _)| a).sum();
-        let total_removed: usize = file_stats.iter().map(|(_, _, r)| r).sum();
-        eprintln!(
-            "\x1b[35m[PR Review]\x1b[0m PR #{} — {} 文件, \x1b[32m+{}\x1b[0m / \x1b[31m-{}\x1b[0m 行",
-            pr_number, file_stats.len(), total_added, total_removed,
-        );
-        print_file_stats(&file_stats);
-        eprintln!();
+    let summary = if !file_stats.is_empty() {
+        let total_added: usize = file_stats.iter().map(|(_, added, _)| added).sum();
+        let total_removed: usize = file_stats.iter().map(|(_, _, removed)| removed).sum();
+        format!(
+            "\x1b[35m[PR Review]\x1b[0m PR #{} — {} 文件, \x1b[32m+{}\x1b[0m / \x1b[31m-{}\x1b[0m 行\n{}",
+            pr_number,
+            file_stats.len(),
+            total_added,
+            total_removed,
+            format_file_stats(&file_stats)
+        )
     } else {
-        println!("\x1b[35m[PR Review]\x1b[0m 正在分析 PR #{}…", pr_number);
-    }
+        format!("\x1b[35m[PR Review]\x1b[0m 正在分析 PR #{}…", pr_number)
+    };
 
     let truncated_diff = if pr_diff.len() > 15000 {
-        format!("{}…\n[已截断, 共 {} 字节]", &pr_diff[..15000], pr_diff.len())
+        format!(
+            "{}…\n[已截断, 共 {} 字节]",
+            &pr_diff[..15000],
+            pr_diff.len()
+        )
     } else {
         pr_diff
     };
@@ -218,11 +242,7 @@ async fn handle_review_pr(engine: &QueryEngine, pr_number: u64, cwd: &std::path:
         diff = truncated_diff,
     );
 
-    let model = { engine.state().read().await.model.clone() };
-    let stream = engine.submit(&prompt).await;
-    if let Err(e) = print_stream(stream, &model, Some(engine.cost_tracker()), None).await {
-        eprintln!("\x1b[31mPR Review 错误: {}\x1b[0m", e);
-    }
+    Ok(PreparedPrompt { summary, prompt })
 }
 
 #[cfg(test)]
@@ -246,8 +266,8 @@ diff --git a/src/main.rs b/src/main.rs
         let stats = parse_diff_file_stats(diff);
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].0, "src/main.rs");
-        assert_eq!(stats[0].1, 3); // added
-        assert_eq!(stats[0].2, 1); // removed
+        assert_eq!(stats[0].1, 3);
+        assert_eq!(stats[0].2, 1);
     }
 
     #[test]
