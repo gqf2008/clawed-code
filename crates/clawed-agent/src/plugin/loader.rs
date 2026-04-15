@@ -113,6 +113,39 @@ impl PluginLoader {
             .collect()
     }
 
+    /// Convert all plugin hooks into a `HooksConfig` that can be merged with
+    /// the settings-based hooks before passing to the engine.
+    pub fn hooks_config(&self) -> clawed_core::config::HooksConfig {
+        use clawed_core::config::{HookCommandDef, HookRule, HooksConfig};
+        use super::manifest::HookEvent as PluginEvent;
+
+        let mut config = HooksConfig::default();
+        for plugin in &self.plugins {
+            if !plugin.manifest.enabled {
+                continue;
+            }
+            for hook in &plugin.manifest.hooks {
+                let rule = HookRule {
+                    matcher: None, // plugin hooks match all tools
+                    hooks: vec![HookCommandDef {
+                        hook_type: "command".into(),
+                        command: hook.command.clone(),
+                        timeout_ms: Some(hook.timeout.saturating_mul(1000)),
+                    }],
+                };
+                match hook.event {
+                    PluginEvent::PreTool => config.pre_tool_use.push(rule),
+                    PluginEvent::PostTool => config.post_tool_use.push(rule),
+                    PluginEvent::PreMessage => config.user_prompt_submit.push(rule),
+                    PluginEvent::PostMessage => config.stop.push(rule),
+                    PluginEvent::SessionStart => config.session_start.push(rule),
+                    PluginEvent::SessionEnd => config.session_end.push(rule),
+                }
+            }
+        }
+        config
+    }
+
     /// Read a prompt file from a plugin directory.
     pub fn read_prompt_file(plugin: &LoadedPlugin, relative_path: &str) -> Option<String> {
         let path = plugin.dir.join(relative_path);
@@ -621,6 +654,33 @@ mod tests {
         assert_eq!(pre_hooks.len(), 2);
         let post_hooks = loader.hooks_for_event(super::super::manifest::HookEvent::PostTool);
         assert_eq!(post_hooks.len(), 1);
+    }
+
+    #[test]
+    fn test_hooks_config_converts_plugin_hooks() {
+        let tmp = TempDir::new().unwrap();
+        let plugins_dir = tmp.path().join(".claude").join("plugins");
+        create_plugin_dir(
+            &plugins_dir,
+            "hook-plugin",
+            r#"{
+            "name": "hook-plugin",
+            "hooks": [
+                {"event": "pre_tool", "command": "echo pre"},
+                {"event": "post_tool", "command": "echo post"},
+                {"event": "session_start", "command": "echo start"}
+            ]
+        }"#,
+        );
+
+        let loader = discover_test_plugins(tmp.path());
+        let config = loader.hooks_config();
+        assert_eq!(config.pre_tool_use.len(), 1);
+        assert_eq!(config.pre_tool_use[0].hooks[0].command, "echo pre");
+        assert_eq!(config.post_tool_use.len(), 1);
+        assert_eq!(config.session_start.len(), 1);
+        // timeout should be converted from seconds to milliseconds
+        assert_eq!(config.session_start[0].hooks[0].timeout_ms, Some(30_000));
     }
 
     #[test]

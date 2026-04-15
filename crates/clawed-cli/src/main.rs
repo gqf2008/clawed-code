@@ -387,7 +387,21 @@ async fn run() -> anyhow::Result<()> {
             permission_mode,
             settings.permission_rules,
         ))
-        .hooks_config(settings.hooks)
+        .hooks_config({
+            let mut hooks = settings.hooks;
+            let plugin_loader = clawed_agent::plugin::PluginLoader::discover(&cwd);
+            let plugin_hooks = plugin_loader.hooks_config();
+            if !plugin_hooks.pre_tool_use.is_empty()
+                || !plugin_hooks.post_tool_use.is_empty()
+                || !plugin_hooks.user_prompt_submit.is_empty()
+                || !plugin_hooks.stop.is_empty()
+                || !plugin_hooks.session_start.is_empty()
+                || !plugin_hooks.session_end.is_empty()
+            {
+                hooks = clawed_core::config::merge_hooks(hooks, &plugin_hooks);
+            }
+            hooks
+        })
         .load_claude_md(!cli.no_claude_md)
         .load_memory(true)
         .coordinator_mode(cli.coordinator)

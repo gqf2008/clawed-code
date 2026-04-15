@@ -36,17 +36,21 @@ pub(super) fn tool_matches(matcher: &Option<String>, tool_name: &str) -> bool {
         None => true,
         Some(pat) if pat.is_empty() || pat == "*" => true,
         Some(pat) => {
+            // Regex-only metacharacters that never appear in simple glob patterns.
             let is_regex = pat.contains('|')
                 || pat.contains('^')
                 || pat.contains('$')
-                || pat.contains('.')
-                || pat.contains('*')
                 || pat.contains('+')
-                || pat.contains('?')
-                || pat.contains('[')
-                || pat.contains('(');
+                || pat.contains('(')
+                || pat.contains('.');
             if is_regex {
                 get_cached_regex(pat)
+                    .map(|re| re.is_match(tool_name))
+                    .unwrap_or(false)
+            } else if pat.contains('*') || pat.contains('?') || pat.contains('[') {
+                // Glob pattern — convert to regex: `*` → `.*`, `?` → `.`
+                let re_pat = glob_to_regex(pat);
+                get_cached_regex(&re_pat)
                     .map(|re| re.is_match(tool_name))
                     .unwrap_or(false)
             } else {
@@ -54,6 +58,42 @@ pub(super) fn tool_matches(matcher: &Option<String>, tool_name: &str) -> bool {
             }
         }
     }
+}
+
+/// Convert a simple glob pattern to a regex string.
+/// `*` → `.*`, `?` → `.`, character classes `[…]` are passed through,
+/// all other regex metacharacters are escaped.
+fn glob_to_regex(glob: &str) -> String {
+    let mut re = String::with_capacity(glob.len() + 8);
+    re.push('^');
+    let chars: Vec<char> = glob.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '*' => re.push_str(".*"),
+            '?' => re.push('.'),
+            '[' => {
+                // Pass character class through verbatim until closing ']'
+                re.push('[');
+                i += 1;
+                while i < chars.len() && chars[i] != ']' {
+                    re.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    re.push(']');
+                }
+            }
+            c @ ('.' | '+' | '(' | ')' | '{' | '}' | '\\' | '/' | '|' | '^' | '$' | ']') => {
+                re.push('\\');
+                re.push(c);
+            }
+            c => re.push(c),
+        }
+        i += 1;
+    }
+    re.push('$');
+    re
 }
 
 // ── Shell command execution ──────────────────────────────────────────────────

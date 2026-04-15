@@ -1,3 +1,4 @@
+use clawed_core::permissions::PermissionDestination;
 use clawed_core::permissions::PermissionResponse;
 use clawed_core::permissions::PermissionSuggestion;
 use crossterm::{
@@ -73,7 +74,14 @@ pub fn prompt_user(
             if idx == 0 {
                 PermissionResponse::allow_once()
             } else if idx == 1 {
-                PermissionResponse::allow_always()
+                // "Allow always" — persist to local settings so the rule survives across sessions
+                PermissionResponse {
+                    allowed: true,
+                    persist: true,
+                    feedback: None,
+                    selected_suggestion: None,
+                    destination: Some(PermissionDestination::LocalSettings),
+                }
             } else if idx == deny_idx {
                 PermissionResponse::deny()
             } else {

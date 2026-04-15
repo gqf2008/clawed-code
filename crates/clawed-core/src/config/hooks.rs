@@ -93,7 +93,7 @@ pub struct HooksConfig {
 }
 
 /// Merge overlay hooks into base, extending each event's rule list.
-pub(super) fn merge_hooks(mut base: HooksConfig, overlay: &HooksConfig) -> HooksConfig {
+pub fn merge_hooks(mut base: HooksConfig, overlay: &HooksConfig) -> HooksConfig {
     base.pre_tool_use.extend(overlay.pre_tool_use.clone());
     base.post_tool_use.extend(overlay.post_tool_use.clone());
     base.post_tool_use_failure

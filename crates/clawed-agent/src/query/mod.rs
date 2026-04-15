@@ -215,6 +215,7 @@ pub fn query_stream_with_injection(
                 temperature: config.temperature,
                 top_p: None,
                 thinking: config.thinking.clone(),
+                tool_choice: None,
             };
 
             let event_stream = match client.messages_stream(&request).await {

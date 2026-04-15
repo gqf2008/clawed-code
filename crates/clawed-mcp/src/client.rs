@@ -1,20 +1,59 @@
 //! MCP client — protocol-level operations over a transport.
 //!
 //! Implements the MCP lifecycle: initialize → list tools/resources → call tool → close.
+//! Supports stdio and Streamable HTTP transports.
 
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use tracing::{debug, info, warn};
 
+use crate::streamable_http::{McpStreamableHttpConfig, StreamableHttpTransport};
 use crate::transport::StdioTransport;
 use crate::types::{
     McpContent, McpPrompt, McpPromptMessage, McpResource, McpServerConfig, McpToolDef,
-    McpToolResult, ServerCapabilities, ServerInfo,
+    McpToolResult, McpTransportType, ServerCapabilities, ServerInfo,
 };
+
+/// Transport abstraction — delegates to the concrete transport type.
+enum Transport {
+    Stdio(StdioTransport),
+    StreamableHttp(StreamableHttpTransport),
+}
+
+impl Transport {
+    async fn request(&mut self, method: &str, params: Option<Value>) -> Result<Value> {
+        match self {
+            Self::Stdio(t) => t.request(method, params).await,
+            Self::StreamableHttp(t) => t.request(method, params).await,
+        }
+    }
+
+    async fn notify(&mut self, method: &str, params: Option<Value>) -> Result<()> {
+        match self {
+            Self::Stdio(t) => t.notify(method, params).await,
+            Self::StreamableHttp(t) => t.notify(method, params).await,
+        }
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        match self {
+            Self::Stdio(t) => t.close().await,
+            Self::StreamableHttp(t) => t.close().await,
+        }
+    }
+
+    fn is_alive(&mut self) -> bool {
+        match self {
+            Self::Stdio(t) => t.is_alive(),
+            // HTTP transports are always "alive" as long as we have the URL.
+            Self::StreamableHttp(_) => true,
+        }
+    }
+}
 
 /// MCP client wrapping a transport with protocol-level operations.
 pub struct McpClient {
-    transport: StdioTransport,
+    transport: Transport,
     pub server_name: String,
     pub server_info: Option<ServerInfo>,
     pub capabilities: ServerCapabilities,
@@ -24,16 +63,45 @@ pub struct McpClient {
 impl McpClient {
     /// Connect to an MCP server and perform initialization handshake.
     pub async fn connect(config: &McpServerConfig) -> Result<Self> {
-        info!(
-            "Connecting to MCP server '{}': {} {}",
-            config.name,
-            config.command,
-            config.args.join(" ")
-        );
-
-        let mut transport = StdioTransport::spawn(&config.command, &config.args, &config.env)
-            .await
-            .with_context(|| format!("Failed to start MCP server '{}'", config.name))?;
+        let mut transport = match config.transport {
+            McpTransportType::Sse | McpTransportType::StreamableHttp => {
+                let url = config.url.as_deref().with_context(|| {
+                    format!(
+                        "MCP server '{}' uses {:?} transport but has no 'url'",
+                        config.name, config.transport
+                    )
+                })?;
+                info!(
+                    "Connecting to MCP server '{}' via {:?}: {}",
+                    config.name, config.transport, url
+                );
+                let http_config = McpStreamableHttpConfig {
+                    url: url.to_string(),
+                    headers: config.headers.clone(),
+                };
+                let t = StreamableHttpTransport::connect(&http_config)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to connect to MCP server '{}'", config.name)
+                    })?;
+                Transport::StreamableHttp(t)
+            }
+            McpTransportType::Stdio => {
+                info!(
+                    "Connecting to MCP server '{}': {} {}",
+                    config.name,
+                    config.command,
+                    config.args.join(" ")
+                );
+                let t =
+                    StdioTransport::spawn(&config.command, &config.args, &config.env)
+                        .await
+                        .with_context(|| {
+                            format!("Failed to start MCP server '{}'", config.name)
+                        })?;
+                Transport::Stdio(t)
+            }
+        };
 
         let init_result = transport
             .request(

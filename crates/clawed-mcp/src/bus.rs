@@ -52,6 +52,7 @@ impl McpBusAdapter {
             command: command.to_string(),
             args: args.to_vec(),
             env: env.clone(),
+            ..Default::default()
         };
 
         match self.manager.start_server(&config).await {
@@ -259,6 +260,7 @@ mod tests {
             command: "echo".to_string(),
             args: vec![],
             env: HashMap::new(),
+            ..Default::default()
         }];
         let adapter = McpBusAdapter::with_configs(configs).await;
         assert!(adapter.manager().has_configs().await);
@@ -334,6 +336,7 @@ mod tests {
                 command: "echo".to_string(),
                 args: vec![],
                 env: HashMap::new(),
+                ..Default::default()
             }])
             .await;
 

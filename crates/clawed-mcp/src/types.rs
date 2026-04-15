@@ -194,15 +194,38 @@ pub struct ResourceUpdated {
 
 // ── Server configuration ─────────────────────────────────────────────────────
 
-/// Configuration for connecting to an MCP server via stdio.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Transport type for MCP server connections.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum McpTransportType {
+    /// Stdio transport (spawn child process, communicate via stdin/stdout).
+    #[default]
+    Stdio,
+    /// Legacy SSE transport (HTTP GET for SSE stream + POST for requests).
+    Sse,
+    /// Streamable HTTP transport (single endpoint, POST + optional GET SSE).
+    StreamableHttp,
+}
+
+/// Configuration for connecting to an MCP server.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct McpServerConfig {
     pub name: String,
+    #[serde(default)]
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// Transport type — defaults to `Stdio`.
+    #[serde(default)]
+    pub transport: McpTransportType,
+    /// URL for HTTP-based transports (SSE or Streamable HTTP).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Optional HTTP headers for HTTP-based transports.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub headers: HashMap<String, String>,
 }
 
 /// Configuration for connecting to an MCP server via SSE.
@@ -310,6 +333,19 @@ mod tests {
         assert_eq!(config.command, "node");
         assert_eq!(config.args, vec!["server.js"]);
         assert_eq!(config.env.get("PORT"), Some(&"3000".to_string()));
+        assert_eq!(config.transport, McpTransportType::Stdio);
+        assert!(config.url.is_none());
+    }
+
+    #[test]
+    fn server_config_url_based() {
+        let json = r#"{"name":"remote","url":"https://mcp.example.com/api","transport":"streamable-http","headers":{"Authorization":"Bearer tok"}}"#;
+        let config: McpServerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.name, "remote");
+        assert_eq!(config.url.as_deref(), Some("https://mcp.example.com/api"));
+        assert_eq!(config.transport, McpTransportType::StreamableHttp);
+        assert_eq!(config.headers.len(), 1);
+        assert!(config.command.is_empty());
     }
 
     #[test]

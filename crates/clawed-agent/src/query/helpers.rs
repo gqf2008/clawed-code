@@ -274,6 +274,7 @@ pub(super) fn block_to_api(block: &ContentBlock) -> ApiContentBlock {
                 media_type: source.media_type.clone(),
                 data: source.data.clone(),
             },
+            cache_control: None,
         },
     }
 }

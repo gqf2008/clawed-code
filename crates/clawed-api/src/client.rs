@@ -372,6 +372,7 @@ impl ApiClient {
             temperature: None,
             top_p: None,
             thinking: None,
+            tool_choice: None,
         }
     }
 

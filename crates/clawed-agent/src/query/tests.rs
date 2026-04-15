@@ -368,7 +368,7 @@ fn test_block_to_api_image() {
     };
     let api = block_to_api(&block);
     match api {
-        ApiContentBlock::Image { source } => {
+        ApiContentBlock::Image { source, .. } => {
             assert_eq!(source.source_type, "base64");
             assert_eq!(source.media_type, "image/png");
             assert_eq!(source.data, "iVBORw0KGgo=");

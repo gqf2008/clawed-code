@@ -53,14 +53,33 @@ pub fn to_openai_request(req: &MessagesRequest) -> ChatCompletionRequest {
             .collect()
     });
 
-    // tool_choice: if tools are present, default to "auto"
-    let tool_choice = tools.as_ref().map(|t: &Vec<ChatTool>| {
-        if t.is_empty() {
-            serde_json::Value::Null
-        } else {
-            serde_json::json!("auto")
-        }
-    });
+    // tool_choice: use explicit setting from request, otherwise default to "auto" if tools present
+    let tool_choice = if let Some(tc) = &req.tool_choice {
+        // Translate Anthropic tool_choice format to OpenAI if needed.
+        // Anthropic: {"type":"auto"} / {"type":"any"} / {"type":"tool","name":"…"}
+        // OpenAI:    "auto" / "required" / {"type":"function","function":{"name":"…"}}
+        let translated = match tc.get("type").and_then(|v| v.as_str()) {
+            Some("auto") => serde_json::json!("auto"),
+            Some("any") => serde_json::json!("required"),
+            Some("tool") => {
+                if let Some(name) = tc.get("name").and_then(|v| v.as_str()) {
+                    serde_json::json!({"type": "function", "function": {"name": name}})
+                } else {
+                    serde_json::json!("auto")
+                }
+            }
+            _ => tc.clone(), // pass through unknown formats
+        };
+        Some(translated)
+    } else {
+        tools.as_ref().map(|t: &Vec<ChatTool>| {
+            if t.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!("auto")
+            }
+        })
+    };
 
     ChatCompletionRequest {
         model: req.model.clone(),
@@ -91,7 +110,7 @@ pub fn convert_anthropic_message(msg: &ApiMessage, out: &mut Vec<ChatMessage>) {
                 ApiContentBlock::Text { text, .. } => {
                     text_parts.push(ChatContentPart::Text { text: text.clone() });
                 }
-                ApiContentBlock::Image { source } => {
+                ApiContentBlock::Image { source, .. } => {
                     let data_url = format!("data:{};base64,{}", source.media_type, source.data);
                     text_parts.push(ChatContentPart::ImageUrl {
                         image_url: ImageUrlDetail {

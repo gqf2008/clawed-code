@@ -6,6 +6,7 @@
 //! - [`client`] — MCP client (initialize → list → call → close)
 //! - [`transport`] — Stdio transport (child process JSON-RPC)
 //! - [`sse`] — SSE transport (HTTP Server-Sent Events)
+//! - [`streamable_http`] — Streamable HTTP transport (MCP 2025-03-26)
 //! - [`registry`] — Multi-server management and config discovery
 //!
 //! ## Architecture
@@ -28,6 +29,7 @@ pub mod client;
 pub mod protocol;
 pub mod registry;
 pub mod sse;
+pub mod streamable_http;
 pub mod transport;
 pub mod types;
 

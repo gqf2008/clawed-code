@@ -9,8 +9,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
 mod hooks;
-use hooks::merge_hooks;
-pub use hooks::{HookCommandDef, HookRule, HooksConfig};
+pub use hooks::{merge_hooks, HookCommandDef, HookRule, HooksConfig};
 
 #[cfg(test)]
 mod tests;

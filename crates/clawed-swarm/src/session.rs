@@ -322,6 +322,7 @@ fn core_block_to_api(block: &ContentBlock) -> ApiContentBlock {
                 media_type: source.media_type.clone(),
                 data: source.data.clone(),
             },
+            cache_control: None,
         },
         ContentBlock::Thinking { thinking } => ApiContentBlock::Text {
             text: format!("<thinking>{thinking}</thinking>"),

@@ -165,6 +165,7 @@ fn image_converts_to_image_url() {
                         media_type: "image/png".into(),
                         data: "iVBOR...".into(),
                     },
+                    cache_control: None,
                 },
             ],
         }],

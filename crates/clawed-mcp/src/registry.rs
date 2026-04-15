@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::client::McpClient;
-use crate::types::{McpContent, McpResource, McpServerConfig, McpToolDef, McpToolResult};
+use crate::types::{McpContent, McpResource, McpServerConfig, McpToolDef, McpToolResult, McpTransportType};
 
 /// Prefix for MCP tool proxy names: `mcp__<server>__<tool>`.
 pub const MCP_TOOL_PREFIX: &str = "mcp__";
@@ -572,37 +572,74 @@ pub fn load_mcp_configs(path: &std::path::Path) -> Result<Vec<McpServerConfig>> 
 
     let mut configs = Vec::new();
     for (name, config) in servers {
-        let command = config["command"]
-            .as_str()
-            .with_context(|| format!("Missing 'command' for MCP server '{name}'"))?
-            .to_string();
+        // Detect transport type: if "url" is present, use Streamable HTTP;
+        // if "command" is present, use Stdio.
+        let has_url = config.get("url").and_then(|v| v.as_str()).is_some();
+        let has_command = config.get("command").and_then(|v| v.as_str()).is_some();
 
-        let args: Vec<String> = config
-            .get("args")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
+        if has_url {
+            let url = config["url"].as_str().unwrap().to_string();
+            let headers: HashMap<String, String> = config
+                .get("headers")
+                .and_then(|v| v.as_object())
+                .map(|obj| {
+                    obj.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect()
+                })
+                .unwrap_or_default();
 
-        let env: HashMap<String, String> = config
-            .get("env")
-            .and_then(|v| v.as_object())
-            .map(|obj| {
-                obj.iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                    .collect()
-            })
-            .unwrap_or_default();
+            // Explicit transport type, or default to StreamableHttp for URL configs
+            let transport = config
+                .get("transport")
+                .and_then(|v| v.as_str())
+                .map(|t| match t {
+                    "sse" => McpTransportType::Sse,
+                    "streamable-http" => McpTransportType::StreamableHttp,
+                    _ => McpTransportType::StreamableHttp,
+                })
+                .unwrap_or(McpTransportType::StreamableHttp);
 
-        configs.push(McpServerConfig {
-            name: name.clone(),
-            command,
-            args,
-            env,
-        });
+            configs.push(McpServerConfig {
+                name: name.clone(),
+                url: Some(url),
+                headers,
+                transport,
+                ..Default::default()
+            });
+        } else if has_command {
+            let command = config["command"].as_str().unwrap().to_string();
+
+            let args: Vec<String> = config
+                .get("args")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let env: HashMap<String, String> = config
+                .get("env")
+                .and_then(|v| v.as_object())
+                .map(|obj| {
+                    obj.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            configs.push(McpServerConfig {
+                name: name.clone(),
+                command,
+                args,
+                env,
+                ..Default::default()
+            });
+        } else {
+            warn!("MCP server '{}': no 'command' or 'url' found, skipping", name);
+        }
     }
 
     info!(
@@ -709,6 +746,7 @@ mod tests {
             command: "echo".to_string(),
             args: vec![],
             env: HashMap::new(),
+            ..Default::default()
         }];
         mgr.load_configs(configs).await;
         assert!(mgr.has_configs().await);
@@ -724,6 +762,7 @@ mod tests {
             command: "echo".into(),
             args: vec![],
             env: HashMap::new(),
+            ..Default::default()
         }];
         mgr.load_configs(c1).await;
         assert!(mgr.has_configs().await);
@@ -808,7 +847,7 @@ mod tests {
     }
 
     #[test]
-    fn load_mcp_configs_missing_command() {
+    fn load_mcp_configs_missing_command_and_url() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("mcp.json");
         std::fs::write(
@@ -821,8 +860,9 @@ mod tests {
         )
         .unwrap();
 
-        let err = load_mcp_configs(&config_path);
-        assert!(err.is_err());
+        // A server with neither "command" nor "url" is silently skipped
+        let configs = load_mcp_configs(&config_path).unwrap();
+        assert!(configs.is_empty());
     }
 
     #[test]
@@ -833,6 +873,53 @@ mod tests {
 
         let err = load_mcp_configs(&config_path);
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn load_mcp_configs_url_based() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("mcp.json");
+        std::fs::write(
+            &config_path,
+            r#"{
+            "mcpServers": {
+                "remote": {
+                    "url": "https://mcp.example.com/api",
+                    "headers": {"Authorization": "Bearer tok"}
+                }
+            }
+        }"#,
+        )
+        .unwrap();
+
+        let configs = load_mcp_configs(&config_path).unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].name, "remote");
+        assert_eq!(configs[0].url.as_deref(), Some("https://mcp.example.com/api"));
+        assert_eq!(configs[0].transport, McpTransportType::StreamableHttp);
+        assert_eq!(configs[0].headers.len(), 1);
+    }
+
+    #[test]
+    fn load_mcp_configs_explicit_sse_transport() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("mcp.json");
+        std::fs::write(
+            &config_path,
+            r#"{
+            "mcpServers": {
+                "legacy": {
+                    "url": "https://mcp.example.com/sse",
+                    "transport": "sse"
+                }
+            }
+        }"#,
+        )
+        .unwrap();
+
+        let configs = load_mcp_configs(&config_path).unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].transport, McpTransportType::Sse);
     }
 
     #[test]

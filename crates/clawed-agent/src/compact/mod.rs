@@ -350,6 +350,7 @@ pub async fn compact_conversation(
         temperature: None,
         top_p: None,
         thinking: None,
+        tool_choice: None,
     };
 
     let response = client

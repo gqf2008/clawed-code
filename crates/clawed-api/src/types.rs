@@ -25,6 +25,12 @@ pub struct MessagesRequest {
     /// Extended thinking (chain of thought) configuration.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<ThinkingConfig>,
+    /// Tool choice override — controls how the model selects tools.
+    ///
+    /// Anthropic values: `{"type":"auto"}`, `{"type":"any"}`, `{"type":"tool","name":"…"}`.
+    /// Passed through as-is to the Anthropic API; translated for OpenAI.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
 }
 
 impl Default for MessagesRequest {
@@ -40,6 +46,7 @@ impl Default for MessagesRequest {
             temperature: None,
             top_p: None,
             thinking: None,
+            tool_choice: None,
         }
     }
 }
@@ -143,7 +150,11 @@ pub enum ApiContentBlock {
         cache_control: Option<CacheControl>,
     },
     #[serde(rename = "image")]
-    Image { source: ImageSource },
+    Image {
+        source: ImageSource,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
 }
 
 /// Content within a tool result — currently only text is supported.

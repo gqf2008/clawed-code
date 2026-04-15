@@ -97,6 +97,30 @@ fn test_tool_matches_invalid_regex_returns_false() {
     assert!(!tool_matches(&Some("[invalid".into()), "anything"));
 }
 
+#[test]
+fn test_tool_matches_glob_star() {
+    // `bash_*` should match anything starting with `bash_`
+    assert!(tool_matches(&Some("bash_*".into()), "bash_run"));
+    assert!(tool_matches(&Some("bash_*".into()), "bash_"));
+    assert!(!tool_matches(&Some("bash_*".into()), "Bash_run"));
+    assert!(!tool_matches(&Some("bash_*".into()), "FileRead"));
+}
+
+#[test]
+fn test_tool_matches_glob_question() {
+    assert!(tool_matches(&Some("Bas?".into()), "Bash"));
+    assert!(tool_matches(&Some("Bas?".into()), "Bass"));
+    assert!(!tool_matches(&Some("Bas?".into()), "Ba"));
+    assert!(!tool_matches(&Some("Bas?".into()), "Basho"));
+}
+
+#[test]
+fn test_tool_matches_glob_bracket() {
+    assert!(tool_matches(&Some("File[RW]*".into()), "FileRead"));
+    assert!(tool_matches(&Some("File[RW]*".into()), "FileWrite"));
+    assert!(!tool_matches(&Some("File[RW]*".into()), "FileEdit"));
+}
+
 // ── interpret_output ─────────────────────────────────────────────────
 
 #[test]
