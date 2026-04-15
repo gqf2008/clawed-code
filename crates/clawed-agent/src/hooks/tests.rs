@@ -121,6 +121,13 @@ fn test_tool_matches_glob_bracket() {
     assert!(!tool_matches(&Some("File[RW]*".into()), "FileEdit"));
 }
 
+#[test]
+fn test_tool_matches_glob_unclosed_bracket() {
+    // Unclosed '[' should be treated as a literal character
+    assert!(tool_matches(&Some("[abc".into()), "[abc"));
+    assert!(!tool_matches(&Some("[abc".into()), "abc"));
+}
+
 // ── interpret_output ─────────────────────────────────────────────────
 
 #[test]

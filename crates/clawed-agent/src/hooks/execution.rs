@@ -73,15 +73,17 @@ fn glob_to_regex(glob: &str) -> String {
             '*' => re.push_str(".*"),
             '?' => re.push('.'),
             '[' => {
-                // Pass character class through verbatim until closing ']'
-                re.push('[');
-                i += 1;
-                while i < chars.len() && chars[i] != ']' {
-                    re.push(chars[i]);
-                    i += 1;
-                }
-                if i < chars.len() {
-                    re.push(']');
+                // Look ahead for a closing ']'
+                if let Some(close) = chars[i + 1..].iter().position(|&c| c == ']') {
+                    // Valid character class — pass through verbatim
+                    re.push('[');
+                    for j in (i + 1)..=(i + 1 + close) {
+                        re.push(chars[j]);
+                    }
+                    i += close + 1; // skip past ']'
+                } else {
+                    // Unclosed bracket — treat '[' as literal
+                    re.push_str("\\[");
                 }
             }
             c @ ('.' | '+' | '(' | ')' | '{' | '}' | '\\' | '/' | '|' | '^' | '$' | ']') => {
