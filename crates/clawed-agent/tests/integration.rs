@@ -74,7 +74,10 @@ fn test_system_prompt_default() {
         &DynamicSections::default(),
     );
     // Should contain key sections
-    assert!(prompt.text.contains("IMPORTANT"), "Should contain guidelines");
+    assert!(
+        prompt.text.contains("IMPORTANT"),
+        "Should contain guidelines"
+    );
     assert!(!prompt.text.is_empty());
 }
 
@@ -92,7 +95,10 @@ fn test_system_prompt_with_language() {
         "",
         &dynamic,
     );
-    assert!(prompt.text.contains("中文"), "Should contain language preference");
+    assert!(
+        prompt.text.contains("中文"),
+        "Should contain language preference"
+    );
 }
 
 #[test]
@@ -105,7 +111,10 @@ fn test_system_prompt_with_claude_md() {
         "",
         &DynamicSections::default(),
     );
-    assert!(prompt.text.contains("Always use TypeScript"), "Should contain CLAUDE.md content");
+    assert!(
+        prompt.text.contains("Always use TypeScript"),
+        "Should contain CLAUDE.md content"
+    );
 }
 
 #[test]
@@ -118,7 +127,10 @@ fn test_system_prompt_with_memory() {
         "Use PostgreSQL for the database",
         &DynamicSections::default(),
     );
-    assert!(prompt.text.contains("PostgreSQL"), "Should contain memory content");
+    assert!(
+        prompt.text.contains("PostgreSQL"),
+        "Should contain memory content"
+    );
 }
 
 // ── State & Session Persistence ──────────────────────────────────────────────
@@ -149,7 +161,9 @@ async fn test_session_save_and_load() {
             .load_claude_md(false)
             .load_memory(false)
             .build()
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     // Add some messages to the state
     {
@@ -165,7 +179,11 @@ async fn test_session_save_and_load() {
 
     // Save
     let save_result = engine.save_session().await;
-    assert!(save_result.is_ok(), "Session save should succeed: {:?}", save_result.err());
+    assert!(
+        save_result.is_ok(),
+        "Session save should succeed: {:?}",
+        save_result.err()
+    );
 
     // Load into a new engine
     let sid = engine.session_id().to_string();
@@ -174,10 +192,16 @@ async fn test_session_save_and_load() {
             .load_claude_md(false)
             .load_memory(false)
             .build()
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     let title = engine2.restore_session(&sid).await;
-    assert!(title.is_ok(), "Session restore should succeed: {:?}", title.err());
+    assert!(
+        title.is_ok(),
+        "Session restore should succeed: {:?}",
+        title.err()
+    );
 
     // Verify restored state
     let s = engine2.state().read().await;
@@ -195,7 +219,9 @@ async fn test_coordinator_agent_lifecycle() {
     let (tracker, mut rx) = AgentTracker::new();
 
     // Register an agent
-    tracker.register("agent-1", "Do some work", None, None).await;
+    tracker
+        .register("agent-1", "Do some work", None, None)
+        .await;
     assert!(tracker.is_running("agent-1").await);
 
     // Complete the agent
@@ -217,7 +243,9 @@ async fn test_coordinator_agent_lifecycle() {
 async fn test_coordinator_agent_failure() {
     let (tracker, mut rx) = AgentTracker::new();
 
-    tracker.register("agent-2", "Try something", None, None).await;
+    tracker
+        .register("agent-2", "Try something", None, None)
+        .await;
     tracker.fail("agent-2", "API error".to_string()).await;
 
     let notif = rx.try_recv().unwrap();
@@ -276,7 +304,10 @@ fn test_cost_tracker_accumulation() {
 
     let report = tracker.format_summary(3000, 1500, 2);
     assert!(!report.is_empty(), "Report should not be empty");
-    assert!(report.contains("3.0K"), "Should show formatted input tokens, got: {report}");
+    assert!(
+        report.contains("3.0K"),
+        "Should show formatted input tokens, got: {report}"
+    );
 }
 
 // ── Engine Clear History ─────────────────────────────────────────────────────
@@ -288,14 +319,18 @@ async fn test_engine_clear_history() {
             .load_claude_md(false)
             .load_memory(false)
             .build()
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     // Add state
     {
         let mut s = engine.state().write().await;
         s.messages.push(Message::User(UserMessage {
             uuid: "uuid".to_string(),
-            content: vec![ContentBlock::Text { text: "test".to_string() }],
+            content: vec![ContentBlock::Text {
+                text: "test".to_string(),
+            }],
         }));
         s.turn_count = 3;
         s.total_input_tokens = 5000;
@@ -329,52 +364,82 @@ fn test_abort_signal() {
 
 #[tokio::test]
 async fn test_permission_checker_bypass_all() {
-    use clawed_core::tool::{Tool, ToolCategory, ToolContext, ToolResult};
     use async_trait::async_trait;
+    use clawed_core::tool::{Tool, ToolCategory, ToolContext, ToolResult};
 
     struct DummyTool;
     #[async_trait]
     impl Tool for DummyTool {
-        fn name(&self) -> &str { "Bash" }
-        fn category(&self) -> ToolCategory { ToolCategory::Shell }
-        fn description(&self) -> &str { "dummy" }
-        fn input_schema(&self) -> serde_json::Value { serde_json::json!({"type":"object"}) }
-        fn is_read_only(&self) -> bool { false }
+        fn name(&self) -> &str {
+            "Bash"
+        }
+        fn category(&self) -> ToolCategory {
+            ToolCategory::Shell
+        }
+        fn description(&self) -> &str {
+            "dummy"
+        }
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object"})
+        }
+        fn is_read_only(&self) -> bool {
+            false
+        }
         async fn call(&self, _: serde_json::Value, _: &ToolContext) -> anyhow::Result<ToolResult> {
             Ok(ToolResult::text("ok"))
         }
     }
 
     let checker = PermissionChecker::new(PermissionMode::BypassAll, Vec::new());
-    let result = checker.check(&DummyTool, &serde_json::json!({"command": "ls"}), None).await;
+    let result = checker
+        .check(&DummyTool, &serde_json::json!({"command": "ls"}), None)
+        .await;
     assert!(
-        matches!(result.behavior, clawed_core::permissions::PermissionBehavior::Allow),
+        matches!(
+            result.behavior,
+            clawed_core::permissions::PermissionBehavior::Allow
+        ),
         "BypassAll should allow everything"
     );
 }
 
 #[tokio::test]
 async fn test_permission_checker_plan_denies_writes() {
-    use clawed_core::tool::{Tool, ToolCategory, ToolContext, ToolResult};
     use async_trait::async_trait;
+    use clawed_core::tool::{Tool, ToolCategory, ToolContext, ToolResult};
 
     struct WriteTool;
     #[async_trait]
     impl Tool for WriteTool {
-        fn name(&self) -> &str { "Write" }
-        fn category(&self) -> ToolCategory { ToolCategory::FileSystem }
-        fn description(&self) -> &str { "write" }
-        fn input_schema(&self) -> serde_json::Value { serde_json::json!({"type":"object"}) }
-        fn is_read_only(&self) -> bool { false }
+        fn name(&self) -> &str {
+            "Write"
+        }
+        fn category(&self) -> ToolCategory {
+            ToolCategory::FileSystem
+        }
+        fn description(&self) -> &str {
+            "write"
+        }
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object"})
+        }
+        fn is_read_only(&self) -> bool {
+            false
+        }
         async fn call(&self, _: serde_json::Value, _: &ToolContext) -> anyhow::Result<ToolResult> {
             Ok(ToolResult::text("ok"))
         }
     }
 
     let checker = PermissionChecker::new(PermissionMode::Plan, Vec::new());
-    let result = checker.check(&WriteTool, &serde_json::json!({}), None).await;
+    let result = checker
+        .check(&WriteTool, &serde_json::json!({}), None)
+        .await;
     assert!(
-        matches!(result.behavior, clawed_core::permissions::PermissionBehavior::Deny),
+        matches!(
+            result.behavior,
+            clawed_core::permissions::PermissionBehavior::Deny
+        ),
         "Plan mode should deny write tools"
     );
 }
@@ -403,7 +468,9 @@ async fn test_auto_compact_threshold() {
             .load_claude_md(false)
             .load_memory(false)
             .build()
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     // With 0 messages, should not trigger
     assert!(!engine.should_auto_compact().await);

@@ -1,10 +1,10 @@
+use crate::message::ToolResultContent;
+use crate::permissions::{PermissionMode, PermissionResult};
+use async_trait::async_trait;
+use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use async_trait::async_trait;
-use serde_json::Value;
-use crate::message::ToolResultContent;
-use crate::permissions::{PermissionMode, PermissionResult};
 
 /// Simple abort signal using atomic boolean
 #[derive(Clone)]

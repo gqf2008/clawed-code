@@ -1,15 +1,15 @@
-use std::sync::Arc;
-use futures::future::join_all;
-use clawed_core::tool::ToolContext;
-use clawed_core::message::{ContentBlock, ToolResultContent};
-use clawed_core::permissions::PermissionBehavior;
-use clawed_core::permissions::PermissionResponse;
-use clawed_tools::ToolRegistry;
-use serde_json::Value;
-use tracing::{debug, warn};
 use crate::audit::AuditSpan;
 use crate::hooks::{HookDecision, HookEvent, HookRegistry};
 use crate::permissions::{PermissionChecker, PermissionPrompter, TerminalPrompter};
+use clawed_core::message::{ContentBlock, ToolResultContent};
+use clawed_core::permissions::PermissionBehavior;
+use clawed_core::permissions::PermissionResponse;
+use clawed_core::tool::ToolContext;
+use clawed_tools::ToolRegistry;
+use futures::future::join_all;
+use serde_json::Value;
+use std::sync::Arc;
+use tracing::{debug, warn};
 
 /// Max number of tools that may run concurrently (mirrors TS default of 10).
 const MAX_TOOL_CONCURRENCY: usize = 10;
@@ -40,7 +40,13 @@ impl ToolExecutor {
         permission_checker: Arc<PermissionChecker>,
         hooks: Arc<HookRegistry>,
     ) -> Self {
-        Self { registry, permission_checker, hooks, session_id: String::new(), prompter: std::sync::OnceLock::new() }
+        Self {
+            registry,
+            permission_checker,
+            hooks,
+            session_id: String::new(),
+            prompter: std::sync::OnceLock::new(),
+        }
     }
 
     /// Set the session ID for audit logging.
@@ -74,7 +80,9 @@ impl ToolExecutor {
             None => {
                 return ContentBlock::ToolResult {
                     tool_use_id: tool_use_id.to_string(),
-                    content: vec![ToolResultContent::Text { text: format!("Unknown tool: {}", tool_name) }],
+                    content: vec![ToolResultContent::Text {
+                        text: format!("Unknown tool: {}", tool_name),
+                    }],
                     is_error: true,
                 };
             }
@@ -94,7 +102,9 @@ impl ToolExecutor {
                 HookDecision::Block { reason } => {
                     return ContentBlock::ToolResult {
                         tool_use_id: tool_use_id.to_string(),
-                        content: vec![ToolResultContent::Text { text: format!("[Hook blocked] {}", reason) }],
+                        content: vec![ToolResultContent::Text {
+                            text: format!("[Hook blocked] {}", reason),
+                        }],
                         is_error: true,
                     };
                 }
@@ -106,15 +116,27 @@ impl ToolExecutor {
         }
 
         // Execute with the (possibly hook-modified) input
-        let result = self.execute_inner(tool_use_id, tool_name, actual_input.clone(), context, tool).await;
+        let result = self
+            .execute_inner(tool_use_id, tool_name, actual_input.clone(), context, tool)
+            .await;
 
         // ── PostToolUse hook ─────────────────────────────────────────────────
         if self.hooks.has_hooks(HookEvent::PostToolUse) {
             let (output_text, is_err) = match &result {
-                ContentBlock::ToolResult { content, is_error, .. } => {
-                    let text = content.iter().filter_map(|c| {
-                        if let ToolResultContent::Text { text } = c { Some(text.as_str()) } else { None }
-                    }).collect::<Vec<_>>().join("\n");
+                ContentBlock::ToolResult {
+                    content, is_error, ..
+                } => {
+                    let text = content
+                        .iter()
+                        .filter_map(|c| {
+                            if let ToolResultContent::Text { text } = c {
+                                Some(text.as_str())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
                     (text, *is_error)
                 }
                 _ => (String::new(), false),
@@ -126,11 +148,15 @@ impl ToolExecutor {
                 Some(output_text),
                 Some(is_err),
             );
-            if let HookDecision::Block { reason } = self.hooks.run(HookEvent::PostToolUse, ctx).await {
+            if let HookDecision::Block { reason } =
+                self.hooks.run(HookEvent::PostToolUse, ctx).await
+            {
                 if let ContentBlock::ToolResult { tool_use_id, .. } = &result {
                     return ContentBlock::ToolResult {
                         tool_use_id: tool_use_id.clone(),
-                        content: vec![ToolResultContent::Text { text: format!("[PostHook override] {}", reason) }],
+                        content: vec![ToolResultContent::Text {
+                            text: format!("[PostHook override] {}", reason),
+                        }],
                         is_error: true,
                     };
                 }
@@ -152,14 +178,19 @@ impl ToolExecutor {
         if context.abort_signal.is_aborted() {
             return ContentBlock::ToolResult {
                 tool_use_id: tool_use_id.to_string(),
-                content: vec![ToolResultContent::Text { text: "Interrupted by user".into() }],
+                content: vec![ToolResultContent::Text {
+                    text: "Interrupted by user".into(),
+                }],
                 is_error: true,
             };
         }
 
         // Permission check uses the (possibly hook-modified) input
         // Pass runtime permission_mode from context (may differ from initial mode if user changed it via /permissions)
-        let perm = self.permission_checker.check(tool.as_ref(), &input, Some(context.permission_mode)).await;
+        let perm = self
+            .permission_checker
+            .check(tool.as_ref(), &input, Some(context.permission_mode))
+            .await;
         match perm.behavior {
             PermissionBehavior::Deny => {
                 // Fire PermissionDenied hook
@@ -203,11 +234,18 @@ impl ToolExecutor {
                 let perm_timeout = std::time::Duration::from_secs(300); // 5 min default
                 let response = match tokio::time::timeout(
                     perm_timeout,
-                    self.prompter().ask_permission(canonical, &desc, &suggestions),
-                ).await {
+                    self.prompter()
+                        .ask_permission(canonical, &desc, &suggestions),
+                )
+                .await
+                {
                     Ok(r) => r,
                     Err(_) => {
-                        warn!("Permission prompt timed out after {}s for tool '{}'", perm_timeout.as_secs(), canonical);
+                        warn!(
+                            "Permission prompt timed out after {}s for tool '{}'",
+                            perm_timeout.as_secs(),
+                            canonical
+                        );
                         PermissionResponse::deny()
                     }
                 };
@@ -224,13 +262,16 @@ impl ToolExecutor {
                     }
                     return ContentBlock::ToolResult {
                         tool_use_id: tool_use_id.to_string(),
-                        content: vec![ToolResultContent::Text { text: "User denied permission".into() }],
+                        content: vec![ToolResultContent::Text {
+                            text: "User denied permission".into(),
+                        }],
                         is_error: true,
                     };
                 }
                 // Apply the response using canonical name so session_allowed is keyed the same
                 // way check() looks it up (via tool.name()).
-                self.permission_checker.apply_response(canonical, &response, &perm, &context.cwd);
+                self.permission_checker
+                    .apply_response(canonical, &response, &perm, &context.cwd);
             }
             PermissionBehavior::Allow => {}
         }
@@ -241,17 +282,21 @@ impl ToolExecutor {
             Ok(result) => {
                 audit.finish(true, None);
                 // Apply tool result size limiting to prevent context explosion
-                let limited_content = result.content.into_iter().map(|c| {
-                    if let ToolResultContent::Text { text } = c {
-                        let limited = clawed_core::token_estimation::limit_tool_result(
-                            &text,
-                            clawed_core::token_estimation::DEFAULT_MAX_TOOL_RESULT_TOKENS,
-                        );
-                        ToolResultContent::Text { text: limited }
-                    } else {
-                        c
-                    }
-                }).collect();
+                let limited_content = result
+                    .content
+                    .into_iter()
+                    .map(|c| {
+                        if let ToolResultContent::Text { text } = c {
+                            let limited = clawed_core::token_estimation::limit_tool_result(
+                                &text,
+                                clawed_core::token_estimation::DEFAULT_MAX_TOOL_RESULT_TOKENS,
+                            );
+                            ToolResultContent::Text { text: limited }
+                        } else {
+                            c
+                        }
+                    })
+                    .collect();
                 ContentBlock::ToolResult {
                     tool_use_id: tool_use_id.to_string(),
                     content: limited_content,
@@ -264,7 +309,9 @@ impl ToolExecutor {
                 warn!("Tool {} failed: {}", tool_name, e);
 
                 if self.hooks.has_hooks(HookEvent::PostToolUseFailure) {
-                    let ctx = self.hooks.tool_failure_ctx(tool_name, Some(input), &error_msg);
+                    let ctx = self
+                        .hooks
+                        .tool_failure_ctx(tool_name, Some(input), &error_msg);
                     let _ = self.hooks.run(HookEvent::PostToolUseFailure, ctx).await;
                 }
 
@@ -315,9 +362,10 @@ impl ToolExecutor {
         // Process in chunks of MAX_TOOL_CONCURRENCY
         let mut results = Vec::with_capacity(items.len());
         for chunk in items.chunks(MAX_TOOL_CONCURRENCY) {
-            let futs: Vec<_> = chunk.iter().map(|(id, name, input)| {
-                self.execute(id, name, input.clone(), context)
-            }).collect();
+            let futs: Vec<_> = chunk
+                .iter()
+                .map(|(id, name, input)| self.execute(id, name, input.clone(), context))
+                .collect();
             let chunk_results = join_all(futs).await;
             results.extend(chunk_results);
         }
@@ -402,8 +450,15 @@ fn partition_tool_calls(
 fn build_perm_description(tool_name: &str, input: &Value) -> String {
     // Keys whose values are likely short and human-readable — show these.
     const SHOW_KEYS: &[&str] = &[
-        "command", "file_path", "path", "pattern", "url", "query",
-        "description", "regex", "glob",
+        "command",
+        "file_path",
+        "path",
+        "pattern",
+        "url",
+        "query",
+        "description",
+        "regex",
+        "glob",
     ];
     const MAX_VAL_LEN: usize = 80;
     const MAX_PARTS: usize = 3;
@@ -571,13 +626,24 @@ mod tests {
             permission_mode: PermissionMode::BypassAll,
             messages: Vec::new(),
         };
-        let result = executor.execute("t1", "NonExistentTool", json!({}), &ctx).await;
+        let result = executor
+            .execute("t1", "NonExistentTool", json!({}), &ctx)
+            .await;
         match result {
-            ContentBlock::ToolResult { is_error, content, .. } => {
+            ContentBlock::ToolResult {
+                is_error, content, ..
+            } => {
                 assert!(is_error);
-                let text = content.iter().find_map(|c| {
-                    if let ToolResultContent::Text { text } = c { Some(text.as_str()) } else { None }
-                }).unwrap_or("");
+                let text = content
+                    .iter()
+                    .find_map(|c| {
+                        if let ToolResultContent::Text { text } = c {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
                 assert!(text.contains("Unknown tool"));
             }
             _ => panic!("Expected ToolResult"),
@@ -587,8 +653,10 @@ mod tests {
     fn workspace_root() -> std::path::PathBuf {
         // CARGO_MANIFEST_DIR = crates/clawed-agent → parent twice = workspace root
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent().unwrap()
-            .parent().unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
             .to_path_buf()
     }
 
@@ -603,15 +671,29 @@ mod tests {
             messages: Vec::new(),
         };
         let cargo_toml = cwd.join("Cargo.toml");
-        let result = executor.execute(
-            "t1", "Read", json!({"file_path": cargo_toml.to_string_lossy()}), &ctx
-        ).await;
+        let result = executor
+            .execute(
+                "t1",
+                "Read",
+                json!({"file_path": cargo_toml.to_string_lossy()}),
+                &ctx,
+            )
+            .await;
         match result {
-            ContentBlock::ToolResult { is_error, content, .. } => {
+            ContentBlock::ToolResult {
+                is_error, content, ..
+            } => {
                 if is_error {
-                    let text = content.iter().find_map(|c| {
-                        if let ToolResultContent::Text { text } = c { Some(text.as_str()) } else { None }
-                    }).unwrap_or("(no text)");
+                    let text = content
+                        .iter()
+                        .find_map(|c| {
+                            if let ToolResultContent::Text { text } = c {
+                                Some(text.as_str())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or("(no text)");
                     panic!("Read failed: {}", text);
                 }
             }
@@ -630,13 +712,24 @@ mod tests {
             permission_mode: PermissionMode::BypassAll,
             messages: Vec::new(),
         };
-        let result = executor.execute("t1", "Read", json!({"file_path": "Cargo.toml"}), &ctx).await;
+        let result = executor
+            .execute("t1", "Read", json!({"file_path": "Cargo.toml"}), &ctx)
+            .await;
         match result {
-            ContentBlock::ToolResult { is_error, content, .. } => {
+            ContentBlock::ToolResult {
+                is_error, content, ..
+            } => {
                 assert!(is_error);
-                let text = content.iter().find_map(|c| {
-                    if let ToolResultContent::Text { text } = c { Some(text.as_str()) } else { None }
-                }).unwrap_or("");
+                let text = content
+                    .iter()
+                    .find_map(|c| {
+                        if let ToolResultContent::Text { text } = c {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
                 assert!(text.contains("Interrupted"));
             }
             _ => panic!("Expected ToolResult"),
@@ -659,13 +752,24 @@ mod tests {
             permission_mode: PermissionMode::Default,
             messages: Vec::new(),
         };
-        let result = executor.execute("t1", "Read", json!({"file_path": "Cargo.toml"}), &ctx).await;
+        let result = executor
+            .execute("t1", "Read", json!({"file_path": "Cargo.toml"}), &ctx)
+            .await;
         match result {
-            ContentBlock::ToolResult { is_error, content, .. } => {
+            ContentBlock::ToolResult {
+                is_error, content, ..
+            } => {
                 assert!(is_error);
-                let text = content.iter().find_map(|c| {
-                    if let ToolResultContent::Text { text } = c { Some(text.as_str()) } else { None }
-                }).unwrap_or("");
+                let text = content
+                    .iter()
+                    .find_map(|c| {
+                        if let ToolResultContent::Text { text } = c {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
                 assert!(text.contains("denied"));
             }
             _ => panic!("Expected ToolResult"),
@@ -685,15 +789,29 @@ mod tests {
             messages: Vec::new(),
         };
         let cargo_toml = cwd.join("Cargo.toml");
-        let result = executor.execute(
-            "t1", "Read", json!({"file_path": cargo_toml.to_string_lossy()}), &ctx
-        ).await;
+        let result = executor
+            .execute(
+                "t1",
+                "Read",
+                json!({"file_path": cargo_toml.to_string_lossy()}),
+                &ctx,
+            )
+            .await;
         match result {
-            ContentBlock::ToolResult { is_error, content, .. } => {
+            ContentBlock::ToolResult {
+                is_error, content, ..
+            } => {
                 if is_error {
-                    let text = content.iter().find_map(|c| {
-                        if let ToolResultContent::Text { text } = c { Some(text.as_str()) } else { None }
-                    }).unwrap_or("(no text)");
+                    let text = content
+                        .iter()
+                        .find_map(|c| {
+                            if let ToolResultContent::Text { text } = c {
+                                Some(text.as_str())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or("(no text)");
                     panic!("Plan mode read failed: {}", text);
                 }
             }

@@ -120,7 +120,8 @@ fn select_menu(prompt: &str, items: &[(String, String)]) -> io::Result<Option<us
             kind,
             modifiers,
             ..
-        }) = event::read()? {
+        }) = event::read()?
+        {
             if kind != KeyEventKind::Press && kind != KeyEventKind::Repeat {
                 continue;
             }

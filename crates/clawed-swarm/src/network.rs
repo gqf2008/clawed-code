@@ -10,7 +10,7 @@ use kameo::actor::{ActorRef, Spawn};
 use tokio::sync::RwLock;
 use tracing::info;
 
-use crate::actors::{SwarmCoordinator, SpawnResult, TerminateResult, RouteResult};
+use crate::actors::{RouteResult, SpawnResult, SwarmCoordinator, TerminateResult};
 use crate::bus_adapter::SwarmNotifier;
 use crate::messages::*;
 
@@ -37,7 +37,11 @@ impl SwarmNetwork {
     }
 
     /// Create a new swarm network with bus integration.
-    pub fn with_notifier(default_model: String, default_cwd: String, notifier: SwarmNotifier) -> Self {
+    pub fn with_notifier(
+        default_model: String,
+        default_cwd: String,
+        notifier: SwarmNotifier,
+    ) -> Self {
         Self {
             teams: Arc::new(RwLock::new(HashMap::new())),
             default_model,
@@ -89,28 +93,40 @@ impl SwarmNetwork {
         cwd: Option<String>,
     ) -> anyhow::Result<SpawnResult> {
         let teams = self.teams.read().await;
-        let coord = teams.get(team_name)
+        let coord = teams
+            .get(team_name)
             .ok_or_else(|| anyhow::anyhow!("Team '{}' not found", team_name))?;
 
-        let result = coord.ask(SpawnAgent {
-            name: agent_name.to_string(),
-            model,
-            prompt,
-            cwd,
-        }).await.map_err(|e| anyhow::anyhow!("Spawn failed: {}", e))?;
+        let result = coord
+            .ask(SpawnAgent {
+                name: agent_name.to_string(),
+                model,
+                prompt,
+                cwd,
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Spawn failed: {}", e))?;
 
         Ok(result)
     }
 
     /// Terminate an agent by ID.
-    pub async fn terminate_agent(&self, team_name: &str, agent_id: &str) -> anyhow::Result<TerminateResult> {
+    pub async fn terminate_agent(
+        &self,
+        team_name: &str,
+        agent_id: &str,
+    ) -> anyhow::Result<TerminateResult> {
         let teams = self.teams.read().await;
-        let coord = teams.get(team_name)
+        let coord = teams
+            .get(team_name)
             .ok_or_else(|| anyhow::anyhow!("Team '{}' not found", team_name))?;
 
-        let result = coord.ask(TerminateAgent {
-            agent_id: agent_id.to_string(),
-        }).await.map_err(|e| anyhow::anyhow!("Terminate failed: {}", e))?;
+        let result = coord
+            .ask(TerminateAgent {
+                agent_id: agent_id.to_string(),
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Terminate failed: {}", e))?;
 
         Ok(result)
     }
@@ -124,16 +140,20 @@ impl SwarmNetwork {
         from: Option<&str>,
     ) -> anyhow::Result<RouteResult> {
         let teams = self.teams.read().await;
-        let coord = teams.get(team_name)
+        let coord = teams
+            .get(team_name)
             .ok_or_else(|| anyhow::anyhow!("Team '{}' not found", team_name))?;
 
-        let result = coord.ask(crate::actors::RouteMessage {
-            target_agent_id: target_agent_id.to_string(),
-            query: AgentQuery {
-                prompt: prompt.to_string(),
-                from: from.map(|s| s.to_string()),
-            },
-        }).await.map_err(|e| anyhow::anyhow!("Route failed: {}", e))?;
+        let result = coord
+            .ask(crate::actors::RouteMessage {
+                target_agent_id: target_agent_id.to_string(),
+                query: AgentQuery {
+                    prompt: prompt.to_string(),
+                    from: from.map(|s| s.to_string()),
+                },
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Route failed: {}", e))?;
 
         Ok(result)
     }
@@ -146,39 +166,55 @@ impl SwarmNetwork {
         from: &str,
     ) -> anyhow::Result<Vec<RouteResult>> {
         let teams = self.teams.read().await;
-        let coord = teams.get(team_name)
+        let coord = teams
+            .get(team_name)
             .ok_or_else(|| anyhow::anyhow!("Team '{}' not found", team_name))?;
 
-        let results = coord.ask(BroadcastMessage {
-            text: text.to_string(),
-            from: from.to_string(),
-        }).await.map_err(|e| anyhow::anyhow!("Broadcast failed: {}", e))?;
+        let results = coord
+            .ask(BroadcastMessage {
+                text: text.to_string(),
+                from: from.to_string(),
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Broadcast failed: {}", e))?;
 
         Ok(results.0)
     }
 
     /// Get the status of a specific agent.
-    pub async fn agent_status(&self, team_name: &str, agent_id: &str) -> anyhow::Result<AgentStatus> {
+    pub async fn agent_status(
+        &self,
+        team_name: &str,
+        agent_id: &str,
+    ) -> anyhow::Result<AgentStatus> {
         let teams = self.teams.read().await;
-        let coord = teams.get(team_name)
+        let coord = teams
+            .get(team_name)
             .ok_or_else(|| anyhow::anyhow!("Team '{}' not found", team_name))?;
 
-        let team_status = coord.ask(GetTeamStatus)
+        let team_status = coord
+            .ask(GetTeamStatus)
             .await
             .map_err(|e| anyhow::anyhow!("Status query failed: {}", e))?;
 
-        team_status.agents.into_iter()
+        team_status
+            .agents
+            .into_iter()
             .find(|a| a.agent_id == agent_id)
-            .ok_or_else(|| anyhow::anyhow!("Agent '{}' not found in team '{}'", agent_id, team_name))
+            .ok_or_else(|| {
+                anyhow::anyhow!("Agent '{}' not found in team '{}'", agent_id, team_name)
+            })
     }
 
     /// Get the status of a team.
     pub async fn team_status(&self, team_name: &str) -> anyhow::Result<TeamStatus> {
         let teams = self.teams.read().await;
-        let coord = teams.get(team_name)
+        let coord = teams
+            .get(team_name)
             .ok_or_else(|| anyhow::anyhow!("Team '{}' not found", team_name))?;
 
-        let status = coord.ask(GetTeamStatus)
+        let status = coord
+            .ask(GetTeamStatus)
             .await
             .map_err(|e| anyhow::anyhow!("Status query failed: {}", e))?;
 
@@ -225,14 +261,28 @@ mod tests {
         net.create_team("dev").await.unwrap();
 
         // Spawn agents
-        let spawn = net.spawn_agent("dev", "coder", None, Some("Write code".into()), None).await.unwrap();
+        let spawn = net
+            .spawn_agent("dev", "coder", None, Some("Write code".into()), None)
+            .await
+            .unwrap();
         assert!(spawn.success);
 
-        let spawn2 = net.spawn_agent("dev", "reviewer", None, Some("Review code".into()), None).await.unwrap();
+        let spawn2 = net
+            .spawn_agent("dev", "reviewer", None, Some("Review code".into()), None)
+            .await
+            .unwrap();
         assert!(spawn2.success);
 
         // Send message
-        let result = net.send_message("dev", &spawn.agent_id, "Implement login", Some("team-lead@dev")).await.unwrap();
+        let result = net
+            .send_message(
+                "dev",
+                &spawn.agent_id,
+                "Implement login",
+                Some("team-lead@dev"),
+            )
+            .await
+            .unwrap();
         assert!(result.success);
 
         // Agent status
@@ -244,7 +294,10 @@ mod tests {
         assert_eq!(ts.agent_count, 2);
 
         // Broadcast
-        let bcast = net.broadcast("dev", "All hands meeting", "team-lead@dev").await.unwrap();
+        let bcast = net
+            .broadcast("dev", "All hands meeting", "team-lead@dev")
+            .await
+            .unwrap();
         assert_eq!(bcast.len(), 2); // both coder and reviewer receive
 
         // Terminate
@@ -262,7 +315,10 @@ mod tests {
     async fn network_missing_team_errors() {
         let net = SwarmNetwork::new("claude-haiku".into(), "/tmp".into());
 
-        assert!(net.spawn_agent("nope", "agent", None, None, None).await.is_err());
+        assert!(net
+            .spawn_agent("nope", "agent", None, None, None)
+            .await
+            .is_err());
         assert!(net.send_message("nope", "a@b", "hi", None).await.is_err());
         assert!(net.team_status("nope").await.is_err());
         assert!(net.terminate_agent("nope", "a@b").await.is_err());
@@ -275,14 +331,26 @@ mod tests {
         net.create_team("backend").await.unwrap();
 
         // Spawn agents in separate teams
-        let fe = net.spawn_agent("frontend", "react-dev", None, None, None).await.unwrap();
-        let be = net.spawn_agent("backend", "api-dev", None, None, None).await.unwrap();
+        let fe = net
+            .spawn_agent("frontend", "react-dev", None, None, None)
+            .await
+            .unwrap();
+        let be = net
+            .spawn_agent("backend", "api-dev", None, None, None)
+            .await
+            .unwrap();
         assert!(fe.success);
         assert!(be.success);
 
         // Message to backend agent cannot route through frontend coordinator
-        assert!(net.send_message("frontend", &be.agent_id, "hello", None).await.unwrap().success == false
-            || true); // error or not-found response — teams are isolated
+        assert!(
+            net.send_message("frontend", &be.agent_id, "hello", None)
+                .await
+                .unwrap()
+                .success
+                == false
+                || true
+        ); // error or not-found response — teams are isolated
 
         // Each team has exactly 1 agent
         let fts = net.team_status("frontend").await.unwrap();
@@ -306,7 +374,10 @@ mod tests {
         let net = SwarmNetwork::new("haiku".into(), "/tmp".into());
         net.create_team("empty").await.unwrap();
 
-        let results = net.broadcast("empty", "hello everyone", "lead@empty").await.unwrap();
+        let results = net
+            .broadcast("empty", "hello everyone", "lead@empty")
+            .await
+            .unwrap();
         assert!(results.is_empty());
     }
 
@@ -314,7 +385,9 @@ mod tests {
     async fn agent_status_not_found() {
         let net = SwarmNetwork::new("haiku".into(), "/tmp".into());
         net.create_team("myteam").await.unwrap();
-        net.spawn_agent("myteam", "agent1", None, None, None).await.unwrap();
+        net.spawn_agent("myteam", "agent1", None, None, None)
+            .await
+            .unwrap();
 
         // Non-existent agent in an existing team returns error
         let err = net.agent_status("myteam", "ghost@myteam").await;
@@ -328,16 +401,26 @@ mod tests {
         net.create_team("concurrent").await.unwrap();
 
         // Spawn 5 agents concurrently
-        let handles: Vec<_> = (0..5).map(|i| {
-            let net = net.clone();
-            tokio::spawn(async move {
-                net.spawn_agent("concurrent", &format!("agent{i}"), None, None, None).await
+        let handles: Vec<_> = (0..5)
+            .map(|i| {
+                let net = net.clone();
+                tokio::spawn(async move {
+                    net.spawn_agent("concurrent", &format!("agent{i}"), None, None, None)
+                        .await
+                })
             })
-        }).collect();
+            .collect();
 
         let results: Vec<_> = futures::future::join_all(handles).await;
-        let successful = results.iter()
-            .filter(|r| r.as_ref().ok().and_then(|r| r.as_ref().ok()).map(|r| r.success).unwrap_or(false))
+        let successful = results
+            .iter()
+            .filter(|r| {
+                r.as_ref()
+                    .ok()
+                    .and_then(|r| r.as_ref().ok())
+                    .map(|r| r.success)
+                    .unwrap_or(false)
+            })
             .count();
 
         // All unique names should succeed

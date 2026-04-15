@@ -95,7 +95,8 @@ pub fn crossterm_select(
             kind,
             modifiers,
             ..
-        }) = event::read()? {
+        }) = event::read()?
+        {
             if kind != KeyEventKind::Press && kind != KeyEventKind::Repeat {
                 continue;
             }
@@ -136,11 +137,7 @@ pub fn crossterm_select(
     }
 }
 
-fn draw_select_items(
-    out: &mut io::Stderr,
-    items: &[SelectItem],
-    cursor: usize,
-) -> io::Result<()> {
+fn draw_select_items(out: &mut io::Stderr, items: &[SelectItem], cursor: usize) -> io::Result<()> {
     for (i, item) in items.iter().enumerate() {
         if i == cursor {
             write!(out, "   \x1b[36m●\x1b[0m \x1b[1m{}\x1b[0m", item.label)?;
@@ -189,7 +186,8 @@ pub fn crossterm_input(
             kind,
             modifiers,
             ..
-        }) = event::read()? {
+        }) = event::read()?
+        {
             if kind != KeyEventKind::Press && kind != KeyEventKind::Repeat {
                 continue;
             }
@@ -264,10 +262,8 @@ pub fn crossterm_input(
                     buffer.drain(start_byte..end_byte);
                     cursor = new_cursor;
                 }
-                KeyCode::Backspace
-                | KeyCode::Char('h')
-                    if code == KeyCode::Backspace
-                        || modifiers.contains(KeyModifiers::CONTROL) =>
+                KeyCode::Backspace | KeyCode::Char('h')
+                    if code == KeyCode::Backspace || modifiers.contains(KeyModifiers::CONTROL) =>
                 {
                     if cursor > 0 {
                         let start_byte = char_to_byte(&buffer, cursor - 1);
@@ -281,8 +277,7 @@ pub fn crossterm_input(
                     cursor = 0;
                 }
                 KeyCode::Char(c)
-                    if !modifiers
-                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                    if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
                 {
                     let byte = char_to_byte(&buffer, cursor);
                     buffer.insert(byte, c);
@@ -344,7 +339,8 @@ pub fn crossterm_confirm(prompt: &str) -> io::Result<Option<bool>> {
             kind,
             modifiers,
             ..
-        }) = event::read()? {
+        }) = event::read()?
+        {
             if kind != KeyEventKind::Press {
                 continue;
             }
@@ -562,7 +558,10 @@ pub fn init_wizard(default_model: &str) -> io::Result<(String, String)> {
     let api_key = match api_key {
         Some(k) => k,
         None => {
-            return Err(io::Error::new(io::ErrorKind::Interrupted, "Setup cancelled"));
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Setup cancelled",
+            ));
         }
     };
 
@@ -578,7 +577,10 @@ pub fn init_wizard(default_model: &str) -> io::Result<(String, String)> {
         .unwrap_or(0);
 
     let model = match crossterm_select("Default model:", &model_items, default_idx)? {
-        Some(idx) => model_ids.get(idx).unwrap_or(&"claude-sonnet-4-6").to_string(),
+        Some(idx) => model_ids
+            .get(idx)
+            .unwrap_or(&"claude-sonnet-4-6")
+            .to_string(),
         None => default_model.to_string(),
     };
 
@@ -614,7 +616,10 @@ mod tests {
     fn permission_choice_variants() {
         assert_eq!(PermissionChoice::AllowOnce, PermissionChoice::AllowOnce);
         assert_ne!(PermissionChoice::AllowOnce, PermissionChoice::Deny);
-        assert_ne!(PermissionChoice::AllowSession, PermissionChoice::AllowAlways);
+        assert_ne!(
+            PermissionChoice::AllowSession,
+            PermissionChoice::AllowAlways
+        );
     }
 
     #[test]

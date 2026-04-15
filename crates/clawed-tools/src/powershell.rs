@@ -13,8 +13,12 @@ pub struct PowerShellTool;
 
 #[async_trait]
 impl Tool for PowerShellTool {
-    fn name(&self) -> &'static str { "PowerShell" }
-    fn category(&self) -> ToolCategory { ToolCategory::Shell }
+    fn name(&self) -> &'static str {
+        "PowerShell"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Shell
+    }
 
     fn description(&self) -> &'static str {
         "Execute a PowerShell command on Windows. Returns stdout, stderr, and exit code. \
@@ -51,7 +55,7 @@ impl Tool for PowerShellTool {
         {
             let _ = (input, context);
             return Ok(ToolResult::error(
-                "PowerShellTool is only available on Windows. Use BashTool on Unix systems."
+                "PowerShellTool is only available on Windows. Use BashTool on Unix systems.",
             ));
         }
 
@@ -60,14 +64,13 @@ impl Tool for PowerShellTool {
             let command = input["command"]
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("Missing 'command'"))?;
-            let timeout_ms = input["timeout_ms"]
-                .as_u64()
-                .unwrap_or(30_000)
-                .min(120_000);
+            let timeout_ms = input["timeout_ms"].as_u64().unwrap_or(30_000).min(120_000);
 
             // Security: check for dangerous patterns
             if let Some(reason) = check_dangerous(command) {
-                return Ok(ToolResult::error(format!("🚫 {reason}\nCommand: {command}")));
+                return Ok(ToolResult::error(format!(
+                    "🚫 {reason}\nCommand: {command}"
+                )));
             }
 
             use std::process::Stdio;
@@ -95,12 +98,16 @@ impl Tool for PowerShellTool {
                         response.push_str(&stdout);
                     }
                     if !stderr.is_empty() {
-                        if !response.is_empty() { response.push('\n'); }
+                        if !response.is_empty() {
+                            response.push('\n');
+                        }
                         response.push_str("STDERR:\n");
                         response.push_str(&stderr);
                     }
                     if exit_code != 0 {
-                        if !response.is_empty() { response.push('\n'); }
+                        if !response.is_empty() {
+                            response.push('\n');
+                        }
                         response.push_str(&format!("Exit code: {exit_code}"));
                     }
 
@@ -119,7 +126,9 @@ impl Tool for PowerShellTool {
                     }
                 }
                 Ok(Err(e)) => Err(anyhow::anyhow!("Process error: {e}")),
-                Err(_) => Ok(ToolResult::error(format!("Command timed out after {timeout_ms}ms"))),
+                Err(_) => Ok(ToolResult::error(format!(
+                    "Command timed out after {timeout_ms}ms"
+                ))),
             }
         }
     }

@@ -1,7 +1,14 @@
 //! Format translation between Anthropic Messages API and `OpenAI` Chat Completions API.
 
-use crate::types::{MessagesRequest, ApiMessage, ApiContentBlock, ToolResultContent, MessagesResponse, ResponseContentBlock, ApiUsage, StreamEvent, DeltaBlock, DeltaUsage, MessageDeltaData};
-use super::types::{ChatCompletionRequest, ChatMessage, ChatContent, ChatTool, ChatFunction, ChatContentPart, ImageUrlDetail, ChatToolCall, ChatFunctionCall, ChatCompletionResponse, ChatCompletionChunk};
+use super::types::{
+    ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ChatContent,
+    ChatContentPart, ChatFunction, ChatFunctionCall, ChatMessage, ChatTool, ChatToolCall,
+    ImageUrlDetail,
+};
+use crate::types::{
+    ApiContentBlock, ApiMessage, ApiUsage, DeltaBlock, DeltaUsage, MessageDeltaData,
+    MessagesRequest, MessagesResponse, ResponseContentBlock, StreamEvent, ToolResultContent,
+};
 // ── Format Translation: Anthropic → OpenAI ───────────────────────────────────
 
 /// Convert an Anthropic `MessagesRequest` into an `OpenAI` `ChatCompletionRequest`.
@@ -82,13 +89,10 @@ pub fn convert_anthropic_message(msg: &ApiMessage, out: &mut Vec<ChatMessage>) {
         for block in &msg.content {
             match block {
                 ApiContentBlock::Text { text, .. } => {
-                    text_parts.push(ChatContentPart::Text {
-                        text: text.clone(),
-                    });
+                    text_parts.push(ChatContentPart::Text { text: text.clone() });
                 }
                 ApiContentBlock::Image { source } => {
-                    let data_url =
-                        format!("data:{};base64,{}", source.media_type, source.data);
+                    let data_url = format!("data:{};base64,{}", source.media_type, source.data);
                     text_parts.push(ChatContentPart::ImageUrl {
                         image_url: ImageUrlDetail {
                             url: data_url,
@@ -208,7 +212,9 @@ pub fn from_openai_response(resp: ChatCompletionResponse) -> MessagesResponse {
             // Reasoning/thinking content (DashScope/Qwen extension)
             if let Some(reasoning) = c.message.reasoning_content {
                 if !reasoning.is_empty() {
-                    blocks.push(ResponseContentBlock::Thinking { thinking: reasoning });
+                    blocks.push(ResponseContentBlock::Thinking {
+                        thinking: reasoning,
+                    });
                 }
             }
 
@@ -372,9 +378,7 @@ impl OpenAIStreamState {
                     }
                     events.push(StreamEvent::ContentBlockDelta {
                         index: self.text_block_index,
-                        delta: DeltaBlock::TextDelta {
-                            text: text.clone(),
-                        },
+                        delta: DeltaBlock::TextDelta { text: text.clone() },
                     });
                 }
             }
@@ -422,13 +426,17 @@ impl OpenAIStreamState {
                 }
                 // Emit ContentBlockStop for text block
                 if self.text_block_started {
-                    events.push(StreamEvent::ContentBlockStop { index: self.text_block_index });
+                    events.push(StreamEvent::ContentBlockStop {
+                        index: self.text_block_index,
+                    });
                 }
                 let mut tool_indices: Vec<usize> =
                     self.tool_blocks_started.iter().copied().collect();
                 tool_indices.sort_unstable();
                 for idx in tool_indices {
-                    events.push(StreamEvent::ContentBlockStop { index: self.next_block_index + idx });
+                    events.push(StreamEvent::ContentBlockStop {
+                        index: self.next_block_index + idx,
+                    });
                 }
 
                 let stop_reason = match reason.as_str() {
@@ -470,14 +478,17 @@ impl OpenAIStreamState {
             self.thinking_block_started = false;
         }
         if self.text_block_started {
-            events.push(StreamEvent::ContentBlockStop { index: self.text_block_index });
+            events.push(StreamEvent::ContentBlockStop {
+                index: self.text_block_index,
+            });
             self.text_block_started = false;
         }
-        let mut tool_indices: Vec<usize> =
-            self.tool_blocks_started.iter().copied().collect();
+        let mut tool_indices: Vec<usize> = self.tool_blocks_started.iter().copied().collect();
         tool_indices.sort_unstable();
         for idx in tool_indices {
-            events.push(StreamEvent::ContentBlockStop { index: self.next_block_index + idx });
+            events.push(StreamEvent::ContentBlockStop {
+                index: self.next_block_index + idx,
+            });
         }
         self.tool_blocks_started.clear();
 

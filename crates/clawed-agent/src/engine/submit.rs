@@ -31,7 +31,9 @@ impl QueryEngine {
 
         // ── UserPromptSubmit hook ────────────────────────────────────────────
         if self.hooks.has_hooks(HookEvent::UserPromptSubmit) {
-            let ctx = self.hooks.prompt_ctx(HookEvent::UserPromptSubmit, Some(prompt_text.clone()));
+            let ctx = self
+                .hooks
+                .prompt_ctx(HookEvent::UserPromptSubmit, Some(prompt_text.clone()));
             match self.hooks.run(HookEvent::UserPromptSubmit, ctx).await {
                 HookDecision::Block { reason } => {
                     let err_stream = async_stream::stream! {
@@ -98,15 +100,21 @@ impl QueryEngine {
         }
 
         // Run UserPromptSubmit hook with text from first text block
-        let text_preview: String = content.iter().filter_map(|b| match b {
-            ContentBlock::Text { text } => Some(text.clone()),
-            _ => None,
-        }).collect::<Vec<_>>().join("\n");
+        let text_preview: String = content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let mut final_content = content;
 
         if self.hooks.has_hooks(HookEvent::UserPromptSubmit) {
-            let ctx = self.hooks.prompt_ctx(HookEvent::UserPromptSubmit, Some(text_preview));
+            let ctx = self
+                .hooks
+                .prompt_ctx(HookEvent::UserPromptSubmit, Some(text_preview));
             match self.hooks.run(HookEvent::UserPromptSubmit, ctx).await {
                 HookDecision::Block { reason } => {
                     let err_stream = async_stream::stream! {

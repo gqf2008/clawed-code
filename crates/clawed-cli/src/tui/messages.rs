@@ -11,7 +11,9 @@ use ratatui::{
 /// Returns an appropriate style for a line in a unified diff.
 fn diff_line_style(line: &str) -> Style {
     if line.starts_with("+++") || line.starts_with("---") {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else if line.starts_with('+') {
         Style::default().fg(Color::Green)
     } else if line.starts_with('-') {
@@ -29,7 +31,9 @@ pub enum MessageContent {
     UserInput(String),
     AssistantText(String),
     ThinkingText(String),
-    ToolUseStart { name: String },
+    ToolUseStart {
+        name: String,
+    },
     ToolResult {
         name: String,
         preview: String,
@@ -127,9 +131,7 @@ impl Message {
                 markdown::render_markdown(text)
             }
             MessageContent::ThinkingText(text) => {
-                let style = Style::default()
-                    .fg(MUTED)
-                    .add_modifier(Modifier::ITALIC);
+                let style = Style::default().fg(MUTED).add_modifier(Modifier::ITALIC);
                 text.lines()
                     .map(|l| Line::styled(l.to_string(), style))
                     .collect()

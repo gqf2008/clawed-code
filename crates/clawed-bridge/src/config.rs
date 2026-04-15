@@ -131,17 +131,24 @@ impl BridgeConfig {
     /// Load configuration from a JSON file.
     pub fn from_file(path: &std::path::Path) -> Result<Self, std::io::Error> {
         let content = std::fs::read_to_string(path)?;
-        serde_json::from_str(&content)
-            .map_err(|e| std::io::Error::other(e.to_string()))
+        serde_json::from_str(&content).map_err(|e| std::io::Error::other(e.to_string()))
     }
 
     /// Check which adapters have valid configuration.
     pub fn enabled_platforms(&self) -> Vec<&str> {
         let mut platforms = vec![];
-        if self.feishu.is_some() { platforms.push("feishu"); }
-        if self.telegram.is_some() { platforms.push("telegram"); }
-        if self.wechat.is_some() { platforms.push("wechat"); }
-        if self.dingtalk.is_some() { platforms.push("dingtalk"); }
+        if self.feishu.is_some() {
+            platforms.push("feishu");
+        }
+        if self.telegram.is_some() {
+            platforms.push("telegram");
+        }
+        if self.wechat.is_some() {
+            platforms.push("wechat");
+        }
+        if self.dingtalk.is_some() {
+            platforms.push("dingtalk");
+        }
         platforms
     }
 }

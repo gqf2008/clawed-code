@@ -27,8 +27,8 @@ use clawed_core::message::{
     AssistantMessage, ContentBlock, Message, ToolResultContent as CoreToolResultContent,
     UserMessage,
 };
-use clawed_core::tool::{AbortSignal, ToolContext};
 use clawed_core::permissions::PermissionMode;
+use clawed_core::tool::{AbortSignal, ToolContext};
 use clawed_tools::ToolRegistry;
 
 // ── SwarmSession ─────────────────────────────────────────────────────────
@@ -52,12 +52,7 @@ impl SwarmSession {
     /// Create a new session.
     ///
     /// Reads `ANTHROPIC_API_KEY` from the environment. Returns `None` if not set.
-    pub fn new(
-        model: String,
-        system_prompt: String,
-        cwd: String,
-        max_turns: u32,
-    ) -> Option<Self> {
+    pub fn new(model: String, system_prompt: String, cwd: String, max_turns: u32) -> Option<Self> {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .ok()
             .filter(|k| !k.is_empty())?;
@@ -88,7 +83,9 @@ impl SwarmSession {
     pub async fn submit(&mut self, prompt: &str) -> Result<String> {
         self.history.push(Message::User(UserMessage {
             uuid: Uuid::new_v4().to_string(),
-            content: vec![ContentBlock::Text { text: prompt.to_owned() }],
+            content: vec![ContentBlock::Text {
+                text: prompt.to_owned(),
+            }],
         }));
 
         // Build tool definitions from registry
@@ -114,8 +111,7 @@ impl SwarmSession {
             }
             turn += 1;
 
-            let api_messages: Vec<ApiMessage> =
-                self.history.iter().map(core_msg_to_api).collect();
+            let api_messages: Vec<ApiMessage> = self.history.iter().map(core_msg_to_api).collect();
 
             let request = MessagesRequest {
                 model: self.model.clone(),
@@ -126,7 +122,11 @@ impl SwarmSession {
                     text: self.system_prompt.clone(),
                     cache_control: None,
                 }]),
-                tools: if tools.is_empty() { None } else { Some(tools.clone()) },
+                tools: if tools.is_empty() {
+                    None
+                } else {
+                    Some(tools.clone())
+                },
                 stream: true,
                 ..Default::default()
             };
@@ -179,8 +179,8 @@ impl SwarmSession {
             let tool_uses: Vec<(String, String, Value)> = pending_tools
                 .into_iter()
                 .map(|(id, name, json)| {
-                    let input = serde_json::from_str(&json)
-                        .unwrap_or(Value::Object(Default::default()));
+                    let input =
+                        serde_json::from_str(&json).unwrap_or(Value::Object(Default::default()));
                     (id, name, input)
                 })
                 .collect();
@@ -189,7 +189,9 @@ impl SwarmSession {
             let mut assistant_content: Vec<ContentBlock> = Vec::new();
             if !text_buf.is_empty() {
                 full_response.push_str(&text_buf);
-                assistant_content.push(ContentBlock::Text { text: text_buf.clone() });
+                assistant_content.push(ContentBlock::Text {
+                    text: text_buf.clone(),
+                });
             }
             for (id, name, input) in &tool_uses {
                 assistant_content.push(ContentBlock::ToolUse {
@@ -294,7 +296,11 @@ fn core_block_to_api(block: &ContentBlock) -> ApiContentBlock {
             name: name.clone(),
             input: input.clone(),
         },
-        ContentBlock::ToolResult { tool_use_id, content, is_error } => {
+        ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+            is_error,
+        } => {
             ApiContentBlock::ToolResult {
                 tool_use_id: tool_use_id.clone(),
                 content: content

@@ -78,9 +78,13 @@ struct AuditLog {
 
 fn home_dir() -> Option<PathBuf> {
     #[cfg(windows)]
-    { std::env::var_os("USERPROFILE").map(PathBuf::from) }
+    {
+        std::env::var_os("USERPROFILE").map(PathBuf::from)
+    }
     #[cfg(not(windows))]
-    { std::env::var_os("HOME").map(PathBuf::from) }
+    {
+        std::env::var_os("HOME").map(PathBuf::from)
+    }
 }
 
 impl AuditLog {
@@ -147,7 +151,10 @@ fn chrono_now() -> String {
 
     // Convert days since epoch to Y-M-D (simplified)
     let (year, month, day) = epoch_days_to_ymd(days as i64);
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", year, month, day, hours, minutes, seconds)
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, hours, minutes, seconds
+    )
 }
 
 fn epoch_days_to_ymd(days: i64) -> (i64, u32, u32) {

@@ -27,7 +27,7 @@ pub struct McpBusAdapter {
 
 impl McpBusAdapter {
     /// Create a new adapter wrapping an `McpManager`.
-    #[must_use] 
+    #[must_use]
     pub const fn new(manager: McpManager) -> Self {
         Self { manager }
     }
@@ -194,9 +194,7 @@ impl McpBusAdapter {
         let mut notifications = Vec::new();
         for name in &before {
             if !after.contains(name) {
-                notifications.push(AgentNotification::McpServerDisconnected {
-                    name: name.clone(),
-                });
+                notifications.push(AgentNotification::McpServerDisconnected { name: name.clone() });
             }
         }
 
@@ -204,7 +202,7 @@ impl McpBusAdapter {
     }
 
     /// Get a reference to the underlying `McpManager`.
-    #[must_use] 
+    #[must_use]
     pub const fn manager(&self) -> &McpManager {
         &self.manager
     }

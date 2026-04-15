@@ -126,12 +126,16 @@ pub fn get_capabilities(model_id: &str) -> Option<&'static ModelCapabilities> {
 
 /// Get the default model capabilities (Sonnet).
 pub fn default_model() -> &'static ModelCapabilities {
-    MODEL_REGISTRY.get(DEFAULT_MODEL).expect("default model must exist")
+    MODEL_REGISTRY
+        .get(DEFAULT_MODEL)
+        .expect("default model must exist")
 }
 
 /// Get the fast/fallback model capabilities (Haiku).
 pub fn fallback_model() -> &'static ModelCapabilities {
-    MODEL_REGISTRY.get(FAST_MODEL).expect("fallback model must exist")
+    MODEL_REGISTRY
+        .get(FAST_MODEL)
+        .expect("fallback model must exist")
 }
 
 /// List all registered model IDs.
@@ -140,7 +144,7 @@ pub fn all_model_ids() -> Vec<&'static str> {
 }
 
 /// Calculate cost in USD for a given token usage on a specific model.
-#[must_use] 
+#[must_use]
 pub fn calculate_cost(
     model_id: &str,
     input_tokens: u64,
@@ -162,7 +166,7 @@ pub fn calculate_cost(
 /// Resolve a model ID, accepting common abbreviations.
 ///
 /// E.g. "sonnet" → "claude-sonnet-4-6", "haiku" → "claude-haiku-4-5".
-#[must_use] 
+#[must_use]
 pub fn resolve_model_id(input: &str) -> &str {
     match input.to_lowercase().as_str() {
         "sonnet" | "sonnet-4" | "sonnet-4-6" => "claude-sonnet-4-6",

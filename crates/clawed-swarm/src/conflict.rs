@@ -58,12 +58,7 @@ impl FileConflictTracker {
     /// - If the file is not locked, acquires it and returns `Acquired`.
     /// - If the same agent already holds it, refreshes the lock and returns `Acquired`.
     /// - If a different agent holds it, returns `Conflict`.
-    pub fn try_lock(
-        &self,
-        file_path: &str,
-        agent_id: &str,
-        tool_name: &str,
-    ) -> LockResult {
+    pub fn try_lock(&self, file_path: &str, agent_id: &str, tool_name: &str) -> LockResult {
         let key = normalize_path(file_path);
         let mut locks = self.locks.write().unwrap();
 
@@ -206,9 +201,7 @@ mod tests {
         let result = tracker.try_lock("/src/main.rs", "agent-2", "FileWrite");
         match result {
             LockResult::Conflict {
-                holder,
-                file_path,
-                ..
+                holder, file_path, ..
             } => {
                 assert_eq!(holder, "agent-1");
                 assert_eq!(file_path, "/src/main.rs");

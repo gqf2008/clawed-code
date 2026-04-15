@@ -45,10 +45,7 @@ impl Tool for TeamCreateTool {
     }
 
     async fn call(&self, input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
-        let team_name = input["team_name"]
-            .as_str()
-            .unwrap_or("")
-            .trim();
+        let team_name = input["team_name"].as_str().unwrap_or("").trim();
 
         if team_name.is_empty() {
             return Ok(ToolResult::error("team_name must be a non-empty string"));
@@ -125,13 +122,18 @@ mod tests {
     }
 
     fn result_text(result: &ToolResult) -> String {
-        result.content.iter().filter_map(|c| {
-            if let clawed_core::message::ToolResultContent::Text { text } = c {
-                Some(text.as_str())
-            } else {
-                None
-            }
-        }).collect::<Vec<_>>().join("")
+        result
+            .content
+            .iter()
+            .filter_map(|c| {
+                if let clawed_core::message::ToolResultContent::Text { text } = c {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("")
     }
 
     #[test]
@@ -140,13 +142,19 @@ mod tests {
         assert_eq!(tool.name(), "TeamCreate");
         assert!(!tool.is_read_only());
         let schema = tool.input_schema();
-        assert!(schema["required"].as_array().unwrap().contains(&json!("team_name")));
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("team_name")));
     }
 
     #[tokio::test]
     async fn empty_name_rejected() {
         let tool = TeamCreateTool;
-        let result = tool.call(json!({"team_name": ""}), &test_context()).await.unwrap();
+        let result = tool
+            .call(json!({"team_name": ""}), &test_context())
+            .await
+            .unwrap();
         assert!(result.is_error);
     }
 
@@ -155,7 +163,10 @@ mod tests {
         let tool = TeamCreateTool;
         let name = format!("test-create-{}", uuid::Uuid::new_v4().as_simple());
         let result = tool
-            .call(json!({"team_name": &name, "description": "test team"}), &test_context())
+            .call(
+                json!({"team_name": &name, "description": "test team"}),
+                &test_context(),
+            )
             .await
             .unwrap();
         let text = result_text(&result);

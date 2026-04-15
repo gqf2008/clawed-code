@@ -77,19 +77,26 @@ impl OutputRenderer {
         match notification {
             AgentNotification::TextDelta { text } => {
                 self.ensure_started();
-                if let Some(ts) = self.tool_spinner.take() { ts.stop(); }
+                if let Some(ts) = self.tool_spinner.take() {
+                    ts.stop();
+                }
                 if self.thinking_started {
                     self.thinking_started = false;
                     eprintln!("\x1b[0m");
                 }
                 // Tick stall detection
-                if let Some(ref s) = self.spinner { s.tick_activity(); }
+                if let Some(ref s) = self.spinner {
+                    s.tick_activity();
+                }
                 self.md.push(&text);
             }
             AgentNotification::ThinkingDelta { text } => {
                 if self.first_content {
                     self.first_content = false;
-                    if let Some(ref s) = self.spinner { s.set_message("💭 Thinking..."); s.stop(); }
+                    if let Some(ref s) = self.spinner {
+                        s.set_message("💭 Thinking...");
+                        s.stop();
+                    }
                     self.spinner = None;
                 }
                 if !self.thinking_started {
@@ -106,19 +113,39 @@ impl OutputRenderer {
                 self.last_tool_name = tool_name;
                 self.tool_start_time = Some(std::time::Instant::now());
             }
-            AgentNotification::ToolUseReady { tool_name, input, .. } => {
-                if let Some(ts) = self.tool_spinner.take() { ts.stop(); }
+            AgentNotification::ToolUseReady {
+                tool_name, input, ..
+            } => {
+                if let Some(ts) = self.tool_spinner.take() {
+                    ts.stop();
+                }
                 eprintln!("\n{}", format_tool_start(&tool_name, &input));
             }
-            AgentNotification::ToolUseComplete { is_error, result_preview, .. } => {
-                if let Some(ts) = self.tool_spinner.take() { ts.stop(); }
-                let elapsed = self.tool_start_time.take()
+            AgentNotification::ToolUseComplete {
+                is_error,
+                result_preview,
+                ..
+            } => {
+                if let Some(ts) = self.tool_spinner.take() {
+                    ts.stop();
+                }
+                let elapsed = self
+                    .tool_start_time
+                    .take()
                     .map(|t| t.elapsed())
                     .unwrap_or_default();
                 if is_error {
-                    eprintln!("{}  ✗ failed\x1b[0m \x1b[36m({:.1}s)\x1b[0m", theme::c_err(), elapsed.as_secs_f64());
+                    eprintln!(
+                        "{}  ✗ failed\x1b[0m \x1b[36m({:.1}s)\x1b[0m",
+                        theme::c_err(),
+                        elapsed.as_secs_f64()
+                    );
                 } else {
-                    eprintln!("{}  ✓ done\x1b[0m \x1b[36m({:.1}s)\x1b[0m", theme::c_ok(), elapsed.as_secs_f64());
+                    eprintln!(
+                        "{}  ✓ done\x1b[0m \x1b[36m({:.1}s)\x1b[0m",
+                        theme::c_ok(),
+                        elapsed.as_secs_f64()
+                    );
                 }
                 if let Some(ref text) = result_preview {
                     if let Some(inline) = format_tool_result_inline(&self.last_tool_name, text) {
@@ -170,15 +197,26 @@ impl OutputRenderer {
                 return true;
             }
             AgentNotification::ContextWarning { usage_pct, message } => {
-                eprintln!("{}⚠ Context {:.0}%: {}\x1b[0m", theme::c_warn(), usage_pct * 100.0, message);
+                eprintln!(
+                    "{}⚠ Context {:.0}%: {}\x1b[0m",
+                    theme::c_warn(),
+                    usage_pct * 100.0,
+                    message
+                );
             }
             AgentNotification::CompactStart => {
                 eprintln!("{}🗜 Compacting conversation...\x1b[0m", theme::c_tool());
             }
             AgentNotification::CompactComplete { summary_len } => {
-                eprintln!("{}✓ Compacted ({} chars)\x1b[0m", theme::c_tool(), summary_len);
+                eprintln!(
+                    "{}✓ Compacted ({} chars)\x1b[0m",
+                    theme::c_tool(),
+                    summary_len
+                );
             }
-            AgentNotification::AgentSpawned { name, agent_type, .. } => {
+            AgentNotification::AgentSpawned {
+                name, agent_type, ..
+            } => {
                 let label = name.as_deref().unwrap_or(&agent_type);
                 eprintln!("{}🤖 Agent spawned: {}\x1b[0m", theme::c_tool(), label);
             }
@@ -193,7 +231,10 @@ impl OutputRenderer {
                 }
             }
             AgentNotification::McpServerConnected { name, tool_count } => {
-                eprintln!("\x1b[2m[MCP: {} connected, {} tools]\x1b[0m", name, tool_count);
+                eprintln!(
+                    "\x1b[2m[MCP: {} connected, {} tools]\x1b[0m",
+                    name, tool_count
+                );
             }
             AgentNotification::McpServerDisconnected { name } => {
                 eprintln!("\x1b[2m[MCP: {} disconnected]\x1b[0m", name);
@@ -203,7 +244,11 @@ impl OutputRenderer {
             }
             AgentNotification::McpServerList { servers } => {
                 for s in &servers {
-                    let status = if s.connected { "connected" } else { "disconnected" };
+                    let status = if s.connected {
+                        "connected"
+                    } else {
+                        "disconnected"
+                    };
                     eprintln!("\x1b[2m  {} ({})\x1b[0m", s.name, status);
                 }
             }
@@ -216,9 +261,17 @@ impl OutputRenderer {
                 }
             }
             AgentNotification::SessionSaved { session_id } => {
-                eprintln!("\x1b[2m(Session saved: {})\x1b[0m", &session_id[..8.min(session_id.len())]);
+                eprintln!(
+                    "\x1b[2m(Session saved: {})\x1b[0m",
+                    &session_id[..8.min(session_id.len())]
+                );
             }
-            AgentNotification::SessionStatus { model, total_turns, context_usage_pct, .. } => {
+            AgentNotification::SessionStatus {
+                model,
+                total_turns,
+                context_usage_pct,
+                ..
+            } => {
                 eprintln!(
                     "\x1b[2m[Status: {} | {} turns | context {:.0}%]\x1b[0m",
                     model, total_turns, context_usage_pct
@@ -227,7 +280,10 @@ impl OutputRenderer {
             AgentNotification::HistoryCleared => {
                 println!("Conversation history cleared.");
             }
-            AgentNotification::ModelChanged { model, display_name } => {
+            AgentNotification::ModelChanged {
+                model,
+                display_name,
+            } => {
                 println!("Model set to: {} ({})", display_name, model);
             }
             AgentNotification::MemoryExtracted { facts } => {
@@ -242,36 +298,71 @@ impl OutputRenderer {
             }
             AgentNotification::ToolList { tools } => {
                 let enabled = tools.iter().filter(|t| t.enabled).count();
-                eprintln!("\x1b[2m[{} tools ({} enabled)]\x1b[0m", tools.len(), enabled);
+                eprintln!(
+                    "\x1b[2m[{} tools ({} enabled)]\x1b[0m",
+                    tools.len(),
+                    enabled
+                );
             }
             AgentNotification::ThinkingChanged { .. } | AgentNotification::CacheBreakSet => {
                 // Handled in REPL command dispatch, not here
             }
 
             // ── Swarm lifecycle events ──
-            AgentNotification::SwarmTeamCreated { team_name, agent_count } => {
-                eprintln!("\x1b[2m🐝 Swarm team '{}' created ({} agents)\x1b[0m", team_name, agent_count);
+            AgentNotification::SwarmTeamCreated {
+                team_name,
+                agent_count,
+            } => {
+                eprintln!(
+                    "\x1b[2m🐝 Swarm team '{}' created ({} agents)\x1b[0m",
+                    team_name, agent_count
+                );
             }
             AgentNotification::SwarmTeamDeleted { team_name } => {
                 eprintln!("\x1b[2m🐝 Swarm team '{}' deleted\x1b[0m", team_name);
             }
-            AgentNotification::SwarmAgentSpawned { team_name, agent_id, model } => {
-                eprintln!("\x1b[2m🐝 Agent '{}' spawned in '{}' ({})\x1b[0m", agent_id, team_name, model);
+            AgentNotification::SwarmAgentSpawned {
+                team_name,
+                agent_id,
+                model,
+            } => {
+                eprintln!(
+                    "\x1b[2m🐝 Agent '{}' spawned in '{}' ({})\x1b[0m",
+                    agent_id, team_name, model
+                );
             }
-            AgentNotification::SwarmAgentTerminated { team_name, agent_id } => {
-                eprintln!("\x1b[2m🐝 Agent '{}' terminated in '{}'\x1b[0m", agent_id, team_name);
+            AgentNotification::SwarmAgentTerminated {
+                team_name,
+                agent_id,
+            } => {
+                eprintln!(
+                    "\x1b[2m🐝 Agent '{}' terminated in '{}'\x1b[0m",
+                    agent_id, team_name
+                );
             }
-            AgentNotification::SwarmAgentQuery { agent_id, prompt_preview, .. } => {
+            AgentNotification::SwarmAgentQuery {
+                agent_id,
+                prompt_preview,
+                ..
+            } => {
                 eprintln!("\x1b[2m🐝 {} ← {}\x1b[0m", agent_id, prompt_preview);
             }
-            AgentNotification::SwarmAgentReply { agent_id, text_preview, is_error, .. } => {
+            AgentNotification::SwarmAgentReply {
+                agent_id,
+                text_preview,
+                is_error,
+                ..
+            } => {
                 let icon = if is_error { "❌" } else { "→" };
                 eprintln!("\x1b[2m🐝 {} {} {}\x1b[0m", agent_id, icon, text_preview);
             }
 
             // ── Extended lifecycle events ──
             AgentNotification::AgentTerminated { agent_id, reason } => {
-                eprintln!("\x1b[33m⚠ Agent '{}' terminated: {}\x1b[0m", agent_id, reason);
+                eprintln!(
+                    "\x1b[33m⚠ Agent '{}' terminated: {}\x1b[0m",
+                    agent_id, reason
+                );
             }
             AgentNotification::ToolSelected { tool_name } => {
                 // Quiet; ToolUseStart follows shortly with more detail
@@ -305,13 +396,19 @@ impl OutputRenderer {
     fn ensure_started(&mut self) {
         if self.first_content {
             self.first_content = false;
-            if let Some(s) = self.spinner.take() { s.stop(); }
+            if let Some(s) = self.spinner.take() {
+                s.stop();
+            }
         }
     }
 
     fn stop_spinners(&mut self) {
-        if let Some(s) = self.spinner.take() { s.stop(); }
-        if let Some(ts) = self.tool_spinner.take() { ts.stop(); }
+        if let Some(s) = self.spinner.take() {
+            s.stop();
+        }
+        if let Some(ts) = self.tool_spinner.take() {
+            ts.stop();
+        }
     }
 
     fn finish(&mut self) {
@@ -342,7 +439,9 @@ mod tests {
     fn test_output_renderer_text_delta() {
         let mut renderer = OutputRenderer::new("claude-sonnet");
         let done = renderer.render(
-            AgentNotification::TextDelta { text: "hello".into() },
+            AgentNotification::TextDelta {
+                text: "hello".into(),
+            },
             None,
         );
         assert!(!done);
@@ -374,7 +473,9 @@ mod tests {
     fn test_output_renderer_session_end_returns_true() {
         let mut renderer = OutputRenderer::new("claude-sonnet");
         let done = renderer.render(
-            AgentNotification::SessionEnd { reason: "exit".into() },
+            AgentNotification::SessionEnd {
+                reason: "exit".into(),
+            },
             None,
         );
         assert!(done);
@@ -454,11 +555,16 @@ mod tests {
         let mut renderer = OutputRenderer::new("test");
 
         assert!(!renderer.render(
-            AgentNotification::McpServerConnected { name: "sqlite".into(), tool_count: 3 },
+            AgentNotification::McpServerConnected {
+                name: "sqlite".into(),
+                tool_count: 3
+            },
             None,
         ));
         assert!(!renderer.render(
-            AgentNotification::McpServerDisconnected { name: "sqlite".into() },
+            AgentNotification::McpServerDisconnected {
+                name: "sqlite".into()
+            },
             None,
         ));
         assert!(!renderer.render(

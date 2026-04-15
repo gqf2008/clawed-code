@@ -40,10 +40,7 @@ impl Tool for TeamDeleteTool {
     }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
-        let team_name = input["team_name"]
-            .as_str()
-            .unwrap_or("")
-            .trim();
+        let team_name = input["team_name"].as_str().unwrap_or("").trim();
 
         if team_name.is_empty() {
             return Ok(ToolResult::error("team_name must be a non-empty string"));
@@ -102,13 +99,18 @@ mod tests {
     }
 
     fn result_text(result: &ToolResult) -> String {
-        result.content.iter().filter_map(|c| {
-            if let clawed_core::message::ToolResultContent::Text { text } = c {
-                Some(text.as_str())
-            } else {
-                None
-            }
-        }).collect::<Vec<_>>().join("")
+        result
+            .content
+            .iter()
+            .filter_map(|c| {
+                if let clawed_core::message::ToolResultContent::Text { text } = c {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("")
     }
 
     #[test]
@@ -121,7 +123,10 @@ mod tests {
     #[tokio::test]
     async fn empty_name_rejected() {
         let tool = TeamDeleteTool;
-        let result = tool.call(json!({"team_name": ""}), &test_context()).await.unwrap();
+        let result = tool
+            .call(json!({"team_name": ""}), &test_context())
+            .await
+            .unwrap();
         assert!(result.is_error);
     }
 
@@ -129,7 +134,10 @@ mod tests {
     async fn delete_nonexistent_team() {
         let tool = TeamDeleteTool;
         let result = tool
-            .call(json!({"team_name": "nonexistent-team-xyz"}), &test_context())
+            .call(
+                json!({"team_name": "nonexistent-team-xyz"}),
+                &test_context(),
+            )
             .await
             .unwrap();
         assert!(result.is_error);
@@ -150,16 +158,28 @@ mod tests {
                 TeamMember {
                     agent_id: format_agent_id(TEAM_LEAD_NAME, &name),
                     name: TEAM_LEAD_NAME.into(),
-                    agent_type: None, model: None, prompt: None, color: None,
-                    joined_at: 0, cwd: ".".into(), session_id: None,
-                    is_active: true, backend_type: None,
+                    agent_type: None,
+                    model: None,
+                    prompt: None,
+                    color: None,
+                    joined_at: 0,
+                    cwd: ".".into(),
+                    session_id: None,
+                    is_active: true,
+                    backend_type: None,
                 },
                 TeamMember {
                     agent_id: format_agent_id("worker", &name),
                     name: "worker".into(),
-                    agent_type: None, model: None, prompt: None, color: Some("cyan".into()),
-                    joined_at: 0, cwd: ".".into(), session_id: None,
-                    is_active: true, backend_type: None,
+                    agent_type: None,
+                    model: None,
+                    prompt: None,
+                    color: Some("cyan".into()),
+                    joined_at: 0,
+                    cwd: ".".into(),
+                    session_id: None,
+                    is_active: true,
+                    backend_type: None,
                 },
             ],
             team_allowed_paths: vec![],
@@ -167,7 +187,10 @@ mod tests {
         helpers::write_team_file(&name, &team).unwrap();
 
         let tool = TeamDeleteTool;
-        let result = tool.call(json!({"team_name": &name}), &test_context()).await.unwrap();
+        let result = tool
+            .call(json!({"team_name": &name}), &test_context())
+            .await
+            .unwrap();
         assert!(result.is_error);
         assert!(result_text(&result).contains("active teammate"));
 
@@ -188,16 +211,25 @@ mod tests {
             members: vec![TeamMember {
                 agent_id: format_agent_id(TEAM_LEAD_NAME, &name),
                 name: TEAM_LEAD_NAME.into(),
-                agent_type: None, model: None, prompt: None, color: None,
-                joined_at: 0, cwd: ".".into(), session_id: None,
-                is_active: true, backend_type: None,
+                agent_type: None,
+                model: None,
+                prompt: None,
+                color: None,
+                joined_at: 0,
+                cwd: ".".into(),
+                session_id: None,
+                is_active: true,
+                backend_type: None,
             }],
             team_allowed_paths: vec![],
         };
         helpers::write_team_file(&name, &team).unwrap();
 
         let tool = TeamDeleteTool;
-        let result = tool.call(json!({"team_name": &name}), &test_context()).await.unwrap();
+        let result = tool
+            .call(json!({"team_name": &name}), &test_context())
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result_text(&result).contains("deleted successfully"));
         assert!(!helpers::team_exists(&name));

@@ -1,9 +1,9 @@
+use crate::path_util;
 use async_trait::async_trait;
 use clawed_core::tool::{Tool, ToolCategory, ToolContext, ToolResult};
 use serde_json::{json, Value};
 use std::path::Path;
 use tracing::{debug, warn};
-use crate::path_util;
 
 /// Extensions we support reading as base64-encoded images.
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "bmp", "webp", "svg"];
@@ -13,9 +13,15 @@ const MAX_READ_BYTES: u64 = 50 * 1024 * 1024;
 
 /// Device files that would hang or cause issues when read.
 const BLOCKED_DEVICE_PATHS: &[&str] = &[
-    "/dev/zero", "/dev/random", "/dev/urandom", "/dev/null",
-    "/dev/stdin", "/dev/stdout", "/dev/stderr",
-    "/dev/fd/", "/proc/kcore",
+    "/dev/zero",
+    "/dev/random",
+    "/dev/urandom",
+    "/dev/null",
+    "/dev/stdin",
+    "/dev/stdout",
+    "/dev/stderr",
+    "/dev/fd/",
+    "/proc/kcore",
 ];
 
 /// Check if the first N bytes look like binary content.
@@ -31,12 +37,15 @@ fn find_similar_files(path: &Path, max_suggestions: usize) -> Vec<String> {
         Some(p) if p.is_dir() => p,
         _ => return Vec::new(),
     };
-    let target_name = path.file_name()
+    let target_name = path
+        .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_lowercase();
 
-    if target_name.is_empty() { return Vec::new(); }
+    if target_name.is_empty() {
+        return Vec::new();
+    }
 
     let mut candidates: Vec<(String, usize)> = Vec::new();
 
@@ -54,7 +63,8 @@ fn find_similar_files(path: &Path, max_suggestions: usize) -> Vec<String> {
     }
 
     candidates.sort_by(|a, b| b.1.cmp(&a.1));
-    candidates.iter()
+    candidates
+        .iter()
         .take(max_suggestions)
         .map(|(name, _)| name.clone())
         .collect()
@@ -62,7 +72,9 @@ fn find_similar_files(path: &Path, max_suggestions: usize) -> Vec<String> {
 
 /// Simple string similarity score based on common subsequences.
 fn similarity_score(a: &str, b: &str) -> usize {
-    if a == b { return 100; }
+    if a == b {
+        return 100;
+    }
 
     let mut score = 0;
 
@@ -110,8 +122,12 @@ pub struct FileReadTool;
 
 #[async_trait]
 impl Tool for FileReadTool {
-    fn name(&self) -> &'static str { "Read" }
-    fn category(&self) -> ToolCategory { ToolCategory::FileSystem }
+    fn name(&self) -> &'static str {
+        "Read"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::FileSystem
+    }
 
     fn description(&self) -> &'static str {
         "Reads a file from the local filesystem. The file_path must be an absolute path. \
@@ -133,7 +149,9 @@ impl Tool for FileReadTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
         let file_path = input["file_path"]
@@ -164,7 +182,10 @@ impl Tool for FileReadTool {
             if !suggestions.is_empty() {
                 msg.push_str("\n\nDid you mean one of these?");
                 for s in &suggestions {
-                    msg.push_str(&format!("\n  - {}", path.parent().unwrap_or(Path::new("")).join(s).display()));
+                    msg.push_str(&format!(
+                        "\n  - {}",
+                        path.parent().unwrap_or(Path::new("")).join(s).display()
+                    ));
                 }
             }
             return Ok(ToolResult::error(msg));
@@ -174,7 +195,8 @@ impl Tool for FileReadTool {
         }
 
         // Check for image files — return base64
-        let ext = path.extension()
+        let ext = path
+            .extension()
             .and_then(|e| e.to_str())
             .map(str::to_lowercase)
             .unwrap_or_default();
@@ -185,7 +207,9 @@ impl Tool for FileReadTool {
                 return Ok(ToolResult::error(format!(
                     "File too large: {} ({} bytes, limit is {} MB). \
                      Use offset/limit to read specific portions.",
-                    path.display(), meta.len(), MAX_READ_BYTES / 1024 / 1024
+                    path.display(),
+                    meta.len(),
+                    MAX_READ_BYTES / 1024 / 1024
                 )));
             }
         }
@@ -215,7 +239,9 @@ impl Tool for FileReadTool {
             return Ok(ToolResult::text(format!(
                 "Binary file: {} ({}, {} bytes)\nCannot display binary content. \
                  Use appropriate tools to process this file type.",
-                path.display(), mime, size
+                path.display(),
+                mime,
+                size
             )));
         }
 
@@ -224,7 +250,9 @@ impl Tool for FileReadTool {
         let total_lines = lines.len();
         let offset = input["offset"].as_u64().unwrap_or(0) as usize;
         let limit = input["limit"].as_u64().map(|l| l as usize);
-        let end = limit.map_or(lines.len().min(offset + 2000), |l| (offset + l).min(lines.len()));
+        let end = limit.map_or(lines.len().min(offset + 2000), |l| {
+            (offset + l).min(lines.len())
+        });
 
         let selected: Vec<String> = lines[offset.min(lines.len())..end]
             .iter()
@@ -240,10 +268,19 @@ impl Tool for FileReadTool {
         }
         header.push(')');
         if end < total_lines {
-            header.push_str(&format!("\nShowing lines {}-{} of {}", offset + 1, end, total_lines));
+            header.push_str(&format!(
+                "\nShowing lines {}-{} of {}",
+                offset + 1,
+                end,
+                total_lines
+            ));
         }
 
-        Ok(ToolResult::text(format!("{}\n{}", header, selected.join("\n"))))
+        Ok(ToolResult::text(format!(
+            "{}\n{}",
+            header,
+            selected.join("\n")
+        )))
     }
 }
 
@@ -291,7 +328,10 @@ async fn read_notebook(path: &Path) -> anyhow::Result<ToolResult> {
         .map_err(|e| anyhow::anyhow!("Invalid notebook JSON: {e}"))?;
 
     let mut output = String::new();
-    output.push_str(&format!("# Notebook: {}\n\n", path.file_name().unwrap_or_default().to_string_lossy()));
+    output.push_str(&format!(
+        "# Notebook: {}\n\n",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
 
     if let Some(cells) = notebook["cells"].as_array() {
         for (i, cell) in cells.iter().enumerate() {
@@ -365,7 +405,10 @@ mod tests {
     #[test]
     fn test_similarity_same_extension() {
         let score = similarity_score("bar.rs", "baz.rs");
-        assert!(score > 0, "same extension should give non-zero score, got {score}");
+        assert!(
+            score > 0,
+            "same extension should give non-zero score, got {score}"
+        );
     }
 
     #[test]
@@ -378,12 +421,18 @@ mod tests {
     fn test_similarity_totally_different() {
         let score = similarity_score("xyz", "abc");
         // No prefix, no extension match, no stem match, no contains
-        assert!(score <= 5, "totally different should give very low score, got {score}");
+        assert!(
+            score <= 5,
+            "totally different should give very low score, got {score}"
+        );
     }
 
     #[test]
     fn test_similarity_same_stem() {
         let score = similarity_score("foo.rs", "foo.ts");
-        assert!(score > 0, "same stem should give non-zero score, got {score}");
+        assert!(
+            score > 0,
+            "same stem should give non-zero score, got {score}"
+        );
     }
 }

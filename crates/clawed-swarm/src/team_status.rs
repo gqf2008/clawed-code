@@ -39,10 +39,7 @@ impl Tool for TeamStatusTool {
     }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
-        let team_name = input["team_name"]
-            .as_str()
-            .unwrap_or("")
-            .trim();
+        let team_name = input["team_name"].as_str().unwrap_or("").trim();
 
         if team_name.is_empty() {
             return Ok(ToolResult::error("team_name must be a non-empty string"));
@@ -75,7 +72,11 @@ impl Tool for TeamStatusTool {
         ));
 
         for member in &team.members {
-            let status = if member.is_active { "🟢 active" } else { "⚪ idle" };
+            let status = if member.is_active {
+                "🟢 active"
+            } else {
+                "⚪ idle"
+            };
             let role = member.agent_type.as_deref().unwrap_or("general");
             let model = member.model.as_deref().unwrap_or("default");
             let color = member.color.as_deref().unwrap_or("-");
@@ -153,13 +154,18 @@ mod tests {
     }
 
     fn result_text(result: &ToolResult) -> String {
-        result.content.iter().filter_map(|c| {
-            if let clawed_core::message::ToolResultContent::Text { text } = c {
-                Some(text.as_str())
-            } else {
-                None
-            }
-        }).collect::<Vec<_>>().join("")
+        result
+            .content
+            .iter()
+            .filter_map(|c| {
+                if let clawed_core::message::ToolResultContent::Text { text } = c {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("")
     }
 
     #[test]
@@ -193,18 +199,27 @@ mod tests {
                     agent_id: format_agent_id(TEAM_LEAD_NAME, &name),
                     name: TEAM_LEAD_NAME.into(),
                     agent_type: Some("coordinator".into()),
-                    model: None, prompt: None, color: None,
-                    joined_at: 0, cwd: ".".into(), session_id: None,
-                    is_active: true, backend_type: None,
+                    model: None,
+                    prompt: None,
+                    color: None,
+                    joined_at: 0,
+                    cwd: ".".into(),
+                    session_id: None,
+                    is_active: true,
+                    backend_type: None,
                 },
                 TeamMember {
                     agent_id: format_agent_id("researcher", &name),
                     name: "researcher".into(),
                     agent_type: Some("researcher".into()),
                     model: Some("claude-sonnet-4-20250514".into()),
-                    prompt: None, color: Some("cyan".into()),
-                    joined_at: 0, cwd: ".".into(), session_id: None,
-                    is_active: true, backend_type: None,
+                    prompt: None,
+                    color: Some("cyan".into()),
+                    joined_at: 0,
+                    cwd: ".".into(),
+                    session_id: None,
+                    is_active: true,
+                    backend_type: None,
                 },
             ],
             team_allowed_paths: vec![],
@@ -212,7 +227,10 @@ mod tests {
         helpers::write_team_file(&name, &team).unwrap();
 
         let tool = TeamStatusTool;
-        let result = tool.call(json!({"team_name": &name}), &test_context()).await.unwrap();
+        let result = tool
+            .call(json!({"team_name": &name}), &test_context())
+            .await
+            .unwrap();
         let text = result_text(&result);
         assert!(text.contains("# Team:"));
         assert!(text.contains("researcher"));

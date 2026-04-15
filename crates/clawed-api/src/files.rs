@@ -43,7 +43,7 @@ pub struct FilesApiConfig {
 }
 
 impl FilesApiConfig {
-    #[must_use] 
+    #[must_use]
     pub fn new(oauth_token: String, session_id: String) -> Self {
         Self {
             oauth_token,
@@ -52,7 +52,7 @@ impl FilesApiConfig {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn with_base_url(mut self, url: String) -> Self {
         self.base_url = url;
         self
@@ -125,10 +125,7 @@ fn build_headers(config: &FilesApiConfig) -> HeaderMap {
 }
 
 /// Retry with exponential backoff. Non-retryable status codes bail immediately.
-async fn retry_with_backoff<T, F, Fut>(
-    operation: &str,
-    mut attempt_fn: F,
-) -> anyhow::Result<T>
+async fn retry_with_backoff<T, F, Fut>(operation: &str, mut attempt_fn: F) -> anyhow::Result<T>
 where
     F: FnMut(u32) -> Fut,
     Fut: std::future::Future<Output = RetryResult<T>>,
@@ -141,7 +138,10 @@ where
                 last_error = err.unwrap_or_else(|| "unknown error".to_string());
                 if attempt < MAX_RETRIES {
                     let delay = BASE_DELAY_MS * (1u64 << (attempt - 1));
-                    debug!("[files-api] {} retry {}/{} in {}ms: {}", operation, attempt, MAX_RETRIES, delay, last_error);
+                    debug!(
+                        "[files-api] {} retry {}/{} in {}ms: {}",
+                        operation, attempt, MAX_RETRIES, delay, last_error
+                    );
                     tokio::time::sleep(Duration::from_millis(delay)).await;
                 }
             }
@@ -150,7 +150,9 @@ where
             }
         }
     }
-    Err(anyhow::anyhow!("[files-api] {operation} failed after {MAX_RETRIES} attempts: {last_error}"))
+    Err(anyhow::anyhow!(
+        "[files-api] {operation} failed after {MAX_RETRIES} attempts: {last_error}"
+    ))
 }
 
 /// Retry control flow.
@@ -168,10 +170,7 @@ const fn is_non_retryable(status: u16) -> bool {
 // ── Download ─────────────────────────────────────────────────────────────────
 
 /// Download a single file's content by file ID.
-pub async fn download_file(
-    file_id: &str,
-    config: &FilesApiConfig,
-) -> anyhow::Result<Vec<u8>> {
+pub async fn download_file(file_id: &str, config: &FilesApiConfig) -> anyhow::Result<Vec<u8>> {
     let url = format!("{}/v1/files/{}/content", config.base_url, file_id);
     let client = reqwest::Client::new();
 
@@ -220,7 +219,10 @@ pub fn build_download_path(
     // Reject paths that traverse above workspace
     for component in normalized.components() {
         if component == std::path::Component::ParentDir {
-            warn!("Invalid file path: {}. Path must not traverse above workspace", relative_path);
+            warn!(
+                "Invalid file path: {}. Path must not traverse above workspace",
+                relative_path
+            );
             return None;
         }
     }
@@ -241,18 +243,19 @@ pub async fn download_and_save_file(
     config: &FilesApiConfig,
     base_path: &Path,
 ) -> DownloadResult {
-    let full_path = match build_download_path(base_path, &config.session_id, &attachment.relative_path) {
-        Some(p) => p,
-        None => {
-            return DownloadResult {
-                file_id: attachment.file_id.clone(),
-                path: attachment.relative_path.clone(),
-                success: false,
-                error: Some("Path traversal rejected".to_string()),
-                bytes_written: None,
-            };
-        }
-    };
+    let full_path =
+        match build_download_path(base_path, &config.session_id, &attachment.relative_path) {
+            Some(p) => p,
+            None => {
+                return DownloadResult {
+                    file_id: attachment.file_id.clone(),
+                    path: attachment.relative_path.clone(),
+                    success: false,
+                    error: Some("Path traversal rejected".to_string()),
+                    bytes_written: None,
+                };
+            }
+        };
 
     let content = match download_file(&attachment.file_id, config).await {
         Ok(c) => c,
@@ -291,7 +294,10 @@ pub async fn download_and_save_file(
         };
     }
 
-    debug!("[files-api] Saved {} to {:?} ({} bytes)", attachment.file_id, full_path, bytes_written);
+    debug!(
+        "[files-api] Saved {} to {:?} ({} bytes)",
+        attachment.file_id, full_path, bytes_written
+    );
 
     DownloadResult {
         file_id: attachment.file_id.clone(),
@@ -321,13 +327,15 @@ pub async fn download_session_files(
         handles.push(tokio::spawn(async move {
             let _permit = match sem.acquire().await {
                 Ok(p) => p,
-                Err(_) => return DownloadResult {
-                    file_id: att.file_id.clone(),
-                    path: String::new(),
-                    success: false,
-                    error: Some("Semaphore closed".to_string()),
-                    bytes_written: None,
-                },
+                Err(_) => {
+                    return DownloadResult {
+                        file_id: att.file_id.clone(),
+                        path: String::new(),
+                        success: false,
+                        error: Some("Semaphore closed".to_string()),
+                        bytes_written: None,
+                    }
+                }
             };
             download_and_save_file(&att, &cfg, &bp).await
         }));
@@ -348,7 +356,11 @@ pub async fn download_session_files(
     }
 
     let success_count = results.iter().filter(|r| r.success).count();
-    debug!("[files-api] Downloaded {}/{} files", success_count, files.len());
+    debug!(
+        "[files-api] Downloaded {}/{} files",
+        success_count,
+        files.len()
+    );
 
     results
 }
@@ -391,7 +403,8 @@ pub async fn upload_file(
     }
 
     let filename = file_path
-        .file_name().map_or_else(|| "file".to_string(), |n| n.to_string_lossy().to_string());
+        .file_name()
+        .map_or_else(|| "file".to_string(), |n| n.to_string_lossy().to_string());
 
     let url = format!("{}/v1/files", config.base_url);
     let client = reqwest::Client::new();
@@ -471,7 +484,10 @@ pub async fn upload_file(
 
     match result {
         Ok(file_id) => {
-            debug!("[files-api] Uploaded {} → {} ({} bytes)", relative_path, file_id, file_size);
+            debug!(
+                "[files-api] Uploaded {} → {} ({} bytes)",
+                relative_path, file_id, file_size
+            );
             UploadResult {
                 path: relative_path.to_string(),
                 success: true,
@@ -508,13 +524,15 @@ pub async fn upload_session_files(
         handles.push(tokio::spawn(async move {
             let _permit = match sem.acquire().await {
                 Ok(p) => p,
-                Err(_) => return UploadResult {
-                    path: relative.clone(),
-                    success: false,
-                    file_id: None,
-                    size: None,
-                    error: Some("Semaphore closed".to_string()),
-                },
+                Err(_) => {
+                    return UploadResult {
+                        path: relative.clone(),
+                        success: false,
+                        file_id: None,
+                        size: None,
+                        error: Some("Semaphore closed".to_string()),
+                    }
+                }
             };
             upload_file(&path, &relative, &cfg).await
         }));
@@ -616,7 +634,9 @@ pub fn parse_file_specs(specs: &[String]) -> Vec<FileSpec> {
                 continue;
             }
 
-            let colon_idx = if let Some(i) = part.find(':') { i } else {
+            let colon_idx = if let Some(i) = part.find(':') {
+                i
+            } else {
                 debug!("[files-api] Invalid file spec (no colon): {}", part);
                 continue;
             };
@@ -664,10 +684,7 @@ mod tests {
 
     #[test]
     fn parse_multiple_specs() {
-        let specs = vec![
-            "file_1:a.rs".to_string(),
-            "file_2:b.rs".to_string(),
-        ];
+        let specs = vec!["file_1:a.rs".to_string(), "file_2:b.rs".to_string()];
         let result = parse_file_specs(&specs);
         assert_eq!(result.len(), 2);
     }
@@ -711,11 +728,7 @@ mod tests {
 
     #[test]
     fn build_path_simple() {
-        let result = build_download_path(
-            Path::new("/home"),
-            "sess1",
-            "file.txt",
-        );
+        let result = build_download_path(Path::new("/home"), "sess1", "file.txt");
         assert!(result.is_some());
         let p = result.expect("should parse valid path");
         assert!(p.to_string_lossy().contains("uploads"));
@@ -724,31 +737,19 @@ mod tests {
 
     #[test]
     fn build_path_nested() {
-        let result = build_download_path(
-            Path::new("/home"),
-            "sess1",
-            "dir/sub/file.txt",
-        );
+        let result = build_download_path(Path::new("/home"), "sess1", "dir/sub/file.txt");
         assert!(result.is_some());
     }
 
     #[test]
     fn build_path_traversal_rejected() {
-        let result = build_download_path(
-            Path::new("/home"),
-            "sess1",
-            "../etc/passwd",
-        );
+        let result = build_download_path(Path::new("/home"), "sess1", "../etc/passwd");
         assert!(result.is_none());
     }
 
     #[test]
     fn build_path_dot_slash() {
-        let result = build_download_path(
-            Path::new("/home"),
-            "sess1",
-            "./file.txt",
-        );
+        let result = build_download_path(Path::new("/home"), "sess1", "./file.txt");
         assert!(result.is_some());
     }
 
@@ -774,15 +775,27 @@ mod tests {
         let cfg = FilesApiConfig::new("my-token".to_string(), "s1".to_string());
         let headers = build_headers(&cfg);
         assert_eq!(
-            headers.get(AUTHORIZATION).expect("auth header").to_str().expect("valid str"),
+            headers
+                .get(AUTHORIZATION)
+                .expect("auth header")
+                .to_str()
+                .expect("valid str"),
             "Bearer my-token"
         );
         assert_eq!(
-            headers.get("anthropic-version").expect("version header").to_str().expect("valid str"),
+            headers
+                .get("anthropic-version")
+                .expect("version header")
+                .to_str()
+                .expect("valid str"),
             ANTHROPIC_VERSION
         );
         assert_eq!(
-            headers.get("anthropic-beta").expect("beta header").to_str().expect("valid str"),
+            headers
+                .get("anthropic-beta")
+                .expect("beta header")
+                .to_str()
+                .expect("valid str"),
             FILES_API_BETA_HEADER
         );
     }

@@ -126,7 +126,10 @@ mod tests {
         n.team_created("alpha", 3);
         let event = rx.try_recv().unwrap();
         match event {
-            AgentNotification::SwarmTeamCreated { team_name, agent_count } => {
+            AgentNotification::SwarmTeamCreated {
+                team_name,
+                agent_count,
+            } => {
                 assert_eq!(team_name, "alpha");
                 assert_eq!(agent_count, 3);
             }

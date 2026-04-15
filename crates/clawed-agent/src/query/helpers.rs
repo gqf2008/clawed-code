@@ -16,14 +16,19 @@ use super::AgentEvent;
 ///
 /// When `skip_cache` is true, all `cache_control` fields are set to `None`
 /// to force a prompt cache miss (used by `/break-cache`).
-pub(super) fn build_system_blocks(system_prompt: &str, skip_cache: bool) -> Option<Vec<SystemBlock>> {
+pub(super) fn build_system_blocks(
+    system_prompt: &str,
+    skip_cache: bool,
+) -> Option<Vec<SystemBlock>> {
     if system_prompt.is_empty() {
         return None;
     }
-    let cc = if skip_cache { None } else { Some(CacheControl::ephemeral()) };
-    let boundary = system_prompt.find(
-        crate::system_prompt::SYSTEM_PROMPT_DYNAMIC_BOUNDARY
-    );
+    let cc = if skip_cache {
+        None
+    } else {
+        Some(CacheControl::ephemeral())
+    };
+    let boundary = system_prompt.find(crate::system_prompt::SYSTEM_PROMPT_DYNAMIC_BOUNDARY);
     match boundary {
         Some(pos) => {
             let static_prefix = system_prompt[..pos].trim();
@@ -90,7 +95,9 @@ pub(super) fn classify_api_error(
     if is_retryable && consecutive_errors <= MAX_CONSECUTIVE_ERRORS {
         let wait_ms = if let Some(pos) = err_str.find("retry-after:") {
             let after = &err_str[pos + 12..];
-            after.split_whitespace().next()
+            after
+                .split_whitespace()
+                .next()
                 .and_then(|s| s.parse::<u64>().ok())
                 .map(|secs| secs * 1000)
                 .unwrap_or(retry_delay_ms)
@@ -144,22 +151,32 @@ pub(super) fn build_context_warning(
         0.0
     };
     let msg = match warning {
-        crate::compact::TokenWarningState::Warning =>
-            "Approaching context limit — consider saving progress".to_string(),
-        crate::compact::TokenWarningState::Critical =>
-            "Context nearly full — auto-compaction may trigger soon".to_string(),
-        crate::compact::TokenWarningState::Imminent =>
-            "Context limit imminent — auto-compaction will trigger".to_string(),
+        crate::compact::TokenWarningState::Warning => {
+            "Approaching context limit — consider saving progress".to_string()
+        }
+        crate::compact::TokenWarningState::Critical => {
+            "Context nearly full — auto-compaction may trigger soon".to_string()
+        }
+        crate::compact::TokenWarningState::Imminent => {
+            "Context limit imminent — auto-compaction will trigger".to_string()
+        }
         _ => return None,
     };
-    Some((warning, AgentEvent::ContextWarning { usage_pct: pct, message: msg }))
+    Some((
+        warning,
+        AgentEvent::ContextWarning {
+            usage_pct: pct,
+            message: msg,
+        },
+    ))
 }
 
 /// Create a continuation message for max_tokens recovery.
 pub(super) fn make_continuation_message(attempt: u32, limit: u32) -> UserMessage {
     let text = if attempt == 0 {
         "Output token limit hit. Resume directly — no apology, \
-         no recap. Continue exactly where you left off.".to_string()
+         no recap. Continue exactly where you left off."
+            .to_string()
     } else {
         format!(
             "Output token limit hit again (attempt {}/{}). Continue where you left off. \
@@ -179,17 +196,20 @@ pub(super) fn make_continuation_message(attempt: u32, limit: u32) -> UserMessage
 ///
 /// When `skip_cache` is true, no cache_control markers are added (for `/break-cache`).
 pub(super) fn messages_to_api(messages: &[Message], skip_cache: bool) -> Vec<ApiMessage> {
-    let mut api_msgs: Vec<ApiMessage> = messages.iter().filter_map(|msg| match msg {
-        Message::User(u) => Some(ApiMessage {
-            role: "user".into(),
-            content: u.content.iter().map(block_to_api).collect(),
-        }),
-        Message::Assistant(a) => Some(ApiMessage {
-            role: "assistant".into(),
-            content: a.content.iter().map(block_to_api).collect(),
-        }),
-        Message::System(_) => None,
-    }).collect();
+    let mut api_msgs: Vec<ApiMessage> = messages
+        .iter()
+        .filter_map(|msg| match msg {
+            Message::User(u) => Some(ApiMessage {
+                role: "user".into(),
+                content: u.content.iter().map(block_to_api).collect(),
+            }),
+            Message::Assistant(a) => Some(ApiMessage {
+                role: "assistant".into(),
+                content: a.content.iter().map(block_to_api).collect(),
+            }),
+            Message::System(_) => None,
+        })
+        .collect();
 
     // Cache breakpoint at conversation tail (skipped when break-cache is active)
     if !skip_cache {
@@ -213,35 +233,48 @@ pub(super) fn messages_to_api(messages: &[Message], skip_cache: bool) -> Vec<Api
 /// Convert a single content block to API format.
 pub(super) fn block_to_api(block: &ContentBlock) -> ApiContentBlock {
     match block {
-        ContentBlock::Text { text } => ApiContentBlock::Text { text: text.clone(), cache_control: None },
-        ContentBlock::ToolUse { id, name, input } => ApiContentBlock::ToolUse {
-            id: id.clone(), name: name.clone(), input: input.clone(),
+        ContentBlock::Text { text } => ApiContentBlock::Text {
+            text: text.clone(),
+            cache_control: None,
         },
-        ContentBlock::ToolResult { tool_use_id, content, is_error } => ApiContentBlock::ToolResult {
+        ContentBlock::ToolUse { id, name, input } => ApiContentBlock::ToolUse {
+            id: id.clone(),
+            name: name.clone(),
+            input: input.clone(),
+        },
+        ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+            is_error,
+        } => ApiContentBlock::ToolResult {
             tool_use_id: tool_use_id.clone(),
-            content: content.iter().map(|c| match c {
-                clawed_core::message::ToolResultContent::Text { text } => {
-                    clawed_api::types::ToolResultContent::Text { text: text.clone() }
-                }
-                clawed_core::message::ToolResultContent::Image { .. } => {
-                    clawed_api::types::ToolResultContent::Text { text: "[image]".into() }
-                }
-            }).collect(),
+            content: content
+                .iter()
+                .map(|c| match c {
+                    clawed_core::message::ToolResultContent::Text { text } => {
+                        clawed_api::types::ToolResultContent::Text { text: text.clone() }
+                    }
+                    clawed_core::message::ToolResultContent::Image { .. } => {
+                        clawed_api::types::ToolResultContent::Text {
+                            text: "[image]".into(),
+                        }
+                    }
+                })
+                .collect(),
             is_error: *is_error,
             cache_control: None,
         },
-        ContentBlock::Thinking { thinking } => {
-            ApiContentBlock::Text { text: format!("<thinking>{}</thinking>", thinking), cache_control: None }
-        }
-        ContentBlock::Image { source } => {
-            ApiContentBlock::Image {
-                source: clawed_api::types::ImageSource {
-                    source_type: "base64".into(),
-                    media_type: source.media_type.clone(),
-                    data: source.data.clone(),
-                },
-            }
-        }
+        ContentBlock::Thinking { thinking } => ApiContentBlock::Text {
+            text: format!("<thinking>{}</thinking>", thinking),
+            cache_control: None,
+        },
+        ContentBlock::Image { source } => ApiContentBlock::Image {
+            source: clawed_api::types::ImageSource {
+                source_type: "base64".into(),
+                media_type: source.media_type.clone(),
+                data: source.data.clone(),
+            },
+        },
     }
 }
 
@@ -265,7 +298,13 @@ mod tests {
         let v1 = with_jitter(1000, 1);
         let v2 = with_jitter(1000, 2);
         let v3 = with_jitter(1000, 3);
-        assert!(v1 != v2 || v2 != v3, "jitter should vary: {}, {}, {}", v1, v2, v3);
+        assert!(
+            v1 != v2 || v2 != v3,
+            "jitter should vary: {}, {}, {}",
+            v1,
+            v2,
+            v3
+        );
     }
 
     #[test]

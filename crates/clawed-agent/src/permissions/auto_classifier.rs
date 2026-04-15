@@ -7,8 +7,8 @@
 //! The classifier builds a compact transcript of recent tool calls and asks
 //! Claude whether the next action should be blocked.
 
-use clawed_api::types::{ApiContentBlock, ApiMessage, MessagesRequest, SystemBlock};
 use clawed_api::client::ApiClient;
+use clawed_api::types::{ApiContentBlock, ApiMessage, MessagesRequest, SystemBlock};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -105,7 +105,11 @@ fn parse_reason(text: &str) -> Option<String> {
     let re = Regex::new(r"<reason>([\s\S]*?)</reason>").expect("valid regex");
     let caps = re.captures(&stripped)?;
     let reason = caps[1].trim().to_string();
-    if reason.is_empty() { None } else { Some(reason) }
+    if reason.is_empty() {
+        None
+    } else {
+        Some(reason)
+    }
 }
 
 /// Remove `<thinking>...</thinking>` blocks from response text.
@@ -297,7 +301,8 @@ mod tests {
 
     #[test]
     fn parse_block_with_thinking() {
-        let text = "<thinking>Let me analyze...</thinking><block>yes</block><reason>dangerous</reason>";
+        let text =
+            "<thinking>Let me analyze...</thinking><block>yes</block><reason>dangerous</reason>";
         assert_eq!(parse_block(text), Some(true));
     }
 
@@ -354,7 +359,10 @@ mod tests {
     fn build_transcript_basic() {
         let recent: Vec<(String, Value)> = vec![
             ("Bash".into(), serde_json::json!({"Bash": "ls -la"})),
-            ("Read".into(), serde_json::json!({"Read": {"path": "foo.rs"}})),
+            (
+                "Read".into(),
+                serde_json::json!({"Read": {"path": "foo.rs"}}),
+            ),
         ];
         let current_input = serde_json::json!({"Bash": "rm -rf target/"});
         let msg = build_classifier_message(&recent, "Bash", &current_input);
@@ -368,7 +376,12 @@ mod tests {
     fn build_transcript_limits_context() {
         // More than 10 recent tools — only last 10 should appear
         let recent: Vec<(String, Value)> = (0..15)
-            .map(|i| (format!("Tool{i}"), serde_json::json!({format!("Tool{i}"): i})))
+            .map(|i| {
+                (
+                    format!("Tool{i}"),
+                    serde_json::json!({format!("Tool{i}"): i}),
+                )
+            })
             .collect();
         let msg = build_classifier_message(&recent, "Current", &serde_json::json!({}));
         // Should contain Tool5..Tool14 (last 10) but not Tool0..Tool4

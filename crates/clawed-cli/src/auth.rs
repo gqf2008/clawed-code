@@ -140,8 +140,7 @@ pub(crate) fn resolve_api_key(
         }
         "openai-compatible" => {
             // Try OPENAI_API_KEY, fallback to settings, then allow empty
-            std::env::var("OPENAI_API_KEY")
-                .or_else(|_| Ok(settings_key.unwrap_or("").to_string()))
+            std::env::var("OPENAI_API_KEY").or_else(|_| Ok(settings_key.unwrap_or("").to_string()))
         }
         _ => {
             // Unknown provider — try settings key, then OPENAI_API_KEY
@@ -149,10 +148,7 @@ pub(crate) fn resolve_api_key(
                 Ok(key.to_string())
             } else {
                 std::env::var("OPENAI_API_KEY").map_err(|_| {
-                    anyhow::anyhow!(
-                        "API key required for {} provider. Use --api-key.",
-                        provider
-                    )
+                    anyhow::anyhow!("API key required for {} provider. Use --api-key.", provider)
                 })
             }
         }
@@ -188,10 +184,7 @@ mod tests {
 
     #[test]
     fn test_resolve_api_key_ollama_no_key() {
-        assert_eq!(
-            resolve_api_key("ollama", None, None).unwrap(),
-            "ollama"
-        );
+        assert_eq!(resolve_api_key("ollama", None, None).unwrap(), "ollama");
     }
 
     #[test]

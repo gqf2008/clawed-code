@@ -102,7 +102,10 @@ impl CostTracker {
         };
         inner.total_cost_usd += cost;
 
-        let entry = inner.by_model.entry(canonical_model(model).to_string()).or_default();
+        let entry = inner
+            .by_model
+            .entry(canonical_model(model).to_string())
+            .or_default();
         entry.input_tokens += usage.input_tokens;
         entry.output_tokens += usage.output_tokens;
         entry.cache_read_tokens += usage.cache_read_input_tokens.unwrap_or(0);
@@ -132,19 +135,38 @@ impl CostTracker {
     }
 
     /// Format a cost summary filtered by time window.
-    pub fn format_summary_window(&self, total_input: u64, total_output: u64, turn_count: u32, window: CostWindow) -> String {
+    pub fn format_summary_window(
+        &self,
+        total_input: u64,
+        total_output: u64,
+        turn_count: u32,
+        window: CostWindow,
+    ) -> String {
         let Ok(inner) = self.inner.lock() else {
             return "  (cost data unavailable)".to_string();
         };
 
         if matches!(window, CostWindow::All) {
-            return Self::format_inner(&inner.by_model, inner.total_cost_usd, total_input, total_output, turn_count, "all time");
+            return Self::format_inner(
+                &inner.by_model,
+                inner.total_cost_usd,
+                total_input,
+                total_output,
+                turn_count,
+                "all time",
+            );
         }
 
         // Filter records by time window
-        let cutoff = window.duration().and_then(|d| SystemTime::now().checked_sub(d));
+        let cutoff = window
+            .duration()
+            .and_then(|d| SystemTime::now().checked_sub(d));
         let filtered: Vec<&UsageRecord> = if let Some(cutoff) = cutoff {
-            inner.records.iter().filter(|r| r.timestamp >= cutoff).collect()
+            inner
+                .records
+                .iter()
+                .filter(|r| r.timestamp >= cutoff)
+                .collect()
         } else {
             inner.records.iter().collect()
         };
@@ -176,16 +198,33 @@ impl CostTracker {
             CostWindow::All => "all time",
         };
 
-        Self::format_inner(&by_model, total_cost, filt_input, filt_output, filt_turns, label)
+        Self::format_inner(
+            &by_model,
+            total_cost,
+            filt_input,
+            filt_output,
+            filt_turns,
+            label,
+        )
     }
 
-    fn format_inner(by_model: &HashMap<String, ModelUsage>, total_cost: f64, total_input: u64, total_output: u64, turn_count: u32, period: &str) -> String {
+    fn format_inner(
+        by_model: &HashMap<String, ModelUsage>,
+        total_cost: f64,
+        total_input: u64,
+        total_output: u64,
+        turn_count: u32,
+        period: &str,
+    ) -> String {
         let mut lines = Vec::new();
 
         lines.push(format!("  Period:       {}", period));
         lines.push(format!("  Total cost:   {}", format_usd(total_cost)));
-        lines.push(format!("  Total tokens: {} input, {} output", 
-            format_number(total_input), format_number(total_output)));
+        lines.push(format!(
+            "  Total tokens: {} input, {} output",
+            format_number(total_input),
+            format_number(total_output)
+        ));
         lines.push(format!("  API calls:    {}", turn_count));
 
         let total_cache_read: u64 = by_model.values().map(|u| u.cache_read_tokens).sum();
@@ -194,16 +233,26 @@ impl CostTracker {
             let total_cache = total_cache_read + total_cache_write;
             let hit_rate = if total_cache > 0 {
                 total_cache_read as f64 / total_cache as f64 * 100.0
-            } else { 0.0 };
-            lines.push(format!("  Cache:        {} read, {} write ({:.0}% hit rate)",
-                format_number(total_cache_read), format_number(total_cache_write), hit_rate));
+            } else {
+                0.0
+            };
+            lines.push(format!(
+                "  Cache:        {} read, {} write ({:.0}% hit rate)",
+                format_number(total_cache_read),
+                format_number(total_cache_write),
+                hit_rate
+            ));
         }
 
         if !by_model.is_empty() {
             lines.push(String::new());
             lines.push("  Usage by model:".to_string());
             let mut models: Vec<_> = by_model.iter().collect();
-            models.sort_by(|a, b| b.1.cost_usd.partial_cmp(&a.1.cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+            models.sort_by(|a, b| {
+                b.1.cost_usd
+                    .partial_cmp(&a.1.cost_usd)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             for (model, usage) in models {
                 lines.push(format!(
                     "    {}: {} in, {} out, {} cache_read, {} cache_write ({})",

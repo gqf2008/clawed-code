@@ -87,10 +87,7 @@ async fn try_create_exclusive(lock: &SchedulerLock, dir: &Path) -> std::io::Resu
 
 /// Try to acquire the scheduler lock for the current session.
 /// Returns true on success, false if another live session holds it.
-pub async fn try_acquire_scheduler_lock(
-    dir: &Path,
-    session_id: &str,
-) -> std::io::Result<bool> {
+pub async fn try_acquire_scheduler_lock(dir: &Path, session_id: &str) -> std::io::Result<bool> {
     let pid = std::process::id();
     let lock = SchedulerLock {
         session_id: session_id.to_string(),
@@ -171,28 +168,40 @@ mod tests {
     #[tokio::test]
     async fn test_acquire_and_release() {
         let dir = TempDir::new().unwrap();
-        let acquired = try_acquire_scheduler_lock(dir.path(), "session1").await.unwrap();
+        let acquired = try_acquire_scheduler_lock(dir.path(), "session1")
+            .await
+            .unwrap();
         assert!(acquired);
 
         // Acquiring again with same session is idempotent
-        let acquired2 = try_acquire_scheduler_lock(dir.path(), "session1").await.unwrap();
+        let acquired2 = try_acquire_scheduler_lock(dir.path(), "session1")
+            .await
+            .unwrap();
         assert!(acquired2);
 
-        release_scheduler_lock(dir.path(), "session1").await.unwrap();
+        release_scheduler_lock(dir.path(), "session1")
+            .await
+            .unwrap();
 
         // Now another session can acquire
-        let acquired3 = try_acquire_scheduler_lock(dir.path(), "session2").await.unwrap();
+        let acquired3 = try_acquire_scheduler_lock(dir.path(), "session2")
+            .await
+            .unwrap();
         assert!(acquired3);
     }
 
     #[tokio::test]
     async fn test_different_session_blocked() {
         let dir = TempDir::new().unwrap();
-        let acquired = try_acquire_scheduler_lock(dir.path(), "session1").await.unwrap();
+        let acquired = try_acquire_scheduler_lock(dir.path(), "session1")
+            .await
+            .unwrap();
         assert!(acquired);
 
         // Different session blocked (current PID is running)
-        let acquired2 = try_acquire_scheduler_lock(dir.path(), "session2").await.unwrap();
+        let acquired2 = try_acquire_scheduler_lock(dir.path(), "session2")
+            .await
+            .unwrap();
         assert!(!acquired2);
     }
 
@@ -206,13 +215,17 @@ mod tests {
             acquired_at: 0,
         };
         let path = get_lock_path(dir.path());
-        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
         tokio::fs::write(&path, serde_json::to_string(&stale).unwrap())
             .await
             .unwrap();
 
         // Should recover stale lock
-        let acquired = try_acquire_scheduler_lock(dir.path(), "new_session").await.unwrap();
+        let acquired = try_acquire_scheduler_lock(dir.path(), "new_session")
+            .await
+            .unwrap();
         assert!(acquired);
     }
 

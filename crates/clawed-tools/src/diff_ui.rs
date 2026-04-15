@@ -9,8 +9,8 @@
 
 use similar::{ChangeTag, TextDiff};
 use std::io::Write;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::{SyntaxReference, SyntaxSet};
@@ -125,9 +125,7 @@ pub fn print_diff(label: &str, old: &str, new: &str) {
         let old_len: usize = group.iter().map(|op| op.old_range().len()).sum();
         let new_start = first.new_range().start + 1;
         let new_len: usize = group.iter().map(|op| op.new_range().len()).sum();
-        eprintln!(
-            "\x1b[36m@@ -{old_start},{old_len} +{new_start},{new_len} @@\x1b[0m"
-        );
+        eprintln!("\x1b[36m@@ -{old_start},{old_len} +{new_start},{new_len} @@\x1b[0m");
 
         for op in &group {
             let changes: Vec<_> = diff.iter_changes(op).collect();
@@ -201,10 +199,7 @@ pub fn print_create_diff(label: &str, content: &str) {
     let mut hl = syntax.map(|s| HighlightLines::new(s, theme));
 
     eprintln!("\x1b[1;34m── {label} (new file) ──\x1b[0m");
-    eprintln!(
-        "\x1b[36m@@ -0,0 +1,{} @@\x1b[0m",
-        content.lines().count()
-    );
+    eprintln!("\x1b[36m@@ -0,0 +1,{} @@\x1b[0m", content.lines().count());
     for line in content.lines() {
         if let Some(ref mut h) = hl {
             let highlighted = highlight_line(line, h, &res.ss);

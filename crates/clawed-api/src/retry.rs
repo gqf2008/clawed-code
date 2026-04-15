@@ -7,8 +7,8 @@
 //! - Retryable: 429 (rate-limit), 529 (overloaded), 500/502/503 (transient)
 //! - Non-retryable: 400/401/403/404 (client errors)
 
-use std::time::Duration;
 use rand::RngExt;
+use std::time::Duration;
 use tracing::{info, warn};
 
 /// Default retry parameters (matching TS defaults).
@@ -35,19 +35,19 @@ impl Default for RetryConfig {
 }
 
 /// Whether an HTTP status code is retryable.
-#[must_use] 
+#[must_use]
 pub const fn is_retryable_status(status: u16) -> bool {
     matches!(status, 429 | 529 | 500 | 502 | 503)
 }
 
 /// Whether an HTTP status code is an overloaded error.
-#[must_use] 
+#[must_use]
 pub const fn is_overloaded(status: u16) -> bool {
     status == 529
 }
 
 /// Whether an HTTP status code is a rate-limit error.
-#[must_use] 
+#[must_use]
 pub const fn is_rate_limited(status: u16) -> bool {
     status == 429
 }
@@ -56,12 +56,14 @@ pub const fn is_rate_limited(status: u16) -> bool {
 ///
 /// If the server sent `Retry-After` (in seconds), we honour it.
 /// Otherwise: `min(base * 2^(attempt-1), max_delay) + jitter(0..25%)`.
-#[must_use] 
+#[must_use]
 pub fn retry_delay(attempt: u32, retry_after_secs: Option<u64>, config: &RetryConfig) -> Duration {
     if let Some(secs) = retry_after_secs {
         return Duration::from_secs(secs);
     }
-    let exp = config.base_delay_ms.saturating_mul(1u64 << (attempt - 1).min(20));
+    let exp = config
+        .base_delay_ms
+        .saturating_mul(1u64 << (attempt - 1).min(20));
     let base = exp.min(config.max_delay_ms);
     // Random jitter 0..25% to prevent thundering herd
     let jitter_max = base / 4;
@@ -104,7 +106,7 @@ pub struct RateLimitInfo {
 
 impl RateLimitInfo {
     /// Parse rate limit headers from a header map.
-    #[must_use] 
+    #[must_use]
     pub fn from_headers(headers: &[(String, String)]) -> Option<Self> {
         let mut info = Self::default();
         let mut found = false;
@@ -138,11 +140,15 @@ impl RateLimitInfo {
                 _ => {}
             }
         }
-        if found { Some(info) } else { None }
+        if found {
+            Some(info)
+        } else {
+            None
+        }
     }
 
     /// Summary string for display.
-    #[must_use] 
+    #[must_use]
     pub fn summary(&self) -> String {
         let mut parts = Vec::new();
         if let (Some(rem), Some(lim)) = (self.remaining_requests, self.limit_requests) {
@@ -164,7 +170,7 @@ impl ApiHttpError {
     /// Anthropic API returns `{"error":{"type":"...","message":"..."}}`.
     /// `OpenAI` returns `{"error":{"message":"...","type":"...","code":"..."}}`.
     /// Falls back to the raw body if not parseable.
-    #[must_use] 
+    #[must_use]
     pub fn user_message(&self) -> String {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&self.body) {
             if let Some(msg) = v["error"]["message"].as_str() {
@@ -227,17 +233,24 @@ where
                 if is_overloaded(err.status) {
                     warn!(
                         "API overloaded (529), retry {}/{} in {:.1}s",
-                        attempt, config.max_retries, delay.as_secs_f64()
+                        attempt,
+                        config.max_retries,
+                        delay.as_secs_f64()
                     );
                 } else if is_rate_limited(err.status) {
                     info!(
                         "Rate limited (429), retry {}/{} in {:.1}s",
-                        attempt, config.max_retries, delay.as_secs_f64()
+                        attempt,
+                        config.max_retries,
+                        delay.as_secs_f64()
                     );
                 } else {
                     warn!(
                         "Transient error ({}), retry {}/{} in {:.1}s",
-                        err.status, attempt, config.max_retries, delay.as_secs_f64()
+                        err.status,
+                        attempt,
+                        config.max_retries,
+                        delay.as_secs_f64()
                     );
                 }
 
@@ -247,7 +260,10 @@ where
         }
     }
 
-    Err(anyhow::anyhow!("{}", last_err.expect("retry loop ran at least once")))
+    Err(anyhow::anyhow!(
+        "{}",
+        last_err.expect("retry loop ran at least once")
+    ))
 }
 
 #[cfg(test)]
@@ -284,7 +300,11 @@ mod tests {
     #[test]
     fn test_non_retryable_client_errors() {
         for code in [400, 401, 403, 404] {
-            assert!(!is_retryable_status(code), "expected {} to be non-retryable", code);
+            assert!(
+                !is_retryable_status(code),
+                "expected {} to be non-retryable",
+                code
+            );
         }
     }
 
@@ -326,8 +346,16 @@ mod tests {
         let config = RetryConfig::default();
         let delay = retry_delay(1, None, &config);
         // base = 500ms * 2^0 = 500ms, plus up to 25% jitter
-        assert!(delay >= Duration::from_millis(500), "delay {:?} < 500ms", delay);
-        assert!(delay < Duration::from_millis(1000), "delay {:?} >= 1000ms", delay);
+        assert!(
+            delay >= Duration::from_millis(500),
+            "delay {:?} < 500ms",
+            delay
+        );
+        assert!(
+            delay < Duration::from_millis(1000),
+            "delay {:?} >= 1000ms",
+            delay
+        );
     }
 
     #[test]
@@ -335,7 +363,11 @@ mod tests {
         let config = RetryConfig::default();
         let delay = retry_delay(2, None, &config);
         // base = 500ms * 2^1 = 1000ms, plus jitter
-        assert!(delay >= Duration::from_millis(1000), "delay {:?} < 1000ms", delay);
+        assert!(
+            delay >= Duration::from_millis(1000),
+            "delay {:?} < 1000ms",
+            delay
+        );
     }
 
     #[test]
@@ -344,7 +376,12 @@ mod tests {
         let delay = retry_delay(20, None, &config);
         // Jitter formula: base/8 * ((attempt*7+3) % 4), max factor = 3 → 37.5%
         let upper_bound = Duration::from_millis(config.max_delay_ms + config.max_delay_ms * 3 / 8);
-        assert!(delay <= upper_bound, "delay {:?} exceeds cap {:?}", delay, upper_bound);
+        assert!(
+            delay <= upper_bound,
+            "delay {:?} exceeds cap {:?}",
+            delay,
+            upper_bound
+        );
     }
 
     #[test]
@@ -372,8 +409,14 @@ mod tests {
             ("x-ratelimit-remaining-requests".into(), "95".into()),
             ("x-ratelimit-limit-tokens".into(), "1000000".into()),
             ("x-ratelimit-remaining-tokens".into(), "950000".into()),
-            ("x-ratelimit-reset-requests".into(), "2026-01-01T00:01:00Z".into()),
-            ("x-ratelimit-reset-tokens".into(), "2026-01-01T00:00:30Z".into()),
+            (
+                "x-ratelimit-reset-requests".into(),
+                "2026-01-01T00:01:00Z".into(),
+            ),
+            (
+                "x-ratelimit-reset-tokens".into(),
+                "2026-01-01T00:00:30Z".into(),
+            ),
         ];
         let info = RateLimitInfo::from_headers(&headers).unwrap();
         assert_eq!(info.limit_requests, Some(100));
@@ -385,9 +428,8 @@ mod tests {
 
     #[test]
     fn test_rate_limit_from_empty_headers() {
-        let headers: Vec<(String, String)> = vec![
-            ("content-type".into(), "application/json".into()),
-        ];
+        let headers: Vec<(String, String)> =
+            vec![("content-type".into(), "application/json".into())];
         assert!(RateLimitInfo::from_headers(&headers).is_none());
     }
 
@@ -413,9 +455,7 @@ mod tests {
 
     #[test]
     fn test_rate_limit_case_insensitive() {
-        let headers = vec![
-            ("X-Ratelimit-Remaining-Requests".into(), "10".into()),
-        ];
+        let headers = vec![("X-Ratelimit-Remaining-Requests".into(), "10".into())];
         let info = RateLimitInfo::from_headers(&headers).unwrap();
         assert_eq!(info.remaining_requests, Some(10));
     }
@@ -426,7 +466,9 @@ mod tests {
     fn test_user_message_anthropic_json() {
         let err = ApiHttpError {
             status: 401,
-            body: r#"{"error":{"type":"authentication_error","message":"Invalid API key provided"}}"#.into(),
+            body:
+                r#"{"error":{"type":"authentication_error","message":"Invalid API key provided"}}"#
+                    .into(),
             retry_after: None,
             rate_limit_info: None,
         };

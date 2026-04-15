@@ -57,11 +57,14 @@ impl SessionRouter {
             self.next_id += 1;
             let session_id = format!("bridge-{}-{}", channel_id, self.next_id);
             info!("New session: {} for channel {}", session_id, channel_id);
-            self.sessions.insert(channel_id.clone(), ChannelSession {
-                client,
-                last_active: Instant::now(),
-                session_id,
-            });
+            self.sessions.insert(
+                channel_id.clone(),
+                ChannelSession {
+                    client,
+                    last_active: Instant::now(),
+                    session_id,
+                },
+            );
         }
 
         let session = self.sessions.get_mut(channel_id).unwrap();
@@ -82,7 +85,10 @@ impl SessionRouter {
     /// Destroy a session for a channel (e.g., user sends /new).
     pub fn destroy(&mut self, channel_id: &ChannelId) -> bool {
         if let Some(session) = self.sessions.remove(channel_id) {
-            info!("Destroyed session: {} for channel {}", session.session_id, channel_id);
+            info!(
+                "Destroyed session: {} for channel {}",
+                session.session_id, channel_id
+            );
             true
         } else {
             false
@@ -107,7 +113,9 @@ impl SessionRouter {
         &self,
         channel_id: &ChannelId,
     ) -> Option<tokio::sync::broadcast::Receiver<clawed_bus::events::AgentNotification>> {
-        self.sessions.get(channel_id).map(|s| s.client.subscribe_notifications())
+        self.sessions
+            .get(channel_id)
+            .map(|s| s.client.subscribe_notifications())
     }
 
     /// Get the number of active sessions.
@@ -125,7 +133,10 @@ impl SessionRouter {
         self.sessions.retain(|channel_id, session| {
             let keep = session.last_active >= threshold;
             if !keep {
-                debug!("Cleaning up idle session: {} for {}", session.session_id, channel_id);
+                debug!(
+                    "Cleaning up idle session: {} for {}",
+                    session.session_id, channel_id
+                );
             }
             keep
         });

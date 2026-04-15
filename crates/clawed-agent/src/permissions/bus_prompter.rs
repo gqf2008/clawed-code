@@ -3,8 +3,7 @@
 //! them instead of the raw terminal prompt.
 
 use clawed_bus::events::{
-    PermissionRequest as BusPermissionRequest,
-    PermissionResponse as BusPermissionResponse,
+    PermissionRequest as BusPermissionRequest, PermissionResponse as BusPermissionResponse,
     RiskLevel,
 };
 use clawed_core::permissions::{PermissionResponse, PermissionSuggestion};
@@ -92,7 +91,9 @@ impl PermissionPrompter for BusPermissionPrompter {
                             persist: true,
                             feedback: None,
                             selected_suggestion: None,
-                            destination: Some(clawed_core::permissions::PermissionDestination::LocalSettings),
+                            destination: Some(
+                                clawed_core::permissions::PermissionDestination::LocalSettings,
+                            ),
                         }
                     } else {
                         PermissionResponse::allow_once()

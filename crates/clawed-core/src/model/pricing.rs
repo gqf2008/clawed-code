@@ -62,19 +62,44 @@ pub fn model_pricing(model: &str) -> Option<ModelPricing> {
 pub fn third_party_pricing(model: &str) -> Option<ModelPricing> {
     let m = model.to_lowercase();
     if m.contains("gpt-4o-mini") {
-        return Some(ModelPricing { input_per_mtok: 0.15, output_per_mtok: 0.60, cache_read_per_mtok: 0.075, cache_write_per_mtok: 0.15 });
+        return Some(ModelPricing {
+            input_per_mtok: 0.15,
+            output_per_mtok: 0.60,
+            cache_read_per_mtok: 0.075,
+            cache_write_per_mtok: 0.15,
+        });
     }
     if m.contains("gpt-4o") {
-        return Some(ModelPricing { input_per_mtok: 2.5, output_per_mtok: 10.0, cache_read_per_mtok: 1.25, cache_write_per_mtok: 2.5 });
+        return Some(ModelPricing {
+            input_per_mtok: 2.5,
+            output_per_mtok: 10.0,
+            cache_read_per_mtok: 1.25,
+            cache_write_per_mtok: 2.5,
+        });
     }
     if m.contains("gpt-4-turbo") {
-        return Some(ModelPricing { input_per_mtok: 10.0, output_per_mtok: 30.0, cache_read_per_mtok: 5.0, cache_write_per_mtok: 10.0 });
+        return Some(ModelPricing {
+            input_per_mtok: 10.0,
+            output_per_mtok: 30.0,
+            cache_read_per_mtok: 5.0,
+            cache_write_per_mtok: 10.0,
+        });
     }
     if m.starts_with("o1") {
-        return Some(ModelPricing { input_per_mtok: 15.0, output_per_mtok: 60.0, cache_read_per_mtok: 7.5, cache_write_per_mtok: 15.0 });
+        return Some(ModelPricing {
+            input_per_mtok: 15.0,
+            output_per_mtok: 60.0,
+            cache_read_per_mtok: 7.5,
+            cache_write_per_mtok: 15.0,
+        });
     }
     if m.contains("deepseek-chat") || m.contains("deepseek-coder") {
-        return Some(ModelPricing { input_per_mtok: 0.27, output_per_mtok: 1.10, cache_read_per_mtok: 0.07, cache_write_per_mtok: 0.27 });
+        return Some(ModelPricing {
+            input_per_mtok: 0.27,
+            output_per_mtok: 1.10,
+            cache_read_per_mtok: 0.07,
+            cache_write_per_mtok: 0.27,
+        });
     }
     None
 }
@@ -95,7 +120,8 @@ pub fn estimate_cost(
     let input_cost = (input_tokens as f64 / 1_000_000.0) * pricing.input_per_mtok;
     let output_cost = (output_tokens as f64 / 1_000_000.0) * pricing.output_per_mtok;
     let cache_read_cost = (cache_read_tokens as f64 / 1_000_000.0) * pricing.cache_read_per_mtok;
-    let cache_write_cost = (cache_creation_tokens as f64 / 1_000_000.0) * pricing.cache_write_per_mtok;
+    let cache_write_cost =
+        (cache_creation_tokens as f64 / 1_000_000.0) * pricing.cache_write_per_mtok;
 
     input_cost + output_cost + cache_read_cost + cache_write_cost
 }

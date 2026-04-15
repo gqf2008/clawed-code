@@ -4,18 +4,13 @@
 use std::path::Path;
 
 use clawed_core::agents::{
-    AgentDefinition, AgentSource,
-    delete_agent, get_agents, save_agent, validate_agent,
+    delete_agent, get_agents, save_agent, validate_agent, AgentDefinition, AgentSource,
 };
 
 use clawed_agent::coordinator::AgentTracker;
 
 /// Handle `/agents [subcommand]`.
-pub(crate) fn handle_agents_command(
-    sub: &str,
-    cwd: &Path,
-    tracker: Option<&AgentTracker>,
-) {
+pub(crate) fn handle_agents_command(sub: &str, cwd: &Path, tracker: Option<&AgentTracker>) {
     let parts: Vec<&str> = sub.splitn(2, ' ').collect();
     let subcmd = parts.first().map(|s| s.trim()).unwrap_or("");
     let args = parts.get(1).map(|s| s.trim()).unwrap_or("");
@@ -55,7 +50,9 @@ pub(crate) fn handle_agents_command(
             println!("  /agents delete <name>  Delete an agent definition");
             println!();
             println!("\x1b[2mAgents are .md files in .claude/agents/ with YAML frontmatter.");
-            println!("They define specialized sub-agents with custom tools, models, and prompts.\x1b[0m");
+            println!(
+                "They define specialized sub-agents with custom tools, models, and prompts.\x1b[0m"
+            );
         }
         other => {
             println!("Unknown subcommand: {}. Try /agents help", other);
@@ -91,13 +88,14 @@ fn list_agents(cwd: &Path) {
             } else {
                 String::new()
             };
-            let bg = if agent.background { " \x1b[2m[bg]\x1b[0m" } else { "" };
+            let bg = if agent.background {
+                " \x1b[2m[bg]\x1b[0m"
+            } else {
+                ""
+            };
             println!(
                 "    {}{:<20} {}{}",
-                color_dot,
-                agent.agent_type,
-                agent.description,
-                bg
+                color_dot, agent.agent_type, agent.description, bg
             );
             if !agent.allowed_tools.is_empty() {
                 let tool_list = if agent.allowed_tools.len() <= 5 {
@@ -129,9 +127,7 @@ fn show_live_status(tracker: Option<&AgentTracker>) {
     let tasks = match handle {
         Ok(h) => {
             // We're inside a tokio runtime — use block_in_place
-            tokio::task::block_in_place(|| {
-                h.block_on(tracker.list())
-            })
+            tokio::task::block_in_place(|| h.block_on(tracker.list()))
         }
         Err(_) => {
             println!("\x1b[31mCannot query agent status outside async runtime.\x1b[0m");
@@ -162,24 +158,15 @@ fn show_live_status(tracker: Option<&AgentTracker>) {
             let activity = task.last_activity.as_deref().unwrap_or("idle");
             println!(
                 "  \x1b[32m▸\x1b[0m {:<24} \x1b[2m{}\x1b[0m  tools:{} tokens:{}",
-                name,
-                elapsed,
-                task.tool_use_count,
-                task.total_tokens
+                name, elapsed, task.tool_use_count, task.total_tokens
             );
-            println!(
-                "    \x1b[2m{}\x1b[0m",
-                truncate_str(activity, 60)
-            );
+            println!("    \x1b[2m{}\x1b[0m", truncate_str(activity, 60));
         }
         println!();
     }
 
     if !finished.is_empty() {
-        println!(
-            "\x1b[1;2m● Finished\x1b[0m ({} agents)\n",
-            finished.len()
-        );
+        println!("\x1b[1;2m● Finished\x1b[0m ({} agents)\n", finished.len());
         for task in &finished {
             let name = task.name.as_deref().unwrap_or(&task.agent_id);
             let elapsed = format_duration(task.duration_ms());
@@ -191,11 +178,7 @@ fn show_live_status(tracker: Option<&AgentTracker>) {
             };
             println!(
                 "  {} {:<24} \x1b[2m{}\x1b[0m  tools:{} tokens:{}",
-                status_icon,
-                name,
-                elapsed,
-                task.tool_use_count,
-                task.total_tokens
+                status_icon, name, elapsed, task.tool_use_count, task.total_tokens
             );
         }
         println!();
@@ -213,7 +196,10 @@ fn show_agent(name: &str, cwd: &Path) {
     let all = get_agents(cwd);
     let agent = all.iter().find(|a| a.agent_type.eq_ignore_ascii_case(name));
     match agent {
-        None => println!("Agent '{}' not found. Use /agents list to see available.", name),
+        None => println!(
+            "Agent '{}' not found. Use /agents list to see available.",
+            name
+        ),
         Some(a) => {
             println!("\x1b[1m{}\x1b[0m", a.agent_type);
             println!("Description: {}", a.description);
@@ -252,7 +238,8 @@ fn show_agent(name: &str, cwd: &Path) {
                 println!("File:        {}", path.display());
             }
             // Show first 200 chars of system prompt
-            let prompt_preview = clawed_core::text_util::truncate_chars(&a.system_prompt, 200, "...");
+            let prompt_preview =
+                clawed_core::text_util::truncate_chars(&a.system_prompt, 200, "...");
             println!("\n\x1b[2m--- System Prompt ---\x1b[0m");
             println!("{}", prompt_preview);
         }
@@ -296,7 +283,10 @@ fn create_agent_scaffold(name: &str, cwd: &Path) {
 
     match save_agent(&agent, cwd) {
         Ok(path) => {
-            println!("\x1b[32m✓\x1b[0m Created agent scaffold: {}", path.display());
+            println!(
+                "\x1b[32m✓\x1b[0m Created agent scaffold: {}",
+                path.display()
+            );
             println!("\x1b[2mEdit the file to customize tools, model, and system prompt.\x1b[0m");
         }
         Err(e) => {
@@ -310,7 +300,10 @@ fn delete_agent_cmd(name: &str, cwd: &Path) {
     let agent = all.iter().find(|a| a.agent_type.eq_ignore_ascii_case(name));
     match agent {
         None => {
-            println!("\x1b[31mAgent '{}' not found.\x1b[0m Use /agents list to see available.", name);
+            println!(
+                "\x1b[31mAgent '{}' not found.\x1b[0m Use /agents list to see available.",
+                name
+            );
         }
         Some(a) => {
             if a.source == AgentSource::BuiltIn {

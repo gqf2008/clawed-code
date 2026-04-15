@@ -3,14 +3,14 @@
 //! Settings are loaded from up to 4 layers (user → project → local → CLI)
 //! and merged with later layers taking priority.
 
+use crate::permissions::PermissionRule;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
-use crate::permissions::PermissionRule;
 
 mod hooks;
-pub use hooks::{HookCommandDef, HookRule, HooksConfig};
 use hooks::merge_hooks;
+pub use hooks::{HookCommandDef, HookRule, HooksConfig};
 
 #[cfg(test)]
 mod tests;
@@ -176,8 +176,14 @@ fn merge_settings(base: Settings, overlay: &Settings) -> Settings {
             tools.extend(overlay.denied_tools.clone());
             tools
         },
-        custom_system_prompt: overlay.custom_system_prompt.clone().or(base.custom_system_prompt),
-        append_system_prompt: overlay.append_system_prompt.clone().or(base.append_system_prompt),
+        custom_system_prompt: overlay
+            .custom_system_prompt
+            .clone()
+            .or(base.custom_system_prompt),
+        append_system_prompt: overlay
+            .append_system_prompt
+            .clone()
+            .or(base.append_system_prompt),
         permission_rules: {
             let mut rules = base.permission_rules;
             rules.extend(overlay.permission_rules.clone());
@@ -235,7 +241,13 @@ impl Settings {
     /// any worker threads.
     pub fn apply_env(&self) -> Vec<(String, Option<String>)> {
         const SECRET_KEYWORDS: &[&str] = &[
-            "KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH", "PRIVATE",
+            "KEY",
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "CREDENTIAL",
+            "AUTH",
+            "PRIVATE",
         ];
         let mut previous = Vec::with_capacity(self.env.len());
         for (key, value) in &self.env {
@@ -247,7 +259,9 @@ impl Settings {
                 let old = std::env::var(key).ok();
                 previous.push((key.clone(), old));
                 // SAFETY: must be called single-threaded during init
-                unsafe { std::env::set_var(key, value); }
+                unsafe {
+                    std::env::set_var(key, value);
+                }
             }
         }
         previous
@@ -317,7 +331,11 @@ impl Settings {
             sources.push(SettingsSource::Default);
         }
 
-        LoadedSettings { settings: merged, sources, layers }
+        LoadedSettings {
+            settings: merged,
+            sources,
+            layers,
+        }
     }
 
     /// Save settings to a specific destination file.
@@ -409,13 +427,19 @@ impl Settings {
             lines.push(format!("  Output style: {}", style));
         }
         if !self.allowed_tools.is_empty() {
-            lines.push(format!("  Allowed tools: {}", self.allowed_tools.join(", ")));
+            lines.push(format!(
+                "  Allowed tools: {}",
+                self.allowed_tools.join(", ")
+            ));
         }
         if !self.denied_tools.is_empty() {
             lines.push(format!("  Denied tools: {}", self.denied_tools.join(", ")));
         }
         if !self.permission_rules.is_empty() {
-            lines.push(format!("  Permission rules: {} defined", self.permission_rules.len()));
+            lines.push(format!(
+                "  Permission rules: {} defined",
+                self.permission_rules.len()
+            ));
         }
         if self.api_key.is_some() {
             lines.push("  API key: ****".into());
@@ -500,25 +524,39 @@ impl RuntimeConfig {
     pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Self {
         let mut cfg = Self::default();
         if let Some(v) = get("CLAUDE_MAX_TOOL_CONCURRENCY") {
-            if let Ok(n) = v.parse::<usize>() { cfg.max_tool_concurrency = n; }
+            if let Ok(n) = v.parse::<usize>() {
+                cfg.max_tool_concurrency = n;
+            }
         }
         if let Some(v) = get("CLAUDE_COMPACT_THRESHOLD") {
-            if let Ok(n) = v.parse::<u64>() { cfg.auto_compact_threshold = n; }
+            if let Ok(n) = v.parse::<u64>() {
+                cfg.auto_compact_threshold = n;
+            }
         }
         if let Some(v) = get("CLAUDE_COMPACT_BUFFER") {
-            if let Ok(n) = v.parse::<u64>() { cfg.compact_buffer_tokens = n; }
+            if let Ok(n) = v.parse::<u64>() {
+                cfg.compact_buffer_tokens = n;
+            }
         }
         if let Some(v) = get("CLAUDE_MAX_READ_BYTES") {
-            if let Ok(n) = v.parse::<u64>() { cfg.max_read_bytes = n; }
+            if let Ok(n) = v.parse::<u64>() {
+                cfg.max_read_bytes = n;
+            }
         }
         if let Some(v) = get("CLAUDE_MAX_WRITE_BYTES") {
-            if let Ok(n) = v.parse::<usize>() { cfg.max_write_bytes = n; }
+            if let Ok(n) = v.parse::<usize>() {
+                cfg.max_write_bytes = n;
+            }
         }
         if let Some(v) = get("CLAUDE_MAX_TOOL_OUTPUT") {
-            if let Ok(n) = v.parse::<usize>() { cfg.max_tool_output_bytes = n; }
+            if let Ok(n) = v.parse::<usize>() {
+                cfg.max_tool_output_bytes = n;
+            }
         }
         if let Some(v) = get("CLAUDE_MAX_TOOL_OUTPUT_LINES") {
-            if let Ok(n) = v.parse::<usize>() { cfg.max_tool_output_lines = n; }
+            if let Ok(n) = v.parse::<usize>() {
+                cfg.max_tool_output_lines = n;
+            }
         }
         cfg
     }

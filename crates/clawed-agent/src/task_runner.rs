@@ -49,7 +49,10 @@ pub struct TaskResult {
 
 impl TaskResult {
     pub fn success(&self) -> bool {
-        matches!(self.reason, CompletionReason::Completed | CompletionReason::EndTurn)
+        matches!(
+            self.reason,
+            CompletionReason::Completed | CompletionReason::EndTurn
+        )
     }
 }
 
@@ -76,11 +79,11 @@ impl std::fmt::Display for CompletionReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Completed | Self::EndTurn => write!(f, "completed"),
-            Self::MaxTokens    => write!(f, "max_tokens"),
+            Self::MaxTokens => write!(f, "max_tokens"),
             Self::StopSequence => write!(f, "stop_sequence"),
-            Self::Aborted      => write!(f, "aborted"),
-            Self::MaxTurns     => write!(f, "max_turns"),
-            Self::Error(e)     => write!(f, "error: {}", e),
+            Self::Aborted => write!(f, "aborted"),
+            Self::MaxTurns => write!(f, "max_turns"),
+            Self::Error(e) => write!(f, "error: {}", e),
         }
     }
 }
@@ -95,7 +98,11 @@ pub enum TaskProgress {
     /// A tool invocation has started.
     ToolUse { name: String, turn: u32 },
     /// A tool invocation completed.
-    ToolDone { name: String, is_error: bool, text: Option<String> },
+    ToolDone {
+        name: String,
+        is_error: bool,
+        text: Option<String>,
+    },
     /// Token usage update.
     Tokens { input: u64, output: u64 },
     /// Task fully completed.
@@ -109,11 +116,7 @@ pub enum TaskProgress {
 /// # Errors
 /// Returns `Err` only if the engine itself panics — task-level errors
 /// (API errors, max turns) are encoded in `TaskResult::reason`.
-pub async fn run_task<F>(
-    engine: &QueryEngine,
-    task: &str,
-    mut on_progress: F,
-) -> TaskResult
+pub async fn run_task<F>(engine: &QueryEngine, task: &str, mut on_progress: F) -> TaskResult
 where
     F: FnMut(TaskProgress) + Send,
 {
@@ -169,10 +172,10 @@ where
                 turns += 1;
                 on_progress(TaskProgress::TurnStart { turn: turns });
                 reason = match stop_reason {
-                    StopReason::EndTurn        => CompletionReason::EndTurn,
-                    StopReason::MaxTokens      => CompletionReason::MaxTokens,
-                    StopReason::StopSequence   => CompletionReason::StopSequence,
-                    StopReason::ToolUse        => continue, // more turns coming
+                    StopReason::EndTurn => CompletionReason::EndTurn,
+                    StopReason::MaxTokens => CompletionReason::MaxTokens,
+                    StopReason::StopSequence => CompletionReason::StopSequence,
+                    StopReason::ToolUse => continue, // more turns coming
                 };
             }
 
@@ -375,7 +378,10 @@ mod tests {
 
     #[test]
     fn task_progress_tool_use() {
-        let p = TaskProgress::ToolUse { name: "Bash".into(), turn: 1 };
+        let p = TaskProgress::ToolUse {
+            name: "Bash".into(),
+            turn: 1,
+        };
         if let TaskProgress::ToolUse { name, turn } = p {
             assert_eq!(name, "Bash");
             assert_eq!(turn, 1);
@@ -391,7 +397,12 @@ mod tests {
             is_error: false,
             text: Some("contents".into()),
         };
-        if let TaskProgress::ToolDone { name, is_error, text } = p {
+        if let TaskProgress::ToolDone {
+            name,
+            is_error,
+            text,
+        } = p
+        {
             assert_eq!(name, "FileRead");
             assert!(!is_error);
             assert_eq!(text.unwrap(), "contents");
@@ -402,8 +413,17 @@ mod tests {
 
     #[test]
     fn task_progress_tokens() {
-        let p = TaskProgress::Tokens { input: 100, output: 50 };
-        assert!(matches!(p, TaskProgress::Tokens { input: 100, output: 50 }));
+        let p = TaskProgress::Tokens {
+            input: 100,
+            output: 50,
+        };
+        assert!(matches!(
+            p,
+            TaskProgress::Tokens {
+                input: 100,
+                output: 50
+            }
+        ));
     }
 
     #[test]

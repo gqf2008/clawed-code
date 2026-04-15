@@ -49,9 +49,10 @@ impl Transport for TcpTransport {
                 return Ok(None); // Connection closed
             }
             if line.len() > MAX_LINE_SIZE {
-                return Err(TransportError::Other(
-                    format!("Message exceeds max size ({} > {MAX_LINE_SIZE})", line.len()),
-                ));
+                return Err(TransportError::Other(format!(
+                    "Message exceeds max size ({} > {MAX_LINE_SIZE})",
+                    line.len()
+                )));
             }
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -146,7 +147,10 @@ mod tests {
                     "agent.textDelta",
                     Some(serde_json::json!({"text": format!("chunk-{}", i)})),
                 );
-                transport.write_message(&RawMessage::from(notif)).await.unwrap();
+                transport
+                    .write_message(&RawMessage::from(notif))
+                    .await
+                    .unwrap();
             }
             transport.close().await.unwrap();
         });

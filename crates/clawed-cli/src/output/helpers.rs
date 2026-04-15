@@ -1,8 +1,8 @@
 use crate::theme::{self, RESET};
 use clawed_core::tool::AbortSignal;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Stall detection thresholds.
@@ -56,7 +56,13 @@ impl Spinner {
                             .unwrap()
                             .tick_strings(TICK_STRINGS),
                     );
-                    bar_clone.set_message(format!("{} {}(stalled {}s){}", orig_msg, theme::c_err(), elapsed.as_secs(), RESET));
+                    bar_clone.set_message(format!(
+                        "{} {}(stalled {}s){}",
+                        orig_msg,
+                        theme::c_err(),
+                        elapsed.as_secs(),
+                        RESET
+                    ));
                 } else if elapsed.as_secs() >= STALL_WARN_SECS && !warned {
                     warned = true;
                     bar_clone.set_style(
@@ -64,7 +70,12 @@ impl Spinner {
                             .unwrap()
                             .tick_strings(TICK_STRINGS),
                     );
-                    bar_clone.set_message(format!("{} {}(waiting...){}", orig_msg, theme::c_warn(), RESET));
+                    bar_clone.set_message(format!(
+                        "{} {}(waiting...){}",
+                        orig_msg,
+                        theme::c_warn(),
+                        RESET
+                    ));
                 }
             }
         });
@@ -102,8 +113,7 @@ impl Drop for Spinner {
 /// Format task/todo tool results with a richer inline display.
 pub(super) fn format_tool_result_inline(name: &str, text: &str) -> Option<String> {
     match name {
-        "task_create" | "task_update" | "task_get" | "task_list" |
-        "TodoWrite" | "TodoRead" => {
+        "task_create" | "task_update" | "task_get" | "task_list" | "TodoWrite" | "TodoRead" => {
             let first_line = text.lines().next().unwrap_or(text);
             let truncated = if first_line.chars().count() > 120 {
                 let s: String = first_line.chars().take(117).collect();
@@ -140,14 +150,19 @@ pub(super) fn format_tool_result_inline(name: &str, text: &str) -> Option<String
         "Bash" | "PowerShell" => {
             let line_count = text.lines().count();
             // Check for exit code in the last line
-            let exit_info = text.lines().last()
+            let exit_info = text
+                .lines()
+                .last()
                 .and_then(|l| l.strip_prefix("Exit code: "))
                 .map(|c| format!(" (exit {})", c.trim()))
                 .unwrap_or_default();
             if line_count <= 1 && exit_info.is_empty() {
                 None
             } else {
-                Some(format!("\x1b[2m  │ {} lines{}\x1b[0m", line_count, exit_info))
+                Some(format!(
+                    "\x1b[2m  │ {} lines{}\x1b[0m",
+                    line_count, exit_info
+                ))
             }
         }
         "Ls" | "LsTool" => {
@@ -178,8 +193,18 @@ pub(super) fn parse_edit_stats(text: &str) -> Option<String> {
         let added = parts[0]; // "+N"
         let removed = parts[1]; // "-N"
         let path = text.split(" (+").next().unwrap_or("");
-        let path_short = short_path(path.trim_start_matches("Edited ").trim_start_matches("Wrote "));
-        Some(format!("\x1b[2m{}\x1b[0m {}{}\x1b[0m {}{}\x1b[0m", path_short, theme::c_ok(), added, theme::c_err(), removed))
+        let path_short = short_path(
+            path.trim_start_matches("Edited ")
+                .trim_start_matches("Wrote "),
+        );
+        Some(format!(
+            "\x1b[2m{}\x1b[0m {}{}\x1b[0m {}{}\x1b[0m",
+            path_short,
+            theme::c_ok(),
+            added,
+            theme::c_err(),
+            removed
+        ))
     } else {
         None
     }
@@ -188,20 +213,24 @@ pub(super) fn parse_edit_stats(text: &str) -> Option<String> {
 /// Format tool start with key parameter info for better UX.
 pub(super) fn format_tool_start(name: &str, input: &serde_json::Value) -> String {
     let detail = match name {
-        "Read" | "FileRead" => input["file_path"].as_str()
+        "Read" | "FileRead" => input["file_path"]
+            .as_str()
             .or_else(|| input["path"].as_str())
             .map(|p| format!(" \x1b[2m{}\x1b[0m", short_path(p)))
             .unwrap_or_default(),
-        "Edit" | "FileEdit" => input["file_path"].as_str()
+        "Edit" | "FileEdit" => input["file_path"]
+            .as_str()
             .or_else(|| input["path"].as_str())
             .map(|p| format!(" \x1b[2m{}\x1b[0m", short_path(p)))
             .unwrap_or_default(),
-        "Write" | "FileWrite" => input["file_path"].as_str()
+        "Write" | "FileWrite" => input["file_path"]
+            .as_str()
             .or_else(|| input["path"].as_str())
             .map(|p| format!(" \x1b[2m{}\x1b[0m", short_path(p)))
             .unwrap_or_default(),
         "MultiEdit" | "MultiEditTool" => {
-            let files = input["edits"].as_array()
+            let files = input["edits"]
+                .as_array()
                 .map(|arr| {
                     arr.iter()
                         .filter_map(|e| e["file_path"].as_str().or_else(|| e["path"].as_str()))
@@ -210,17 +239,31 @@ pub(super) fn format_tool_start(name: &str, input: &serde_json::Value) -> String
                         .join(", ")
                 })
                 .unwrap_or_default();
-            if files.is_empty() { String::new() } else { format!(" \x1b[2m[{}]\x1b[0m", files) }
+            if files.is_empty() {
+                String::new()
+            } else {
+                format!(" \x1b[2m[{}]\x1b[0m", files)
+            }
         }
-        "Bash" => input["command"].as_str()
+        "Bash" => input["command"]
+            .as_str()
             .map(|c| {
-                let short = if c.len() > 60 { format!("{}…", &c[..57]) } else { c.to_string() };
+                let short = if c.len() > 60 {
+                    format!("{}…", &c[..57])
+                } else {
+                    c.to_string()
+                };
                 format!(" \x1b[2m`{}`\x1b[0m", short)
             })
             .unwrap_or_default(),
-        "PowerShell" => input["command"].as_str()
+        "PowerShell" => input["command"]
+            .as_str()
             .map(|c| {
-                let short = if c.len() > 60 { format!("{}…", &c[..57]) } else { c.to_string() };
+                let short = if c.len() > 60 {
+                    format!("{}…", &c[..57])
+                } else {
+                    c.to_string()
+                };
                 format!(" \x1b[2m`{}`\x1b[0m", short)
             })
             .unwrap_or_default(),
@@ -228,24 +271,37 @@ pub(super) fn format_tool_start(name: &str, input: &serde_json::Value) -> String
             let lang = input["language"].as_str().unwrap_or("?");
             let code = input["code"].as_str().unwrap_or("");
             let first_line = code.lines().next().unwrap_or("");
-            let short = if first_line.len() > 50 { format!("{}…", &first_line[..47]) } else { first_line.to_string() };
+            let short = if first_line.len() > 50 {
+                format!("{}…", &first_line[..47])
+            } else {
+                first_line.to_string()
+            };
             format!(" \x1b[2m[{}] {}\x1b[0m", lang, short)
         }
-        "Glob" | "GlobTool" => input["pattern"].as_str()
+        "Glob" | "GlobTool" => input["pattern"]
+            .as_str()
             .map(|p| format!(" \x1b[2m{}\x1b[0m", p))
             .unwrap_or_default(),
-        "Grep" | "GrepTool" => input["pattern"].as_str()
+        "Grep" | "GrepTool" => input["pattern"]
+            .as_str()
             .map(|p| format!(" \x1b[2m/{}/\x1b[0m", p))
             .unwrap_or_default(),
         "Git" | "GitTool" => {
             let sub = input["subcommand"].as_str().unwrap_or("");
-            let args = input["args"].as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(" "))
+            let args = input["args"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
                 .unwrap_or_default();
             format!(" \x1b[2m{} {}\x1b[0m", sub, args)
         }
         "GitStatus" | "GitStatusTool" => String::new(),
-        "Agent" => input["agent_type"].as_str()
+        "Agent" => input["agent_type"]
+            .as_str()
             .map(|t| {
                 let desc = input["description"].as_str().unwrap_or("");
                 if desc.is_empty() {
@@ -255,22 +311,31 @@ pub(super) fn format_tool_start(name: &str, input: &serde_json::Value) -> String
                 }
             })
             .unwrap_or_default(),
-        "WebFetch" => input["url"].as_str()
+        "WebFetch" => input["url"]
+            .as_str()
             .map(|u| format!(" \x1b[2m{}\x1b[0m", u))
             .unwrap_or_default(),
-        "WebSearch" => input["query"].as_str()
+        "WebSearch" => input["query"]
+            .as_str()
             .map(|q| {
-                let short = if q.len() > 50 { format!("{}…", &q[..47]) } else { q.to_string() };
+                let short = if q.len() > 50 {
+                    format!("{}…", &q[..47])
+                } else {
+                    q.to_string()
+                };
                 format!(" \x1b[2m\"{}\"\x1b[0m", short)
             })
             .unwrap_or_default(),
-        "Skill" | "SkillTool" => input["skill_name"].as_str()
+        "Skill" | "SkillTool" => input["skill_name"]
+            .as_str()
             .map(|n| format!(" \x1b[2m{}\x1b[0m", n))
             .unwrap_or_default(),
-        "Ls" | "LsTool" => input["path"].as_str()
+        "Ls" | "LsTool" => input["path"]
+            .as_str()
             .map(|p| format!(" \x1b[2m{}\x1b[0m", short_path(p)))
             .unwrap_or_default(),
-        "TodoWrite" | "TodoRead" => input["action"].as_str()
+        "TodoWrite" | "TodoRead" => input["action"]
+            .as_str()
             .map(|a| format!(" \x1b[2m{}\x1b[0m", a))
             .unwrap_or_default(),
         _ => String::new(),
@@ -280,7 +345,9 @@ pub(super) fn format_tool_start(name: &str, input: &serde_json::Value) -> String
 
 pub(super) fn short_path(path: &str) -> &str {
     let parts: Vec<&str> = path.split(['/', '\\']).collect();
-    if parts.len() <= 3 { return path; }
+    if parts.len() <= 3 {
+        return path;
+    }
     // Find the byte offset of the Nth-from-last separator
     let keep = 3;
     let mut sep_count = 0;
@@ -341,13 +408,7 @@ pub(super) fn format_status_line(
 
     format!(
         "\x1b[2m[{} | {}{}%\x1b[2m ctx | {}↓ {}↑ | {} | {:.1}s]\x1b[0m",
-        model_short,
-        context_color,
-        context_pct as u32,
-        in_tok,
-        out_tok,
-        cost_str,
-        elapsed_secs,
+        model_short, context_color, context_pct as u32, in_tok, out_tok, cost_str, elapsed_secs,
     )
 }
 
@@ -378,25 +439,56 @@ fn shorten_model_name(model: &str) -> &str {
 /// Categorize an error message and return (icon, optional hint).
 pub(super) fn categorize_error(msg: &str) -> (&'static str, Option<&'static str>) {
     let lower = msg.to_lowercase();
-    if lower.contains("401") || lower.contains("unauthorized")
-        || lower.contains("invalid key") || lower.contains("invalid api key") || lower.contains("invalid_key") {
-        ("🔑", Some("Check your API key with `/login` or set ANTHROPIC_API_KEY"))
+    if lower.contains("401")
+        || lower.contains("unauthorized")
+        || lower.contains("invalid key")
+        || lower.contains("invalid api key")
+        || lower.contains("invalid_key")
+    {
+        (
+            "🔑",
+            Some("Check your API key with `/login` or set ANTHROPIC_API_KEY"),
+        )
     } else if lower.contains("403") || lower.contains("forbidden") || lower.contains("permission") {
         ("🚫", Some("Your API key may lack the required permissions"))
-    } else if lower.contains("429") || lower.contains("rate limit") || lower.contains("too many requests") {
-        ("⏳", Some("Rate limited — the request will be retried automatically"))
+    } else if lower.contains("429")
+        || lower.contains("rate limit")
+        || lower.contains("too many requests")
+    {
+        (
+            "⏳",
+            Some("Rate limited — the request will be retried automatically"),
+        )
     } else if lower.contains("quota") || lower.contains("billing") || lower.contains("credit") {
-        ("💳", Some("Quota exceeded — check your billing at console.anthropic.com"))
+        (
+            "💳",
+            Some("Quota exceeded — check your billing at console.anthropic.com"),
+        )
     } else if lower.contains("529") || lower.contains("overloaded") {
         ("🔥", Some("API is overloaded — try again in a moment"))
-    } else if lower.contains("model not found") || lower.contains("invalid_model") || lower.contains("does not exist") {
-        ("🔍", Some("Model not found — check the model name with `/model`"))
-    } else if lower.contains("context_length") || lower.contains("too many tokens") || lower.contains("max_tokens") {
-        ("📏", Some("Input too long — try `/compact` to reduce context size"))
+    } else if lower.contains("model not found")
+        || lower.contains("invalid_model")
+        || lower.contains("does not exist")
+    {
+        (
+            "🔍",
+            Some("Model not found — check the model name with `/model`"),
+        )
+    } else if lower.contains("context_length")
+        || lower.contains("too many tokens")
+        || lower.contains("max_tokens")
+    {
+        (
+            "📏",
+            Some("Input too long — try `/compact` to reduce context size"),
+        )
     } else if lower.contains("timeout") || lower.contains("timed out") {
         ("⏱", Some("Connection timed out — check your network"))
-    } else if lower.contains("connection") || lower.contains("dns") || lower.contains("network")
-        || lower.contains("connect error") {
+    } else if lower.contains("connection")
+        || lower.contains("dns")
+        || lower.contains("network")
+        || lower.contains("connect error")
+    {
         ("🌐", Some("Network error — check your internet connection"))
     } else if lower.contains("500") || lower.contains("502") || lower.contains("503") {
         ("💥", Some("Server error — this is usually temporary"))
@@ -428,9 +520,8 @@ pub(crate) fn redraw_input_dock(term_h: u16, buffer: &str) {
         .unwrap_or(80);
     let sep = "─".repeat(w);
     // Single atomic write: save cursor → draw separator → draw input → restore.
-    let seq = format!(
-        "\x1b7\x1b[{sep_row};1H\x1b[2K{sep}\x1b[{input_row};1H\x1b[2K> {buffer}\x1b8"
-    );
+    let seq =
+        format!("\x1b7\x1b[{sep_row};1H\x1b[2K{sep}\x1b[{input_row};1H\x1b[2K> {buffer}\x1b8");
     stdout_write(&seq);
 }
 
@@ -460,8 +551,7 @@ pub(crate) fn teardown_split(term_h: u16) {
     let sep_row = term_h - 1;
     let input_row = term_h;
     // Clear dock rows, then reset scroll region to the full terminal.
-    let seq =
-        format!("\x1b[{sep_row};1H\x1b[2K\x1b[{input_row};1H\x1b[2K\x1b[r\x1b[{sep_row};1H");
+    let seq = format!("\x1b[{sep_row};1H\x1b[2K\x1b[{input_row};1H\x1b[2K\x1b[r\x1b[{sep_row};1H");
     stdout_write(&seq);
 }
 
@@ -544,7 +634,13 @@ pub(crate) fn spawn_stream_input(abort: AbortSignal) -> StreamInputGuard {
         let _ = crossterm::terminal::disable_raw_mode();
     });
 
-    StreamInputGuard { stop, typeahead, handle: Some(handle), term_h, do_split }
+    StreamInputGuard {
+        stop,
+        typeahead,
+        handle: Some(handle),
+        term_h,
+        do_split,
+    }
 }
 
 /// Guard for the raw-mode streaming input listener.
@@ -812,7 +908,8 @@ mod tests {
 
     #[test]
     fn test_format_result_inline_multi_edit() {
-        let result = format_tool_result_inline("MultiEdit", "Edited a.rs (+1 -1 lines), b.rs (+2 -0 lines)");
+        let result =
+            format_tool_result_inline("MultiEdit", "Edited a.rs (+1 -1 lines), b.rs (+2 -0 lines)");
         assert!(result.is_some());
     }
 
@@ -823,7 +920,10 @@ mod tests {
         // Missing numbers — the parser doesn't validate numeric format,
         // it just extracts the +/- tokens. So this returns Some (not a panic).
         let result = parse_edit_stats("Edited file.txt (+ - lines)");
-        assert!(result.is_some(), "parser accepts malformed stats without panicking");
+        assert!(
+            result.is_some(),
+            "parser accepts malformed stats without panicking"
+        );
     }
 
     #[test]

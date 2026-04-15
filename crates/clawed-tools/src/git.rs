@@ -18,8 +18,12 @@ pub struct GitTool;
 
 #[async_trait]
 impl Tool for GitTool {
-    fn name(&self) -> &'static str { "Git" }
-    fn category(&self) -> ToolCategory { ToolCategory::Git }
+    fn name(&self) -> &'static str {
+        "Git"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Git
+    }
 
     fn description(&self) -> &'static str {
         "Run git commands. Supports common operations: status, diff, log, branch, \
@@ -48,9 +52,13 @@ impl Tool for GitTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { false }
+    fn is_read_only(&self) -> bool {
+        false
+    }
 
-    fn is_concurrency_safe(&self) -> bool { false }
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
 
     async fn call(&self, input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
         let subcommand = input["subcommand"]
@@ -59,15 +67,34 @@ impl Tool for GitTool {
 
         let args: Vec<String> = input["args"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         // Validate subcommand is allowed
         let allowed = [
-            "status", "diff", "log", "branch", "show", "blame",
-            "add", "commit", "checkout", "stash", "tag", "remote",
-            "cherry-pick", "rebase", "merge", "fetch", "pull",
-            "rev-parse", "reflog",
+            "status",
+            "diff",
+            "log",
+            "branch",
+            "show",
+            "blame",
+            "add",
+            "commit",
+            "checkout",
+            "stash",
+            "tag",
+            "remote",
+            "cherry-pick",
+            "rebase",
+            "merge",
+            "fetch",
+            "pull",
+            "rev-parse",
+            "reflog",
         ];
         if !allowed.contains(&subcommand) {
             return Ok(ToolResult::error(format!(
@@ -77,20 +104,19 @@ impl Tool for GitTool {
 
         // Safety: block dangerous patterns
         for arg in &args {
-            if (arg.contains("--force") || arg == "-f")
-                && subcommand == "push" {
-                    return Ok(ToolResult::error(
-                        "Force push is not allowed for safety. Use --force-with-lease if needed."
-                    ));
-                }
+            if (arg.contains("--force") || arg == "-f") && subcommand == "push" {
+                return Ok(ToolResult::error(
+                    "Force push is not allowed for safety. Use --force-with-lease if needed.",
+                ));
+            }
             if arg == "--hard" && subcommand == "reset" {
                 return Ok(ToolResult::error(
-                    "Hard reset blocked — could lose uncommitted changes."
+                    "Hard reset blocked — could lose uncommitted changes.",
                 ));
             }
             if arg == "--no-verify" {
                 return Ok(ToolResult::error(
-                    "Skipping hooks (--no-verify) is not allowed unless explicitly requested."
+                    "Skipping hooks (--no-verify) is not allowed unless explicitly requested.",
                 ));
             }
         }
@@ -106,8 +132,9 @@ impl Tool for GitTool {
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
-                .output()
-        ).await;
+                .output(),
+        )
+        .await;
 
         let output = match output {
             Ok(Ok(o)) => o,
@@ -126,7 +153,9 @@ impl Tool for GitTool {
             text.push_str(&stdout);
         }
         if !stderr.is_empty() {
-            if !text.is_empty() { text.push('\n'); }
+            if !text.is_empty() {
+                text.push('\n');
+            }
             text.push_str(&stderr);
         }
         if text.is_empty() {
@@ -139,7 +168,9 @@ impl Tool for GitTool {
         if output.status.success() {
             Ok(ToolResult::text(text))
         } else {
-            Ok(ToolResult::error(format!("git {subcommand} failed:\n{text}")))
+            Ok(ToolResult::error(format!(
+                "git {subcommand} failed:\n{text}"
+            )))
         }
     }
 }
@@ -152,8 +183,12 @@ pub struct GitStatusTool;
 
 #[async_trait]
 impl Tool for GitStatusTool {
-    fn name(&self) -> &'static str { "GitStatus" }
-    fn category(&self) -> ToolCategory { ToolCategory::Git }
+    fn name(&self) -> &'static str {
+        "GitStatus"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Git
+    }
 
     fn description(&self) -> &'static str {
         "Quick git status check: shows branch, staged/unstaged changes, and untracked files."
@@ -167,8 +202,12 @@ impl Tool for GitStatusTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
-    fn is_concurrency_safe(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
+    fn is_concurrency_safe(&self) -> bool {
+        true
+    }
 
     async fn call(&self, _input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
         // Get branch name + status in one go (with timeout)
@@ -177,16 +216,18 @@ impl Tool for GitStatusTool {
             tokio::process::Command::new("git")
                 .args(["branch", "--show-current"])
                 .current_dir(&context.cwd)
-                .output()
-        ).await;
+                .output(),
+        )
+        .await;
 
         let status = tokio::time::timeout(
             GIT_TIMEOUT,
             tokio::process::Command::new("git")
                 .args(["status", "--porcelain", "-b"])
                 .current_dir(&context.cwd)
-                .output()
-        ).await;
+                .output(),
+        )
+        .await;
 
         let mut text = String::new();
 
@@ -203,12 +244,18 @@ impl Tool for GitStatusTool {
             if file_lines.is_empty() {
                 text.push_str("Working tree: clean\n");
             } else {
-                let staged = file_lines.iter().filter(|l| {
-                    l.len() >= 2 && !l.starts_with(' ') && !l.starts_with('?')
-                }).count();
-                let unstaged = file_lines.iter().filter(|l| {
-                    l.len() >= 2 && l.chars().nth(1).is_some_and(|c| c != ' ') && !l.starts_with('?')
-                }).count();
+                let staged = file_lines
+                    .iter()
+                    .filter(|l| l.len() >= 2 && !l.starts_with(' ') && !l.starts_with('?'))
+                    .count();
+                let unstaged = file_lines
+                    .iter()
+                    .filter(|l| {
+                        l.len() >= 2
+                            && l.chars().nth(1).is_some_and(|c| c != ' ')
+                            && !l.starts_with('?')
+                    })
+                    .count();
                 let untracked = file_lines.iter().filter(|l| l.starts_with("??")).count();
 
                 text.push_str(&format!(
@@ -231,8 +278,8 @@ impl Tool for GitStatusTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clawed_core::tool::Tool;
     use clawed_core::permissions::PermissionMode;
+    use clawed_core::tool::Tool;
     use std::path::PathBuf;
 
     fn test_context() -> ToolContext {
@@ -245,9 +292,17 @@ mod tests {
     }
 
     fn get_text(result: &ToolResult) -> String {
-        result.content.iter().filter_map(|c| {
-            if let clawed_core::message::ToolResultContent::Text { text } = c { Some(text.clone()) } else { None }
-        }).collect::<String>()
+        result
+            .content
+            .iter()
+            .filter_map(|c| {
+                if let clawed_core::message::ToolResultContent::Text { text } = c {
+                    Some(text.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<String>()
     }
 
     // ── Tool metadata ───────────────────────────────────────────────────────
@@ -327,7 +382,10 @@ mod tests {
         let input = json!({"subcommand": "push", "args": ["--force", "origin", "main"]});
         let result = GitTool.call(input, &test_context()).await.unwrap();
         assert!(result.is_error);
-        assert!(get_text(&result).contains("not allowed"), "push should be blocked by allowlist");
+        assert!(
+            get_text(&result).contains("not allowed"),
+            "push should be blocked by allowlist"
+        );
     }
 
     #[tokio::test]
@@ -367,7 +425,16 @@ mod tests {
         // Verify all these subcommands pass the allowlist check.
         // They may produce real git output (or errors like "not a git repo"), but
         // should NOT produce the specific "Subcommand 'X' not allowed" error.
-        let allowed_subs = ["status", "log", "branch", "show", "blame", "rev-parse", "reflog", "diff"];
+        let allowed_subs = [
+            "status",
+            "log",
+            "branch",
+            "show",
+            "blame",
+            "rev-parse",
+            "reflog",
+            "diff",
+        ];
         for sub in &allowed_subs {
             let input = json!({"subcommand": sub});
             let result = GitTool.call(input, &test_context()).await.unwrap();
@@ -376,7 +443,8 @@ mod tests {
             assert!(
                 !text.starts_with(&err_prefix),
                 "'{}' should pass allowlist, but got: {}",
-                sub, &text[..text.len().min(100)]
+                sub,
+                &text[..text.len().min(100)]
             );
         }
     }

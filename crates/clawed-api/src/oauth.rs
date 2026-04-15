@@ -5,9 +5,9 @@
 //! with PKCE (Proof Key for Code Exchange), local redirect server for
 //! capturing the auth code, token exchange, refresh, and file-based storage.
 
-use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// OAuth provider configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,7 +39,7 @@ impl OAuthToken {
     ///
     /// Uses a 30-second buffer to avoid race conditions between the check and
     /// the actual API call using the token.
-    #[must_use] 
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         self.expires_within_secs(30)
     }
@@ -95,14 +95,14 @@ pub struct OAuthFlow {
 }
 
 impl OAuthFlow {
-    #[must_use] 
+    #[must_use]
     pub const fn new(config: OAuthConfig) -> Self {
         Self { config }
     }
 
     /// Build the authorization URL the user should open in a browser.
     /// Returns `(url, code_verifier)`.
-    #[must_use] 
+    #[must_use]
     pub fn build_auth_url(&self) -> (String, String) {
         let verifier = generate_code_verifier();
         let challenge = code_challenge(&verifier);
@@ -152,7 +152,9 @@ impl OAuthFlow {
 
     /// Refresh an expired token.
     pub async fn refresh(&self, token: &OAuthToken) -> anyhow::Result<OAuthToken> {
-        let refresh_token = token.refresh_token.as_deref()
+        let refresh_token = token
+            .refresh_token
+            .as_deref()
             .ok_or_else(|| anyhow::anyhow!("No refresh token available"))?;
 
         let client = reqwest::Client::new();
@@ -271,7 +273,8 @@ pub async fn ensure_valid_token(flow: &OAuthFlow) -> anyhow::Result<Option<OAuth
 }
 
 fn token_path() -> anyhow::Result<std::path::PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
+    let home =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
     Ok(home.join(".claude").join("oauth_token.json"))
 }
 
@@ -305,16 +308,23 @@ impl TokenResponse {
             token_type: self.token_type,
             refresh_token: self.refresh_token,
             expires_at,
-            scopes: self.scope.map(|s| s.split(' ').map(String::from).collect()).unwrap_or_default(),
+            scopes: self
+                .scope
+                .map(|s| s.split(' ').map(String::from).collect())
+                .unwrap_or_default(),
         }
     }
 }
 
 fn extract_port(uri: &str) -> Option<u16> {
-    uri.split("://").nth(1)?
-        .split('/').next()?
-        .split(':').nth(1)?
-        .parse().ok()
+    uri.split("://")
+        .nth(1)?
+        .split('/')
+        .next()?
+        .split(':')
+        .nth(1)?
+        .parse()
+        .ok()
 }
 
 /// Wait for an HTTP GET containing `code` query param, tolerating preflight
@@ -326,10 +336,9 @@ async fn wait_for_code(listener: &tokio::net::TcpListener) -> anyhow::Result<Str
     for _ in 0..10 {
         let (mut stream, _) = listener.accept().await?;
         let mut buf = vec![0u8; 4096];
-        let n = match tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            stream.read(&mut buf),
-        ).await {
+        let n = match tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buf))
+            .await
+        {
             Ok(Ok(n)) => n,
             _ => continue, // timeout or read error — try next connection
         };
@@ -341,7 +350,11 @@ async fn wait_for_code(listener: &tokio::net::TcpListener) -> anyhow::Result<Str
         let code = path.split('?').nth(1).and_then(|qs| {
             qs.split('&').find_map(|pair| {
                 let (key, val) = pair.split_once('=')?;
-                if key == "code" { Some(val.to_string()) } else { None }
+                if key == "code" {
+                    Some(val.to_string())
+                } else {
+                    None
+                }
             })
         });
 
@@ -349,7 +362,8 @@ async fn wait_for_code(listener: &tokio::net::TcpListener) -> anyhow::Result<Str
             let body = "<html><body><h2>✓ Authorization successful!</h2><p>You can close this tab.</p></body></html>";
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
-                body.len(), body
+                body.len(),
+                body
             );
             let _ = stream.write_all(response.as_bytes()).await;
             let _ = stream.flush().await;
@@ -445,14 +459,20 @@ mod tests {
             expires_at: Some(now + 15),
             scopes: vec![],
         };
-        assert!(soon.is_expired(), "Token expiring in 15s should be expired with 30s buffer");
+        assert!(
+            soon.is_expired(),
+            "Token expiring in 15s should be expired with 30s buffer"
+        );
 
         // Token that expires in 60 seconds should NOT be expired
         let later = OAuthToken {
             expires_at: Some(now + 60),
             ..soon
         };
-        assert!(!later.is_expired(), "Token expiring in 60s should not be expired");
+        assert!(
+            !later.is_expired(),
+            "Token expiring in 60s should not be expired"
+        );
     }
 
     #[test]
@@ -485,15 +505,24 @@ mod tests {
             expires_at: Some(now + 120),
             scopes: vec![],
         };
-        assert!(soon.should_refresh(), "Token expiring in 2min should trigger proactive refresh");
-        assert!(!soon.is_expired(), "Token expiring in 2min should not be expired yet");
+        assert!(
+            soon.should_refresh(),
+            "Token expiring in 2min should trigger proactive refresh"
+        );
+        assert!(
+            !soon.is_expired(),
+            "Token expiring in 2min should not be expired yet"
+        );
 
         // Token expiring in 10 minutes — should NOT refresh
         let later = OAuthToken {
             expires_at: Some(now + 600),
             ..soon.clone()
         };
-        assert!(!later.should_refresh(), "Token expiring in 10min should not trigger refresh");
+        assert!(
+            !later.should_refresh(),
+            "Token expiring in 10min should not trigger refresh"
+        );
 
         // Token with no expiry — never refresh
         let no_expiry = OAuthToken {

@@ -117,7 +117,10 @@ mod tests {
         let lock = SessionLock::acquire_at(lock_path.clone()).expect("should acquire");
         assert!(lock.is_held());
         drop(lock);
-        assert!(!lock_path.exists(), "lock file should be removed after drop");
+        assert!(
+            !lock_path.exists(),
+            "lock file should be removed after drop"
+        );
     }
 
     #[test]

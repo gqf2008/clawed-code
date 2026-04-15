@@ -18,8 +18,12 @@ pub struct WebSearchTool;
 
 #[async_trait]
 impl Tool for WebSearchTool {
-    fn name(&self) -> &'static str { "WebSearch" }
-    fn category(&self) -> ToolCategory { ToolCategory::Web }
+    fn name(&self) -> &'static str {
+        "WebSearch"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Web
+    }
 
     fn description(&self) -> &'static str {
         "Search the web for real-time information. Use this when you need current data, \
@@ -57,7 +61,9 @@ impl Tool for WebSearchTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         let query = input["query"]
@@ -70,12 +76,20 @@ impl Tool for WebSearchTool {
 
         let allowed_domains: Vec<String> = input["allowed_domains"]
             .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let blocked_domains: Vec<String> = input["blocked_domains"]
             .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         // Try environment-configured search backend
@@ -127,7 +141,8 @@ async fn do_search(
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
-    let url = format!("{}?q={}&count={}",
+    let url = format!(
+        "{}?q={}&count={}",
         base_url,
         urlencoding::encode(&search_query),
         MAX_RESULTS
@@ -166,7 +181,9 @@ fn format_search_results(body: &Value, query: &str) -> anyhow::Result<String> {
             let snippet = if snippet.len() > MAX_SNIPPET_LEN {
                 // UTF-8 safe truncation: find nearest char boundary
                 let mut end = MAX_SNIPPET_LEN;
-                while !snippet.is_char_boundary(end) && end > 0 { end -= 1; }
+                while !snippet.is_char_boundary(end) && end > 0 {
+                    end -= 1;
+                }
                 &snippet[..end]
             } else {
                 snippet
@@ -182,7 +199,10 @@ fn format_search_results(body: &Value, query: &str) -> anyhow::Result<String> {
             for result in results.iter().take(MAX_RESULTS) {
                 count += 1;
                 let title = result["title"].as_str().unwrap_or("(no title)");
-                let url = result["url"].as_str().or_else(|| result["link"].as_str()).unwrap_or("");
+                let url = result["url"]
+                    .as_str()
+                    .or_else(|| result["link"].as_str())
+                    .unwrap_or("");
                 let snippet = result["snippet"]
                     .as_str()
                     .or_else(|| result["description"].as_str())
@@ -190,7 +210,9 @@ fn format_search_results(body: &Value, query: &str) -> anyhow::Result<String> {
 
                 let snippet = if snippet.len() > MAX_SNIPPET_LEN {
                     let mut end = MAX_SNIPPET_LEN;
-                    while !snippet.is_char_boundary(end) && end > 0 { end -= 1; }
+                    while !snippet.is_char_boundary(end) && end > 0 {
+                        end -= 1;
+                    }
                     &snippet[..end]
                 } else {
                     snippet
@@ -213,8 +235,8 @@ fn format_search_results(body: &Value, query: &str) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clawed_core::tool::AbortSignal;
     use clawed_core::permissions::PermissionMode;
+    use clawed_core::tool::AbortSignal;
 
     fn ctx() -> ToolContext {
         ToolContext {
@@ -286,7 +308,10 @@ mod tests {
     async fn missing_api_key_returns_not_configured() {
         std::env::remove_var("SEARCH_API_KEY");
         let tool = WebSearchTool;
-        let result = tool.call(json!({"query": "test query"}), &ctx()).await.unwrap();
+        let result = tool
+            .call(json!({"query": "test query"}), &ctx())
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result_text(&result).contains("not configured"));
     }

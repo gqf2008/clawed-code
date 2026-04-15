@@ -14,8 +14,12 @@ const MAX_WRITE_BYTES: usize = 10 * 1024 * 1024;
 
 #[async_trait]
 impl Tool for FileWriteTool {
-    fn name(&self) -> &'static str { "Write" }
-    fn category(&self) -> ToolCategory { ToolCategory::FileSystem }
+    fn name(&self) -> &'static str {
+        "Write"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::FileSystem
+    }
 
     fn description(&self) -> &'static str {
         "Writes a file to the local filesystem. Overwrites existing files if present. \
@@ -27,7 +31,11 @@ impl Tool for FileWriteTool {
     fn to_auto_classifier_input(&self, input: &Value) -> Value {
         // Only pass path and content length; strip actual content
         let path = input.get("file_path").cloned().unwrap_or(Value::Null);
-        let content_len = input.get("content").and_then(|v| v.as_str()).map(|s| s.len()).unwrap_or(0);
+        let content_len = input
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(|s| s.len())
+            .unwrap_or(0);
         json!({"FileWrite": {"path": path, "content_len": content_len}})
     }
 
@@ -43,13 +51,18 @@ impl Tool for FileWriteTool {
     }
 
     async fn call(&self, input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
-        let file_path = input["file_path"].as_str().ok_or_else(|| anyhow::anyhow!("Missing 'file_path'"))?;
-        let content = input["content"].as_str().ok_or_else(|| anyhow::anyhow!("Missing 'content'"))?;
+        let file_path = input["file_path"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'file_path'"))?;
+        let content = input["content"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'content'"))?;
 
         if content.len() > MAX_WRITE_BYTES {
             return Ok(ToolResult::error(format!(
                 "Content too large ({} bytes, limit is {} MB). Break the write into smaller files.",
-                content.len(), MAX_WRITE_BYTES / 1024 / 1024
+                content.len(),
+                MAX_WRITE_BYTES / 1024 / 1024
             )));
         }
 
@@ -89,7 +102,10 @@ impl Tool for FileWriteTool {
                 tokio::fs::write(&path, content).await?;
                 update_file_state(&path, content);
                 debug!(path = %path.display(), "Overwrote binary file");
-                Ok(ToolResult::text(format!("Wrote {} (binary file, no diff)", path.display())))
+                Ok(ToolResult::text(format!(
+                    "Wrote {} (binary file, no diff)",
+                    path.display()
+                )))
             }
             Err(e) => {
                 warn!(path = %path.display(), error = %e, "Cannot read existing file for diff");
@@ -102,8 +118,8 @@ impl Tool for FileWriteTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clawed_core::tool::Tool;
     use clawed_core::permissions::PermissionMode;
+    use clawed_core::tool::Tool;
 
     fn test_context() -> ToolContext {
         ToolContext {

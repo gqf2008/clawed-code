@@ -121,8 +121,12 @@ pub struct TaskCreateTool;
 
 #[async_trait]
 impl Tool for TaskCreateTool {
-    fn name(&self) -> &'static str { "task_create" }
-    fn category(&self) -> ToolCategory { ToolCategory::Agent }
+    fn name(&self) -> &'static str {
+        "task_create"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Agent
+    }
 
     fn description(&self) -> &'static str {
         "Create a new task for tracking progress. Use this when breaking down a complex \
@@ -152,15 +156,23 @@ impl Tool for TaskCreateTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { false }
-    fn is_concurrency_safe(&self) -> bool { false }
+    fn is_read_only(&self) -> bool {
+        false
+    }
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         let subject = input["subject"].as_str().unwrap_or("").to_string();
         let description = input["description"].as_str().unwrap_or("").to_string();
         let blocked_by: Vec<String> = input["blocked_by"]
             .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         if subject.is_empty() {
@@ -199,8 +211,12 @@ pub struct TaskUpdateTool;
 
 #[async_trait]
 impl Tool for TaskUpdateTool {
-    fn name(&self) -> &'static str { "task_update" }
-    fn category(&self) -> ToolCategory { ToolCategory::Agent }
+    fn name(&self) -> &'static str {
+        "task_update"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Agent
+    }
 
     fn description(&self) -> &'static str {
         "Update an existing task's status, subject, description, or dependencies. \
@@ -244,8 +260,12 @@ impl Tool for TaskUpdateTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { false }
-    fn is_concurrency_safe(&self) -> bool { false }
+    fn is_read_only(&self) -> bool {
+        false
+    }
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         let task_id = input["task_id"].as_str().unwrap_or("");
@@ -302,7 +322,9 @@ impl Tool for TaskUpdateTool {
         }
 
         if updated.is_empty() {
-            return Ok(ToolResult::text("No fields updated. Provide at least one field to change."));
+            return Ok(ToolResult::text(
+                "No fields updated. Provide at least one field to change.",
+            ));
         }
 
         save_task(&task)?;
@@ -343,8 +365,12 @@ pub struct TaskGetTool;
 
 #[async_trait]
 impl Tool for TaskGetTool {
-    fn name(&self) -> &'static str { "task_get" }
-    fn category(&self) -> ToolCategory { ToolCategory::Agent }
+    fn name(&self) -> &'static str {
+        "task_get"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Agent
+    }
 
     fn description(&self) -> &'static str {
         "Get details of a specific task by ID, including subject, description, \
@@ -364,7 +390,9 @@ impl Tool for TaskGetTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         let task_id = input["task_id"].as_str().unwrap_or("");
@@ -385,8 +413,12 @@ pub struct TaskListTool;
 
 #[async_trait]
 impl Tool for TaskListTool {
-    fn name(&self) -> &'static str { "task_list" }
-    fn category(&self) -> ToolCategory { ToolCategory::Agent }
+    fn name(&self) -> &'static str {
+        "task_list"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Agent
+    }
 
     fn description(&self) -> &'static str {
         "List all tasks with their status and dependencies. Returns a summary view \
@@ -400,7 +432,9 @@ impl Tool for TaskListTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
 
     async fn call(&self, _input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         let tasks = load_all_tasks();
@@ -450,27 +484,66 @@ fn format_task_detail(task: &Task) -> String {
 fn format_task_list(tasks: &[Task]) -> String {
     let mut out = String::new();
 
-    let pending: Vec<_> = tasks.iter().filter(|t| t.status == TaskStatus::Pending).collect();
-    let in_progress: Vec<_> = tasks.iter().filter(|t| t.status == TaskStatus::InProgress).collect();
-    let blocked: Vec<_> = tasks.iter().filter(|t| t.status == TaskStatus::Blocked).collect();
-    let completed: Vec<_> = tasks.iter().filter(|t| t.status == TaskStatus::Completed).collect();
+    let pending: Vec<_> = tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Pending)
+        .collect();
+    let in_progress: Vec<_> = tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::InProgress)
+        .collect();
+    let blocked: Vec<_> = tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Blocked)
+        .collect();
+    let completed: Vec<_> = tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Completed)
+        .collect();
 
     let total = tasks.len();
-    out.push_str(&format!("Tasks: {} total ({} done, {} in progress, {} pending, {} blocked)\n\n",
-        total, completed.len(), in_progress.len(), pending.len(), blocked.len()));
+    out.push_str(&format!(
+        "Tasks: {} total ({} done, {} in progress, {} pending, {} blocked)\n\n",
+        total,
+        completed.len(),
+        in_progress.len(),
+        pending.len(),
+        blocked.len()
+    ));
 
     for task in &in_progress {
-        out.push_str(&format!("  {} {} — {}\n", status_icon(&task.status), task.id, task.subject));
+        out.push_str(&format!(
+            "  {} {} — {}\n",
+            status_icon(&task.status),
+            task.id,
+            task.subject
+        ));
     }
     for task in &pending {
-        out.push_str(&format!("  {} {} — {}\n", status_icon(&task.status), task.id, task.subject));
+        out.push_str(&format!(
+            "  {} {} — {}\n",
+            status_icon(&task.status),
+            task.id,
+            task.subject
+        ));
     }
     for task in &blocked {
         let deps = task.blocked_by.join(", ");
-        out.push_str(&format!("  {} {} — {} (blocked by: {})\n", status_icon(&task.status), task.id, task.subject, deps));
+        out.push_str(&format!(
+            "  {} {} — {} (blocked by: {})\n",
+            status_icon(&task.status),
+            task.id,
+            task.subject,
+            deps
+        ));
     }
     for task in &completed {
-        out.push_str(&format!("  {} {} — {}\n", status_icon(&task.status), task.id, task.subject));
+        out.push_str(&format!(
+            "  {} {} — {}\n",
+            status_icon(&task.status),
+            task.id,
+            task.subject
+        ));
     }
 
     out
@@ -482,8 +555,12 @@ pub struct TaskOutputTool;
 
 #[async_trait]
 impl Tool for TaskOutputTool {
-    fn name(&self) -> &'static str { "task_output" }
-    fn category(&self) -> ToolCategory { ToolCategory::Agent }
+    fn name(&self) -> &'static str {
+        "task_output"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Agent
+    }
 
     fn description(&self) -> &'static str {
         "Get the detailed output or description of a specific task. Use this to \
@@ -504,7 +581,9 @@ impl Tool for TaskOutputTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         let task_id = input["task_id"].as_str().unwrap_or("");
@@ -516,7 +595,10 @@ impl Tool for TaskOutputTool {
             Some(task) => {
                 let mut out = format_task_detail(&task);
                 if !task.metadata.is_empty() {
-                    out.push_str(&format!("\n\nMetadata: {}", serde_json::to_string_pretty(&task.metadata)?));
+                    out.push_str(&format!(
+                        "\n\nMetadata: {}",
+                        serde_json::to_string_pretty(&task.metadata)?
+                    ));
                 }
                 Ok(ToolResult::text(out))
             }
@@ -531,8 +613,12 @@ pub struct TaskStopTool;
 
 #[async_trait]
 impl Tool for TaskStopTool {
-    fn name(&self) -> &'static str { "task_stop" }
-    fn category(&self) -> ToolCategory { ToolCategory::Agent }
+    fn name(&self) -> &'static str {
+        "task_stop"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Agent
+    }
 
     fn description(&self) -> &'static str {
         "Stop/cancel a running task by marking it as deleted. Use this when a task \
@@ -552,8 +638,12 @@ impl Tool for TaskStopTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { false }
-    fn is_concurrency_safe(&self) -> bool { false }
+    fn is_read_only(&self) -> bool {
+        false
+    }
+    fn is_concurrency_safe(&self) -> bool {
+        false
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         let task_id = input["task_id"].as_str().unwrap_or("");
@@ -567,7 +657,9 @@ impl Tool for TaskStopTool {
         };
 
         if task.status == TaskStatus::Deleted {
-            return Ok(ToolResult::text(format!("Task {task_id} is already deleted.")));
+            return Ok(ToolResult::text(format!(
+                "Task {task_id} is already deleted."
+            )));
         }
 
         let prev_status = task.status.to_string();
@@ -614,7 +706,10 @@ mod tests {
             assert_eq!(&back, status);
         }
         // rename_all = "snake_case" means InProgress serializes as "in_progress"
-        assert_eq!(serde_json::to_string(&TaskStatus::InProgress).unwrap(), "\"in_progress\"");
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::InProgress).unwrap(),
+            "\"in_progress\""
+        );
     }
 
     // ── Task serde ──────────────────────────────────────────────────────

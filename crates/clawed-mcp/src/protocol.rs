@@ -41,7 +41,7 @@ pub struct JsonRpcResponse {
 }
 
 impl JsonRpcResponse {
-    #[must_use] 
+    #[must_use]
     pub fn success(id: u64, result: Value) -> Self {
         Self {
             jsonrpc: "2.0".to_string(),
@@ -117,9 +117,9 @@ impl<'de> serde::Deserialize<'de> for JsonRpcMessage {
         D: serde::Deserializer<'de>,
     {
         let value = Value::deserialize(deserializer)?;
-        let obj = value.as_object().ok_or_else(|| {
-            serde::de::Error::custom("JSON-RPC message must be an object")
-        })?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("JSON-RPC message must be an object"))?;
 
         // Response: has "result" or "error"
         if obj.contains_key("result") || obj.contains_key("error") {
@@ -152,7 +152,11 @@ mod tests {
 
     #[test]
     fn request_new() {
-        let req = JsonRpcRequest::new(1, "initialize", Some(serde_json::json!({"capabilities": {}})));
+        let req = JsonRpcRequest::new(
+            1,
+            "initialize",
+            Some(serde_json::json!({"capabilities": {}})),
+        );
         assert_eq!(req.jsonrpc, "2.0");
         assert_eq!(req.id, 1);
         assert_eq!(req.method, "initialize");
@@ -185,7 +189,11 @@ mod tests {
 
     #[test]
     fn request_serialization() {
-        let req = JsonRpcRequest::new(1, "initialize", Some(serde_json::json!({"capabilities": {}})));
+        let req = JsonRpcRequest::new(
+            1,
+            "initialize",
+            Some(serde_json::json!({"capabilities": {}})),
+        );
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"jsonrpc\":\"2.0\""));
         assert!(json.contains("\"method\":\"initialize\""));
@@ -208,7 +216,8 @@ mod tests {
 
     #[test]
     fn error_response_deserialization() {
-        let json = r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"Method not found"}}"#;
+        let json =
+            r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"Method not found"}}"#;
         let msg: JsonRpcMessage = serde_json::from_str(json).unwrap();
         match msg {
             JsonRpcMessage::Response(resp) => {
@@ -223,7 +232,8 @@ mod tests {
 
     #[test]
     fn notification_deserialization() {
-        let json = r#"{"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":50}}"#;
+        let json =
+            r#"{"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":50}}"#;
         let msg: JsonRpcMessage = serde_json::from_str(json).unwrap();
         match msg {
             JsonRpcMessage::Notification(notif) => {

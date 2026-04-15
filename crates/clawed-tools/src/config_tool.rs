@@ -13,7 +13,9 @@ pub struct ConfigTool;
 
 #[async_trait]
 impl Tool for ConfigTool {
-    fn name(&self) -> &'static str { "Config" }
+    fn name(&self) -> &'static str {
+        "Config"
+    }
 
     fn description(&self) -> &'static str {
         "Read or write settings in the Claude configuration file (~/.config/claude/settings.json). \
@@ -42,8 +44,12 @@ impl Tool for ConfigTool {
     }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
-        let action = input["action"].as_str().ok_or_else(|| anyhow::anyhow!("Missing 'action'"))?;
-        let key = input["key"].as_str().ok_or_else(|| anyhow::anyhow!("Missing 'key'"))?;
+        let action = input["action"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'action'"))?;
+        let key = input["key"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'key'"))?;
 
         let settings_path = Settings::config_dir()
             .ok_or_else(|| anyhow::anyhow!("Cannot determine config directory"))?
@@ -65,7 +71,10 @@ impl Tool for ConfigTool {
                 }
             }
             "set" => {
-                let new_val = input.get("value").cloned().ok_or_else(|| anyhow::anyhow!("Missing 'value' for set"))?;
+                let new_val = input
+                    .get("value")
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("Missing 'value' for set"))?;
 
                 let mut settings: Value = if settings_path.exists() {
                     let text = tokio::fs::read_to_string(&settings_path).await?;
@@ -83,7 +92,9 @@ impl Tool for ConfigTool {
                 tokio::fs::write(&settings_path, pretty).await?;
                 Ok(ToolResult::text(format!("Set {key} = {new_val}")))
             }
-            other => Ok(ToolResult::error(format!("Unknown action: '{other}'. Use 'get' or 'set'."))),
+            other => Ok(ToolResult::error(format!(
+                "Unknown action: '{other}'. Use 'get' or 'set'."
+            ))),
         }
     }
 }

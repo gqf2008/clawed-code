@@ -112,18 +112,19 @@ async fn handle_webhook(
         return (StatusCode::BAD_REQUEST, "Unknown platform");
     }
 
-    let channel = body.get("channel_id")
+    let channel = body
+        .get("channel_id")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
-    let user_id = body.get("user_id")
+    let user_id = body
+        .get("user_id")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
-    let user_name = body.get("user_name")
+    let user_name = body
+        .get("user_name")
         .and_then(|v| v.as_str())
         .unwrap_or("Unknown");
-    let text = body.get("text")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("");
 
     if text.is_empty() {
         return (StatusCode::BAD_REQUEST, "Missing text field");
@@ -160,10 +161,7 @@ mod tests {
 
     #[tokio::test]
     async fn health_check() {
-        let server = WebhookServer::new(
-            "127.0.0.1:0".parse().unwrap(),
-            make_ctx(),
-        );
+        let server = WebhookServer::new("127.0.0.1:0".parse().unwrap(), make_ctx());
         let app = server.build_router();
 
         let response = app
@@ -184,10 +182,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let ctx = GatewayContext { inbound_tx: tx };
 
-        let server = WebhookServer::new(
-            "127.0.0.1:0".parse().unwrap(),
-            ctx,
-        );
+        let server = WebhookServer::new("127.0.0.1:0".parse().unwrap(), ctx);
         let app = server.build_router();
 
         let body = serde_json::json!({
@@ -220,10 +215,7 @@ mod tests {
 
     #[tokio::test]
     async fn webhook_missing_text() {
-        let server = WebhookServer::new(
-            "127.0.0.1:0".parse().unwrap(),
-            make_ctx(),
-        );
+        let server = WebhookServer::new("127.0.0.1:0".parse().unwrap(), make_ctx());
         let app = server.build_router();
 
         let body = serde_json::json!({

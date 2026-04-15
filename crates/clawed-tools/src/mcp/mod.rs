@@ -18,10 +18,9 @@ use clawed_core::message::{ImageSource, ToolResultContent};
 
 // Re-export from clawed-mcp for convenience
 pub use clawed_mcp::{
-    McpClient, McpContent, McpManager, McpResource, McpServerConfig, McpToolDef, McpToolResult,
-    format_mcp_tool_name, parse_mcp_tool_name, is_mcp_tool,
-    load_mcp_configs, discover_mcp_configs,
-    BuiltinMcpServer,
+    discover_mcp_configs, format_mcp_tool_name, is_mcp_tool, load_mcp_configs, parse_mcp_tool_name,
+    BuiltinMcpServer, McpClient, McpContent, McpManager, McpResource, McpServerConfig, McpToolDef,
+    McpToolResult,
 };
 
 pub use clawed_mcp::registry::MCP_TOOL_PREFIX;
@@ -39,9 +38,7 @@ fn mcp_result_to_tool_content(result: &McpToolResult) -> Vec<ToolResultContent> 
             }
             "image" => {
                 if let Some(data) = &c.data {
-                    let media_type = c.mime_type.as_deref()
-                        .unwrap_or("image/png")
-                        .to_string();
+                    let media_type = c.mime_type.as_deref().unwrap_or("image/png").to_string();
                     content.push(ToolResultContent::Image {
                         source: ImageSource {
                             media_type,
@@ -55,7 +52,9 @@ fn mcp_result_to_tool_content(result: &McpToolResult) -> Vec<ToolResultContent> 
     }
 
     if content.is_empty() {
-        content.push(ToolResultContent::Text { text: String::new() });
+        content.push(ToolResultContent::Text {
+            text: String::new(),
+        });
     }
     content
 }
@@ -69,8 +68,12 @@ pub struct ListMcpResourcesTool {
 
 #[async_trait]
 impl Tool for ListMcpResourcesTool {
-    fn name(&self) -> &'static str { "mcp_list_resources" }
-    fn category(&self) -> ToolCategory { ToolCategory::Mcp }
+    fn name(&self) -> &'static str {
+        "mcp_list_resources"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Mcp
+    }
 
     fn description(&self) -> &'static str {
         "List resources available from connected MCP servers. Resources are \
@@ -95,8 +98,12 @@ impl Tool for ListMcpResourcesTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
-    fn is_enabled(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
+    fn is_enabled(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         let manager = self.manager.read().await;
@@ -107,7 +114,7 @@ impl Tool for ListMcpResourcesTool {
         if server_names.is_empty() {
             return Ok(ToolResult::text(
                 "No MCP servers connected. Configure MCP servers in .mcp.json \
-                 or use the --mcp flag to connect to a server."
+                 or use the --mcp flag to connect to a server.",
             ));
         }
 
@@ -115,18 +122,23 @@ impl Tool for ListMcpResourcesTool {
             let mut result = json!({});
             for name in &server_names {
                 if let Some(filter) = server_filter {
-                    if name != filter { continue; }
+                    if name != filter {
+                        continue;
+                    }
                 }
                 match manager.list_resources_for(name).await {
                     Ok(resources) => {
-                        let entries: Vec<Value> = resources.iter().map(|r| {
-                            json!({
-                                "uri": r.uri,
-                                "name": r.name,
-                                "description": r.description,
-                                "mimeType": r.mime_type,
+                        let entries: Vec<Value> = resources
+                            .iter()
+                            .map(|r| {
+                                json!({
+                                    "uri": r.uri,
+                                    "name": r.name,
+                                    "description": r.description,
+                                    "mimeType": r.mime_type,
+                                })
                             })
-                        }).collect();
+                            .collect();
                         result[name] = json!(entries);
                     }
                     Err(e) => {
@@ -139,16 +151,24 @@ impl Tool for ListMcpResourcesTool {
             let mut output = String::new();
             for name in &server_names {
                 if let Some(filter) = server_filter {
-                    if name != filter { continue; }
+                    if name != filter {
+                        continue;
+                    }
                 }
                 match manager.list_resources_for(name).await {
                     Ok(resources) => {
                         if resources.is_empty() {
                             output.push_str(&format!("## {name} — no resources\n\n"));
                         } else {
-                            output.push_str(&format!("## {} — {} resources\n", name, resources.len()));
+                            output.push_str(&format!(
+                                "## {} — {} resources\n",
+                                name,
+                                resources.len()
+                            ));
                             for res in &resources {
-                                let mime = res.mime_type.as_deref()
+                                let mime = res
+                                    .mime_type
+                                    .as_deref()
                                     .map(|m| format!(" [{m}]"))
                                     .unwrap_or_default();
                                 output.push_str(&format!(
@@ -184,8 +204,12 @@ pub struct ReadMcpResourceTool {
 
 #[async_trait]
 impl Tool for ReadMcpResourceTool {
-    fn name(&self) -> &'static str { "mcp_read_resource" }
-    fn category(&self) -> ToolCategory { ToolCategory::Mcp }
+    fn name(&self) -> &'static str {
+        "mcp_read_resource"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Mcp
+    }
 
     fn description(&self) -> &'static str {
         "Read a specific resource from an MCP server by its URI. \
@@ -214,8 +238,12 @@ impl Tool for ReadMcpResourceTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
-    fn is_enabled(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
+    fn is_enabled(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         use base64::Engine;
@@ -239,28 +267,34 @@ impl Tool for ReadMcpResourceTool {
                 text_parts.push(text.to_string());
             } else if let Some(data) = content.data.as_deref() {
                 blob_count += 1;
-                let mime = content.mime_type.as_deref().unwrap_or("application/octet-stream");
+                let mime = content
+                    .mime_type
+                    .as_deref()
+                    .unwrap_or("application/octet-stream");
 
                 if let Some(path) = save_to {
                     match base64::engine::general_purpose::STANDARD.decode(data) {
-                        Ok(bytes) => {
-                            match std::fs::write(path, &bytes) {
-                                Ok(()) => {
-                                    text_parts.push(format!(
-                                        "[Binary blob ({}, {} bytes) saved to: {}]",
-                                        mime, bytes.len(), path
-                                    ));
-                                }
-                                Err(e) => {
-                                    text_parts.push(format!(
-                                        "[Binary blob ({}, {} bytes) — failed to save: {}]",
-                                        mime, bytes.len(), e
-                                    ));
-                                }
+                        Ok(bytes) => match std::fs::write(path, &bytes) {
+                            Ok(()) => {
+                                text_parts.push(format!(
+                                    "[Binary blob ({}, {} bytes) saved to: {}]",
+                                    mime,
+                                    bytes.len(),
+                                    path
+                                ));
                             }
-                        }
+                            Err(e) => {
+                                text_parts.push(format!(
+                                    "[Binary blob ({}, {} bytes) — failed to save: {}]",
+                                    mime,
+                                    bytes.len(),
+                                    e
+                                ));
+                            }
+                        },
                         Err(e) => {
-                            text_parts.push(format!("[Binary blob ({mime}) — base64 decode error: {e}]"));
+                            text_parts
+                                .push(format!("[Binary blob ({mime}) — base64 decode error: {e}]"));
                         }
                     }
                 } else {
@@ -278,7 +312,9 @@ impl Tool for ReadMcpResourceTool {
                     "Resource '{uri}' contains {blob_count} binary blob(s) but no text content."
                 )))
             } else {
-                Ok(ToolResult::text(format!("Resource '{uri}' returned no content.")))
+                Ok(ToolResult::text(format!(
+                    "Resource '{uri}' returned no content."
+                )))
             }
         } else {
             Ok(ToolResult::text(text_parts.join("\n")))
@@ -303,12 +339,24 @@ pub struct McpToolProxy {
 
 #[async_trait]
 impl Tool for McpToolProxy {
-    fn name(&self) -> &str { &self.qualified_name }
-    fn category(&self) -> ToolCategory { self.category }
-    fn description(&self) -> &str { &self.tool_description }
-    fn input_schema(&self) -> Value { self.tool_schema.clone() }
-    fn is_read_only(&self) -> bool { self.read_only }
-    fn is_enabled(&self) -> bool { true }
+    fn name(&self) -> &str {
+        &self.qualified_name
+    }
+    fn category(&self) -> ToolCategory {
+        self.category
+    }
+    fn description(&self) -> &str {
+        &self.tool_description
+    }
+    fn input_schema(&self) -> Value {
+        self.tool_schema.clone()
+    }
+    fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+    fn is_enabled(&self) -> bool {
+        true
+    }
 
     fn to_auto_classifier_input(&self, _input: &Value) -> Value {
         // MCP tools may carry arbitrary user data — only expose the tool name

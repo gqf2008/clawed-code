@@ -94,7 +94,7 @@ pub struct McpToolResult {
 
 impl McpToolResult {
     /// Extract concatenated text content from the result.
-    #[must_use] 
+    #[must_use]
     pub fn text(&self) -> String {
         self.content
             .iter()
@@ -239,7 +239,10 @@ pub async fn persist_large_output(
         .join("mcp-outputs");
 
     if tokio::fs::create_dir_all(&output_dir).await.is_err() {
-        tracing::warn!("Failed to create MCP output directory: {}", output_dir.display());
+        tracing::warn!(
+            "Failed to create MCP output directory: {}",
+            output_dir.display()
+        );
         return None;
     }
 
@@ -251,7 +254,8 @@ pub async fn persist_large_output(
         Ok(()) => {
             tracing::info!(
                 "MCP large output persisted: {tool_name} ({} bytes) → {}",
-                text.len(), path.display()
+                text.len(),
+                path.display()
             );
             Some(path)
         }
@@ -467,10 +471,7 @@ mod tests {
         let resp_json = r#"{"action":"accept","content":{"api_key":"sk-123"}}"#;
         let resp: ElicitationResponse = serde_json::from_str(resp_json).unwrap();
         assert_eq!(resp.action, ElicitationAction::Accept);
-        assert_eq!(
-            resp.content.unwrap()["api_key"].as_str().unwrap(),
-            "sk-123"
-        );
+        assert_eq!(resp.content.unwrap()["api_key"].as_str().unwrap(), "sk-123");
     }
 
     #[test]

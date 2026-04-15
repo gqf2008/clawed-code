@@ -23,16 +23,19 @@
 //! └──────────────────┘   └────────────────┘
 //! ```
 
-pub mod protocol;
-pub mod types;
-pub mod client;
-pub mod transport;
-pub mod sse;
-pub mod registry;
 pub mod bus;
+pub mod client;
+pub mod protocol;
+pub mod registry;
+pub mod sse;
+pub mod transport;
+pub mod types;
 
-pub use protocol::*;
-pub use types::*;
-pub use client::McpClient;
-pub use registry::{McpManager, BuiltinMcpServer, format_mcp_tool_name, parse_mcp_tool_name, is_mcp_tool, load_mcp_configs, discover_mcp_configs};
 pub use bus::McpBusAdapter;
+pub use client::McpClient;
+pub use protocol::*;
+pub use registry::{
+    discover_mcp_configs, format_mcp_tool_name, is_mcp_tool, load_mcp_configs, parse_mcp_tool_name,
+    BuiltinMcpServer, McpManager,
+};
+pub use types::*;

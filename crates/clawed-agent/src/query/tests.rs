@@ -1,11 +1,10 @@
 //! Unit tests for the query stream loop and helpers.
 
-use super::*;
 use super::helpers::{
-    build_system_blocks, classify_api_error, error_category,
-    build_context_warning, make_continuation_message,
-    messages_to_api, block_to_api, ApiErrorAction,
+    block_to_api, build_context_warning, build_system_blocks, classify_api_error, error_category,
+    make_continuation_message, messages_to_api, ApiErrorAction,
 };
+use super::*;
 
 // ── classify_api_error ───────────────────────────────────────────────
 
@@ -116,10 +115,20 @@ fn test_build_context_warning_warning_level() {
     let at_60 = (threshold as f64 * 0.60) as u64;
     let result = build_context_warning(at_60, TEST_CONTEXT_WINDOW);
     assert!(result.is_some());
-    if let Some((level, AgentEvent::ContextWarning { message, usage_pct, .. })) = result {
+    if let Some((
+        level,
+        AgentEvent::ContextWarning {
+            message, usage_pct, ..
+        },
+    )) = result
+    {
         assert_eq!(level, crate::compact::TokenWarningState::Warning);
         assert!(message.contains("Approaching"));
-        assert!(usage_pct <= 1.0, "pct should be ≤ 100%, got {:.0}%", usage_pct * 100.0);
+        assert!(
+            usage_pct <= 1.0,
+            "pct should be ≤ 100%, got {:.0}%",
+            usage_pct * 100.0
+        );
     }
 }
 
@@ -129,10 +138,20 @@ fn test_build_context_warning_critical() {
     let at_80 = (threshold as f64 * 0.80) as u64;
     let result = build_context_warning(at_80, TEST_CONTEXT_WINDOW);
     assert!(result.is_some());
-    if let Some((level, AgentEvent::ContextWarning { message, usage_pct, .. })) = result {
+    if let Some((
+        level,
+        AgentEvent::ContextWarning {
+            message, usage_pct, ..
+        },
+    )) = result
+    {
         assert_eq!(level, crate::compact::TokenWarningState::Critical);
         assert!(message.contains("nearly full"));
-        assert!(usage_pct <= 1.0, "pct should be ≤ 100%, got {:.0}%", usage_pct * 100.0);
+        assert!(
+            usage_pct <= 1.0,
+            "pct should be ≤ 100%, got {:.0}%",
+            usage_pct * 100.0
+        );
     }
 }
 
@@ -183,7 +202,10 @@ fn test_build_system_blocks_with_boundary() {
     assert!(blocks[0].text.contains("Static part"));
     assert!(blocks[1].text.contains("Dynamic part"));
     assert!(blocks[0].cache_control.is_some());
-    assert_eq!(blocks[0].cache_control.as_ref().unwrap().control_type, "ephemeral");
+    assert_eq!(
+        blocks[0].cache_control.as_ref().unwrap().control_type,
+        "ephemeral"
+    );
     assert!(blocks[1].cache_control.is_none());
 }
 
@@ -210,7 +232,9 @@ fn test_messages_to_api_converts_user_and_assistant() {
     let messages = vec![
         Message::User(UserMessage {
             uuid: "u1".into(),
-            content: vec![ContentBlock::Text { text: "hello".into() }],
+            content: vec![ContentBlock::Text {
+                text: "hello".into(),
+            }],
         }),
         Message::Assistant(AssistantMessage {
             uuid: "a1".into(),
@@ -234,7 +258,9 @@ fn test_messages_to_api_skips_system() {
         }),
         Message::User(UserMessage {
             uuid: "u1".into(),
-            content: vec![ContentBlock::Text { text: "hello".into() }],
+            content: vec![ContentBlock::Text {
+                text: "hello".into(),
+            }],
         }),
     ];
     let api = messages_to_api(&messages, false);
@@ -244,12 +270,12 @@ fn test_messages_to_api_skips_system() {
 
 #[test]
 fn test_messages_to_api_cache_control_on_last_block() {
-    let messages = vec![
-        Message::User(UserMessage {
-            uuid: "u1".into(),
-            content: vec![ContentBlock::Text { text: "hello".into() }],
-        }),
-    ];
+    let messages = vec![Message::User(UserMessage {
+        uuid: "u1".into(),
+        content: vec![ContentBlock::Text {
+            text: "hello".into(),
+        }],
+    })];
     let api = messages_to_api(&messages, false);
     match &api[0].content[0] {
         ApiContentBlock::Text { cache_control, .. } => {
@@ -261,16 +287,19 @@ fn test_messages_to_api_cache_control_on_last_block() {
 
 #[test]
 fn test_messages_to_api_skip_cache() {
-    let messages = vec![
-        Message::User(UserMessage {
-            uuid: "u1".into(),
-            content: vec![ContentBlock::Text { text: "hello".into() }],
-        }),
-    ];
+    let messages = vec![Message::User(UserMessage {
+        uuid: "u1".into(),
+        content: vec![ContentBlock::Text {
+            text: "hello".into(),
+        }],
+    })];
     let api = messages_to_api(&messages, true);
     match &api[0].content[0] {
         ApiContentBlock::Text { cache_control, .. } => {
-            assert!(cache_control.is_none(), "cache_control should be None when skip_cache=true");
+            assert!(
+                cache_control.is_none(),
+                "cache_control should be None when skip_cache=true"
+            );
         }
         _ => panic!("expected Text block"),
     }
@@ -280,10 +309,15 @@ fn test_messages_to_api_skip_cache() {
 
 #[test]
 fn test_block_to_api_text() {
-    let block = ContentBlock::Text { text: "hello".into() };
+    let block = ContentBlock::Text {
+        text: "hello".into(),
+    };
     let api = block_to_api(&block);
     match api {
-        ApiContentBlock::Text { text, cache_control } => {
+        ApiContentBlock::Text {
+            text,
+            cache_control,
+        } => {
             assert_eq!(text, "hello");
             assert!(cache_control.is_none());
         }
@@ -311,7 +345,9 @@ fn test_block_to_api_tool_use() {
 
 #[test]
 fn test_block_to_api_thinking() {
-    let block = ContentBlock::Thinking { thinking: "let me think...".into() };
+    let block = ContentBlock::Thinking {
+        thinking: "let me think...".into(),
+    };
     let api = block_to_api(&block);
     match api {
         ApiContentBlock::Text { text, .. } => {

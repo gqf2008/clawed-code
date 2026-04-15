@@ -69,7 +69,7 @@ pub struct CacheControl {
 
 impl CacheControl {
     /// Standard ephemeral cache control (no TTL/scope).
-    #[must_use] 
+    #[must_use]
     pub fn ephemeral() -> Self {
         Self {
             control_type: "ephemeral".into(),
@@ -79,7 +79,7 @@ impl CacheControl {
     }
 
     /// Ephemeral with global scope (for org-wide cache sharing).
-    #[must_use] 
+    #[must_use]
     pub fn ephemeral_global() -> Self {
         Self {
             control_type: "ephemeral".into(),
@@ -89,7 +89,7 @@ impl CacheControl {
     }
 
     /// Ephemeral with 1-hour TTL and global scope (for eligible users).
-    #[must_use] 
+    #[must_use]
     pub fn ephemeral_1h_global() -> Self {
         Self {
             control_type: "ephemeral".into(),
@@ -377,7 +377,9 @@ mod tests {
     fn api_content_tool_result_serde() {
         let block = ApiContentBlock::ToolResult {
             tool_use_id: "tu_123".into(),
-            content: vec![ToolResultContent::Text { text: "file contents".into() }],
+            content: vec![ToolResultContent::Text {
+                text: "file contents".into(),
+            }],
             is_error: false,
             cache_control: None,
         };
@@ -388,7 +390,12 @@ mod tests {
 
         let back: ApiContentBlock = serde_json::from_value(json).unwrap();
         match back {
-            ApiContentBlock::ToolResult { tool_use_id, content, is_error, .. } => {
+            ApiContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+                ..
+            } => {
                 assert_eq!(tool_use_id, "tu_123");
                 assert!(!is_error);
                 assert_eq!(content.len(), 1);
@@ -452,14 +459,12 @@ mod tests {
         });
         let event: StreamEvent = serde_json::from_value(json).unwrap();
         match event {
-            StreamEvent::ContentBlockDelta { delta, .. } => {
-                match delta {
-                    DeltaBlock::InputJsonDelta { partial_json } => {
-                        assert_eq!(partial_json, "{\"path\":");
-                    }
-                    _ => panic!("Expected InputJsonDelta"),
+            StreamEvent::ContentBlockDelta { delta, .. } => match delta {
+                DeltaBlock::InputJsonDelta { partial_json } => {
+                    assert_eq!(partial_json, "{\"path\":");
                 }
-            }
+                _ => panic!("Expected InputJsonDelta"),
+            },
             _ => panic!("Expected ContentBlockDelta"),
         }
     }
@@ -535,7 +540,10 @@ mod tests {
     fn cache_control_1h_global_serialization() {
         let cc = CacheControl::ephemeral_1h_global();
         let json = serde_json::to_value(&cc).unwrap();
-        assert_eq!(json, json!({"type": "ephemeral", "ttl": "1h", "scope": "global"}));
+        assert_eq!(
+            json,
+            json!({"type": "ephemeral", "ttl": "1h", "scope": "global"})
+        );
     }
 
     #[test]

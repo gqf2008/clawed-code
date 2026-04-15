@@ -7,7 +7,9 @@ pub struct SleepTool;
 
 #[async_trait]
 impl Tool for SleepTool {
-    fn name(&self) -> &'static str { "Sleep" }
+    fn name(&self) -> &'static str {
+        "Sleep"
+    }
 
     fn description(&self) -> &'static str {
         "Sleep (pause execution) for a specified number of milliseconds. \
@@ -43,8 +45,8 @@ impl Tool for SleepTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clawed_core::tool::AbortSignal;
     use clawed_core::permissions::PermissionMode;
+    use clawed_core::tool::AbortSignal;
 
     fn ctx() -> ToolContext {
         ToolContext {

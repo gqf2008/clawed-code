@@ -42,8 +42,12 @@ pub struct PluginManifest {
     pub enabled: bool,
 }
 
-fn default_version() -> String { "0.1.0".into() }
-fn default_true() -> bool { true }
+fn default_version() -> String {
+    "0.1.0".into()
+}
+fn default_true() -> bool {
+    true
+}
 
 /// A command registered by a plugin.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,7 +102,9 @@ pub struct PluginHook {
     pub timeout: u64,
 }
 
-fn default_timeout() -> u64 { 30 }
+fn default_timeout() -> u64 {
+    30
+}
 
 /// Events that can trigger hooks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,7 +224,10 @@ mod tests {
             "prompt": "Say hello to the user in a friendly way"
         }"#;
         let cmd: PluginCommand = serde_json::from_str(json).unwrap();
-        assert_eq!(cmd.prompt.as_deref(), Some("Say hello to the user in a friendly way"));
+        assert_eq!(
+            cmd.prompt.as_deref(),
+            Some("Say hello to the user in a friendly way")
+        );
         assert!(cmd.prompt_file.is_none());
     }
 }

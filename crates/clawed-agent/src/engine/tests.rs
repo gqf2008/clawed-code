@@ -49,8 +49,8 @@ fn test_builder_fluent_api() {
 
 #[test]
 fn test_builder_thinking_config() {
-    let b = QueryEngineBuilder::new("key", "/tmp")
-        .thinking(Some(clawed_api::types::ThinkingConfig {
+    let b =
+        QueryEngineBuilder::new("key", "/tmp").thinking(Some(clawed_api::types::ThinkingConfig {
             thinking_type: "enabled".into(),
             budget_tokens: Some(4096),
         }));
@@ -62,8 +62,8 @@ fn test_builder_thinking_config() {
 
 #[test]
 fn test_builder_output_style() {
-    let b = QueryEngineBuilder::new("key", "/tmp")
-        .output_style("Concise".into(), "Be brief.".into());
+    let b =
+        QueryEngineBuilder::new("key", "/tmp").output_style("Concise".into(), "Be brief.".into());
 
     let (name, prompt) = b.output_style.as_ref().unwrap();
     assert_eq!(name, "Concise");
@@ -72,11 +72,10 @@ fn test_builder_output_style() {
 
 #[test]
 fn test_builder_mcp_instructions() {
-    let b = QueryEngineBuilder::new("key", "/tmp")
-        .mcp_instructions(vec![
-            ("github".into(), "Use GitHub MCP for repos".into()),
-            ("slack".into(), "Use Slack MCP for messaging".into()),
-        ]);
+    let b = QueryEngineBuilder::new("key", "/tmp").mcp_instructions(vec![
+        ("github".into(), "Use GitHub MCP for repos".into()),
+        ("slack".into(), "Use Slack MCP for messaging".into()),
+    ]);
 
     assert_eq!(b.mcp_instructions.len(), 2);
     assert_eq!(b.mcp_instructions[0].0, "github");
@@ -141,7 +140,10 @@ fn test_tool_definitions_last_has_cache_control() {
 
     let defs = engine.tool_definitions(PermissionMode::Default);
     let last = defs.last().unwrap();
-    assert!(last.cache_control.is_some(), "last tool def should have cache_control");
+    assert!(
+        last.cache_control.is_some(),
+        "last tool def should have cache_control"
+    );
 }
 
 #[test]
@@ -153,7 +155,10 @@ fn test_tool_definitions_filtered_by_allowed_tools() {
         .build();
 
     let defs = engine.tool_definitions(PermissionMode::Default);
-    assert!(defs.len() <= 3, "should only have allowed tools + DispatchAgent");
+    assert!(
+        defs.len() <= 3,
+        "should only have allowed tools + DispatchAgent"
+    );
     for def in &defs {
         // DispatchAgent is always registered; Read/Write are the only allowed user tools
         assert!(
@@ -230,7 +235,10 @@ async fn test_submit_empty_prompt_returns_error() {
     let first = stream.next().await;
     match first {
         Some(AgentEvent::Error(msg)) => {
-            assert!(msg.contains("empty"), "expected empty-prompt error, got: {msg}");
+            assert!(
+                msg.contains("empty"),
+                "expected empty-prompt error, got: {msg}"
+            );
         }
         other => panic!("expected Error event, got: {other:?}"),
     }
@@ -245,7 +253,10 @@ async fn test_submit_whitespace_prompt_returns_error() {
     let first = stream.next().await;
     match first {
         Some(AgentEvent::Error(msg)) => {
-            assert!(msg.contains("empty"), "expected empty-prompt error, got: {msg}");
+            assert!(
+                msg.contains("empty"),
+                "expected empty-prompt error, got: {msg}"
+            );
         }
         other => panic!("expected Error event, got: {other:?}"),
     }
@@ -296,7 +307,11 @@ fn test_builder_thinking_config_propagated() {
         }))
         .build();
 
-    let tc = engine.config.thinking.as_ref().expect("thinking should be set");
+    let tc = engine
+        .config
+        .thinking
+        .as_ref()
+        .expect("thinking should be set");
     assert_eq!(tc.thinking_type, "enabled");
     assert_eq!(tc.budget_tokens, Some(20_000));
 }
@@ -311,7 +326,11 @@ fn test_builder_cost_tracker_starts_at_zero() {
 fn test_builder_tool_count_includes_dispatch() {
     let engine = build_test_engine();
     // Should have all default tools + DispatchAgent
-    assert!(engine.tool_count() > 10, "expected many tools, got {}", engine.tool_count());
+    assert!(
+        engine.tool_count() > 10,
+        "expected many tools, got {}",
+        engine.tool_count()
+    );
 }
 
 #[test]
@@ -322,13 +341,16 @@ fn test_builder_context_window_default_model() {
         .build();
 
     // Default model is sonnet → 200K context window
-    assert!(engine.context_window >= 200_000,
-        "expected ≥200K context, got {}", engine.context_window);
+    assert!(
+        engine.context_window >= 200_000,
+        "expected ≥200K context, got {}",
+        engine.context_window
+    );
 }
 
 #[test]
 fn test_builder_hooks_config_applied() {
-    use clawed_core::config::{HooksConfig, HookCommandDef, HookRule};
+    use clawed_core::config::{HookCommandDef, HookRule, HooksConfig};
 
     let mut hooks = HooksConfig::default();
     hooks.pre_tool_use = vec![HookRule {
@@ -383,7 +405,7 @@ async fn test_context_usage_with_messages() {
             clawed_core::message::UserMessage {
                 uuid: "test-big".into(),
                 content: vec![clawed_core::message::ContentBlock::Text { text: big_text }],
-            }
+            },
         ));
     }
 
@@ -414,8 +436,10 @@ async fn test_last_user_prompt_found() {
         s.messages.push(clawed_core::message::Message::User(
             clawed_core::message::UserMessage {
                 uuid: "u1".into(),
-                content: vec![clawed_core::message::ContentBlock::Text { text: "hello world".into() }],
-            }
+                content: vec![clawed_core::message::ContentBlock::Text {
+                    text: "hello world".into(),
+                }],
+            },
         ));
         s.messages.push(clawed_core::message::Message::Assistant(
             clawed_core::message::AssistantMessage {
@@ -423,7 +447,7 @@ async fn test_last_user_prompt_found() {
                 content: vec![clawed_core::message::ContentBlock::Text { text: "hi".into() }],
                 stop_reason: Some(clawed_core::message::StopReason::EndTurn),
                 usage: None,
-            }
+            },
         ));
     }
 
@@ -443,16 +467,20 @@ async fn test_pop_last_turn() {
         s.messages.push(clawed_core::message::Message::User(
             clawed_core::message::UserMessage {
                 uuid: "u1".into(),
-                content: vec![clawed_core::message::ContentBlock::Text { text: "first prompt".into() }],
-            }
+                content: vec![clawed_core::message::ContentBlock::Text {
+                    text: "first prompt".into(),
+                }],
+            },
         ));
         s.messages.push(clawed_core::message::Message::Assistant(
             clawed_core::message::AssistantMessage {
                 uuid: "a1".into(),
-                content: vec![clawed_core::message::ContentBlock::Text { text: "response".into() }],
+                content: vec![clawed_core::message::ContentBlock::Text {
+                    text: "response".into(),
+                }],
                 stop_reason: Some(clawed_core::message::StopReason::EndTurn),
                 usage: None,
-            }
+            },
         ));
     }
 

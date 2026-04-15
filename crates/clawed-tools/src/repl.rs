@@ -14,8 +14,12 @@ pub struct ReplTool;
 
 #[async_trait]
 impl Tool for ReplTool {
-    fn name(&self) -> &'static str { "REPL" }
-    fn category(&self) -> ToolCategory { ToolCategory::Shell }
+    fn name(&self) -> &'static str {
+        "REPL"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Shell
+    }
 
     fn description(&self) -> &'static str {
         "Execute code in a REPL (Python, Node.js, or Bash). \
@@ -52,7 +56,9 @@ impl Tool for ReplTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { false }
+    fn is_read_only(&self) -> bool {
+        false
+    }
 
     async fn call(&self, input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
         let language = input["language"]
@@ -63,10 +69,7 @@ impl Tool for ReplTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'code'"))?;
 
-        let timeout_secs = input["timeout_seconds"]
-            .as_u64()
-            .unwrap_or(30)
-            .min(120);
+        let timeout_secs = input["timeout_seconds"].as_u64().unwrap_or(30).min(120);
 
         if context.abort_signal.is_aborted() {
             return Ok(ToolResult::error("Interrupted"));
@@ -145,7 +148,8 @@ impl Tool for ReplTool {
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(timeout_secs),
             child.wait_with_output(),
-        ).await;
+        )
+        .await;
 
         match result {
             Ok(Ok(output)) => {
@@ -158,7 +162,9 @@ impl Tool for ReplTool {
                     text.push_str(&stdout);
                 }
                 if !stderr.is_empty() {
-                    if !text.is_empty() { text.push('\n'); }
+                    if !text.is_empty() {
+                        text.push('\n');
+                    }
                     text.push_str("[stderr]\n");
                     text.push_str(&stderr);
                 }
@@ -185,12 +191,17 @@ impl Tool for ReplTool {
                     #[cfg(unix)]
                     {
                         use std::process::Command as StdCommand;
-                        let _ = StdCommand::new("kill").arg("-9").arg(pid.to_string()).status();
+                        let _ = StdCommand::new("kill")
+                            .arg("-9")
+                            .arg(pid.to_string())
+                            .status();
                     }
                     #[cfg(windows)]
                     {
                         use std::process::Command as StdCommand;
-                        let _ = StdCommand::new("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).status();
+                        let _ = StdCommand::new("taskkill")
+                            .args(["/F", "/T", "/PID", &pid.to_string()])
+                            .status();
                     }
                 }
                 Ok(ToolResult::error(format!(

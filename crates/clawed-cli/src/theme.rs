@@ -225,7 +225,11 @@ fn detect_dark_mode() -> ThemeName {
     // Check COLORFGBG env (format: "fg;bg" — bg >= 8 usually means dark)
     if let Ok(val) = std::env::var("COLORFGBG") {
         if let Some(bg) = val.rsplit(';').next().and_then(|s| s.parse::<u8>().ok()) {
-            return if bg < 8 { ThemeName::Dark } else { ThemeName::Light };
+            return if bg < 8 {
+                ThemeName::Dark
+            } else {
+                ThemeName::Light
+            };
         }
     }
     // Windows Terminal / modern terminals default dark
@@ -237,18 +241,18 @@ fn detect_dark_mode() -> ThemeName {
 fn dark_theme() -> Theme {
     Theme {
         name: ThemeName::Dark,
-        claude: AnsiColor::fg("\x1b[38;2;215;119;87m"),        // Claude orange
-        permission: AnsiColor::fg("\x1b[38;2;87;105;247m"),    // Medium blue
-        plan_mode: AnsiColor::fg("\x1b[38;2;0;180;180m"),      // Teal
-        bash_border: AnsiColor::fg("\x1b[38;2;100;100;100m"),  // Gray
+        claude: AnsiColor::fg("\x1b[38;2;215;119;87m"), // Claude orange
+        permission: AnsiColor::fg("\x1b[38;2;87;105;247m"), // Medium blue
+        plan_mode: AnsiColor::fg("\x1b[38;2;0;180;180m"), // Teal
+        bash_border: AnsiColor::fg("\x1b[38;2;100;100;100m"), // Gray
         prompt_border: AnsiColor::fg("\x1b[38;2;87;105;247m"), // Blue
-        text: AnsiColor::fg("\x1b[37m"),                        // White
-        inverse_text: AnsiColor::fg("\x1b[30m"),                // Black
-        dim: AnsiColor::fg("\x1b[2m"),                          // Dim
-        subtle: AnsiColor::fg("\x1b[38;2;128;128;128m"),       // Gray
-        success: AnsiColor::fg("\x1b[38;2;105;219;124m"),      // Green
-        error: AnsiColor::fg("\x1b[38;2;255;107;107m"),        // Red
-        warning: AnsiColor::fg("\x1b[38;2;255;200;87m"),       // Yellow
+        text: AnsiColor::fg("\x1b[37m"),                // White
+        inverse_text: AnsiColor::fg("\x1b[30m"),        // Black
+        dim: AnsiColor::fg("\x1b[2m"),                  // Dim
+        subtle: AnsiColor::fg("\x1b[38;2;128;128;128m"), // Gray
+        success: AnsiColor::fg("\x1b[38;2;105;219;124m"), // Green
+        error: AnsiColor::fg("\x1b[38;2;255;107;107m"), // Red
+        warning: AnsiColor::fg("\x1b[38;2;255;200;87m"), // Yellow
         diff_added: AnsiColor::new("\x1b[38;2;105;219;124m", "\x1b[48;2;30;60;30m"),
         diff_removed: AnsiColor::new("\x1b[38;2;255;168;180m", "\x1b[48;2;60;30;30m"),
         code_bg: AnsiColor::fg("\x1b[48;2;40;40;40m"),
@@ -258,7 +262,7 @@ fn dark_theme() -> Theme {
         agent_green: AnsiColor::fg("\x1b[38;2;105;219;124m"),
         agent_yellow: AnsiColor::fg("\x1b[38;2;255;200;87m"),
         agent_magenta: AnsiColor::fg("\x1b[38;2;200;130;255m"),
-        spinner: AnsiColor::fg("\x1b[36m"),                     // Cyan
+        spinner: AnsiColor::fg("\x1b[36m"), // Cyan
         status_dim: AnsiColor::fg("\x1b[2m"),
         status_warn: AnsiColor::fg("\x1b[33m"),
         status_crit: AnsiColor::fg("\x1b[31m"),
@@ -269,18 +273,18 @@ fn dark_theme() -> Theme {
 fn light_theme() -> Theme {
     Theme {
         name: ThemeName::Light,
-        claude: AnsiColor::fg("\x1b[38;2;195;99;67m"),        // Darker orange
-        permission: AnsiColor::fg("\x1b[38;2;67;85;227m"),    // Deeper blue
-        plan_mode: AnsiColor::fg("\x1b[38;2;0;102;102m"),     // Muted teal
+        claude: AnsiColor::fg("\x1b[38;2;195;99;67m"), // Darker orange
+        permission: AnsiColor::fg("\x1b[38;2;67;85;227m"), // Deeper blue
+        plan_mode: AnsiColor::fg("\x1b[38;2;0;102;102m"), // Muted teal
         bash_border: AnsiColor::fg("\x1b[38;2;180;180;180m"), // Light gray
         prompt_border: AnsiColor::fg("\x1b[38;2;67;85;227m"),
-        text: AnsiColor::fg("\x1b[30m"),                       // Black
-        inverse_text: AnsiColor::fg("\x1b[37m"),               // White
+        text: AnsiColor::fg("\x1b[30m"),         // Black
+        inverse_text: AnsiColor::fg("\x1b[37m"), // White
         dim: AnsiColor::fg("\x1b[2m"),
         subtle: AnsiColor::fg("\x1b[38;2;140;140;140m"),
-        success: AnsiColor::fg("\x1b[38;2;44;122;57m"),       // Dark green
-        error: AnsiColor::fg("\x1b[38;2;171;43;63m"),         // Dark red
-        warning: AnsiColor::fg("\x1b[38;2;180;130;0m"),       // Dark yellow
+        success: AnsiColor::fg("\x1b[38;2;44;122;57m"), // Dark green
+        error: AnsiColor::fg("\x1b[38;2;171;43;63m"),   // Dark red
+        warning: AnsiColor::fg("\x1b[38;2;180;130;0m"), // Dark yellow
         diff_added: AnsiColor::new("\x1b[38;2;44;122;57m", "\x1b[48;2;220;255;220m"),
         diff_removed: AnsiColor::new("\x1b[38;2;171;43;63m", "\x1b[48;2;255;220;220m"),
         code_bg: AnsiColor::fg("\x1b[48;2;240;240;240m"),
@@ -290,7 +294,7 @@ fn light_theme() -> Theme {
         agent_green: AnsiColor::fg("\x1b[38;2;44;122;57m"),
         agent_yellow: AnsiColor::fg("\x1b[38;2;180;130;0m"),
         agent_magenta: AnsiColor::fg("\x1b[38;2;150;80;200m"),
-        spinner: AnsiColor::fg("\x1b[34m"),                    // Blue
+        spinner: AnsiColor::fg("\x1b[34m"), // Blue
         status_dim: AnsiColor::fg("\x1b[2m"),
         status_warn: AnsiColor::fg("\x1b[33m"),
         status_crit: AnsiColor::fg("\x1b[31m"),
@@ -302,8 +306,8 @@ fn dark_daltonized_theme() -> Theme {
     // Optimized for color-blind users — avoids pure red/green
     Theme {
         name: ThemeName::DarkDaltonized,
-        claude: AnsiColor::fg("\x1b[38;2;215;160;87m"),       // Orange-gold
-        permission: AnsiColor::fg("\x1b[38;2;100;160;255m"),  // Sky blue
+        claude: AnsiColor::fg("\x1b[38;2;215;160;87m"), // Orange-gold
+        permission: AnsiColor::fg("\x1b[38;2;100;160;255m"), // Sky blue
         plan_mode: AnsiColor::fg("\x1b[38;2;0;200;200m"),
         bash_border: AnsiColor::fg("\x1b[38;2;100;100;100m"),
         prompt_border: AnsiColor::fg("\x1b[38;2;100;160;255m"),
@@ -311,9 +315,9 @@ fn dark_daltonized_theme() -> Theme {
         inverse_text: AnsiColor::fg("\x1b[30m"),
         dim: AnsiColor::fg("\x1b[2m"),
         subtle: AnsiColor::fg("\x1b[38;2;128;128;128m"),
-        success: AnsiColor::fg("\x1b[38;2;100;180;255m"),     // Blue instead of green
-        error: AnsiColor::fg("\x1b[38;2;255;170;100m"),       // Orange instead of red
-        warning: AnsiColor::fg("\x1b[38;2;255;255;100m"),     // Bright yellow
+        success: AnsiColor::fg("\x1b[38;2;100;180;255m"), // Blue instead of green
+        error: AnsiColor::fg("\x1b[38;2;255;170;100m"),   // Orange instead of red
+        warning: AnsiColor::fg("\x1b[38;2;255;255;100m"), // Bright yellow
         diff_added: AnsiColor::new("\x1b[38;2;100;180;255m", "\x1b[48;2;20;40;70m"),
         diff_removed: AnsiColor::new("\x1b[38;2;255;170;100m", "\x1b[48;2;70;40;20m"),
         code_bg: AnsiColor::fg("\x1b[48;2;40;40;40m"),
@@ -343,8 +347,8 @@ fn light_daltonized_theme() -> Theme {
         inverse_text: AnsiColor::fg("\x1b[37m"),
         dim: AnsiColor::fg("\x1b[2m"),
         subtle: AnsiColor::fg("\x1b[38;2;140;140;140m"),
-        success: AnsiColor::fg("\x1b[38;2;0;100;180m"),       // Blue
-        error: AnsiColor::fg("\x1b[38;2;180;100;30m"),        // Orange
+        success: AnsiColor::fg("\x1b[38;2;0;100;180m"), // Blue
+        error: AnsiColor::fg("\x1b[38;2;180;100;30m"),  // Orange
         warning: AnsiColor::fg("\x1b[38;2;160;140;0m"),
         diff_added: AnsiColor::new("\x1b[38;2;0;100;180m", "\x1b[48;2;220;240;255m"),
         diff_removed: AnsiColor::new("\x1b[38;2;180;100;30m", "\x1b[48;2;255;235;220m"),
@@ -367,21 +371,21 @@ fn dark_ansi_theme() -> Theme {
     // Uses only standard 16-color ANSI codes for maximum compatibility
     Theme {
         name: ThemeName::DarkAnsi,
-        claude: AnsiColor::fg("\x1b[33m"),       // Yellow
-        permission: AnsiColor::fg("\x1b[34m"),   // Blue
-        plan_mode: AnsiColor::fg("\x1b[36m"),    // Cyan
-        bash_border: AnsiColor::fg("\x1b[90m"),  // Bright black (dark gray)
+        claude: AnsiColor::fg("\x1b[33m"),      // Yellow
+        permission: AnsiColor::fg("\x1b[34m"),  // Blue
+        plan_mode: AnsiColor::fg("\x1b[36m"),   // Cyan
+        bash_border: AnsiColor::fg("\x1b[90m"), // Bright black (dark gray)
         prompt_border: AnsiColor::fg("\x1b[34m"),
         text: AnsiColor::fg("\x1b[37m"),         // White
         inverse_text: AnsiColor::fg("\x1b[30m"), // Black
         dim: AnsiColor::fg("\x1b[2m"),
         subtle: AnsiColor::fg("\x1b[90m"),
-        success: AnsiColor::fg("\x1b[32m"),      // Green
-        error: AnsiColor::fg("\x1b[31m"),        // Red
-        warning: AnsiColor::fg("\x1b[33m"),      // Yellow
+        success: AnsiColor::fg("\x1b[32m"), // Green
+        error: AnsiColor::fg("\x1b[31m"),   // Red
+        warning: AnsiColor::fg("\x1b[33m"), // Yellow
         diff_added: AnsiColor::new("\x1b[32m", "\x1b[42m"),
         diff_removed: AnsiColor::new("\x1b[31m", "\x1b[41m"),
-        code_bg: AnsiColor::fg("\x1b[100m"),     // Bright black bg
+        code_bg: AnsiColor::fg("\x1b[100m"), // Bright black bg
         code_border: AnsiColor::fg("\x1b[90m"),
         agent_red: AnsiColor::fg("\x1b[31m"),
         agent_blue: AnsiColor::fg("\x1b[34m"),
@@ -413,7 +417,7 @@ fn light_ansi_theme() -> Theme {
         warning: AnsiColor::fg("\x1b[33m"),
         diff_added: AnsiColor::new("\x1b[32m", "\x1b[42m"),
         diff_removed: AnsiColor::new("\x1b[31m", "\x1b[41m"),
-        code_bg: AnsiColor::fg("\x1b[47m"),      // White bg
+        code_bg: AnsiColor::fg("\x1b[47m"), // White bg
         code_border: AnsiColor::fg("\x1b[37m"),
         agent_red: AnsiColor::fg("\x1b[31m"),
         agent_blue: AnsiColor::fg("\x1b[34m"),
@@ -571,7 +575,10 @@ mod tests {
     #[test]
     fn test_theme_name_parse() {
         assert_eq!("dark".parse::<ThemeName>().unwrap(), ThemeName::Dark);
-        assert_eq!("light-daltonized".parse::<ThemeName>().unwrap(), ThemeName::LightDaltonized);
+        assert_eq!(
+            "light-daltonized".parse::<ThemeName>().unwrap(),
+            ThemeName::LightDaltonized
+        );
         assert!("unknown".parse::<ThemeName>().is_err());
     }
 

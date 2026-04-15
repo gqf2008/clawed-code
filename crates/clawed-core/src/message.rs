@@ -112,7 +112,12 @@ mod tests {
 
     #[test]
     fn stop_reason_serde_roundtrip() {
-        for reason in [StopReason::EndTurn, StopReason::ToolUse, StopReason::MaxTokens, StopReason::StopSequence] {
+        for reason in [
+            StopReason::EndTurn,
+            StopReason::ToolUse,
+            StopReason::MaxTokens,
+            StopReason::StopSequence,
+        ] {
             let json = serde_json::to_string(&reason).unwrap();
             let back: StopReason = serde_json::from_str(&json).unwrap();
             assert_eq!(format!("{:?}", reason), format!("{:?}", back));
@@ -121,7 +126,9 @@ mod tests {
 
     #[test]
     fn content_block_text_serde() {
-        let block = ContentBlock::Text { text: "Hello".into() };
+        let block = ContentBlock::Text {
+            text: "Hello".into(),
+        };
         let json = serde_json::to_value(&block).unwrap();
         assert_eq!(json["type"], "text");
         assert_eq!(json["text"], "Hello");
@@ -147,19 +154,29 @@ mod tests {
     fn content_block_tool_result_serde() {
         let block = ContentBlock::ToolResult {
             tool_use_id: "tu_1".into(),
-            content: vec![ToolResultContent::Text { text: "file contents".into() }],
+            content: vec![ToolResultContent::Text {
+                text: "file contents".into(),
+            }],
             is_error: false,
         };
         let json = serde_json::to_value(&block).unwrap();
         assert_eq!(json["type"], "tool_result");
         assert_eq!(json["is_error"], false);
         let back: ContentBlock = serde_json::from_value(json).unwrap();
-        assert!(matches!(back, ContentBlock::ToolResult { is_error: false, .. }));
+        assert!(matches!(
+            back,
+            ContentBlock::ToolResult {
+                is_error: false,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn content_block_thinking_serde() {
-        let block = ContentBlock::Thinking { thinking: "Let me think...".into() };
+        let block = ContentBlock::Thinking {
+            thinking: "Let me think...".into(),
+        };
         let json = serde_json::to_value(&block).unwrap();
         assert_eq!(json["type"], "thinking");
         let back: ContentBlock = serde_json::from_value(json).unwrap();
@@ -204,7 +221,9 @@ mod tests {
     fn message_user_serde_and_uuid() {
         let msg = Message::User(UserMessage {
             uuid: "u-123".into(),
-            content: vec![ContentBlock::Text { text: "Hello".into() }],
+            content: vec![ContentBlock::Text {
+                text: "Hello".into(),
+            }],
         });
         assert_eq!(msg.uuid(), "u-123");
         let json = serde_json::to_value(&msg).unwrap();
@@ -253,7 +272,12 @@ mod tests {
             "content": [{"type": "text", "text": "ok"}]
         });
         let block: ContentBlock = serde_json::from_value(json).unwrap();
-        assert!(matches!(block, ContentBlock::ToolResult { is_error: false, .. }));
+        assert!(matches!(
+            block,
+            ContentBlock::ToolResult {
+                is_error: false,
+                ..
+            }
+        ));
     }
 }
-

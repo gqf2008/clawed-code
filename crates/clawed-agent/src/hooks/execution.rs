@@ -5,8 +5,8 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use tokio::io::AsyncWriteExt;
 use clawed_core::config::HookCommandDef;
+use tokio::io::AsyncWriteExt;
 
 use super::types::{HookContext, HookDecision, HookEvent, HookJsonResponse};
 
@@ -36,10 +36,15 @@ pub(super) fn tool_matches(matcher: &Option<String>, tool_name: &str) -> bool {
         None => true,
         Some(pat) if pat.is_empty() || pat == "*" => true,
         Some(pat) => {
-            let is_regex = pat.contains('|') || pat.contains('^')
-                || pat.contains('$') || pat.contains('.')
-                || pat.contains('*') || pat.contains('+') || pat.contains('?')
-                || pat.contains('[') || pat.contains('(');
+            let is_regex = pat.contains('|')
+                || pat.contains('^')
+                || pat.contains('$')
+                || pat.contains('.')
+                || pat.contains('*')
+                || pat.contains('+')
+                || pat.contains('?')
+                || pat.contains('[')
+                || pat.contains('(');
             if is_regex {
                 get_cached_regex(pat)
                     .map(|re| re.is_match(tool_name))
@@ -106,12 +111,16 @@ pub(super) fn interpret_output(event: HookEvent, exit_code: i32, stdout: String)
             // Try to parse a structured JSON response first
             if let Ok(resp) = serde_json::from_str::<HookJsonResponse>(&stdout) {
                 match resp.decision.as_deref() {
-                    Some("block") => return HookDecision::Block {
-                        reason: resp.reason.unwrap_or(stdout),
-                    },
-                    Some("modify") => if let Some(new_input) = resp.input {
-                        return HookDecision::ModifyInput { new_input };
-                    },
+                    Some("block") => {
+                        return HookDecision::Block {
+                            reason: resp.reason.unwrap_or(stdout),
+                        }
+                    }
+                    Some("modify") => {
+                        if let Some(new_input) = resp.input {
+                            return HookDecision::ModifyInput { new_input };
+                        }
+                    }
                     // Explicit "approve" or "continue" → don't treat stdout as context
                     Some("approve") | Some("continue") | Some("") => return HookDecision::Continue,
                     _ => {}
@@ -133,7 +142,11 @@ pub(super) fn interpret_output(event: HookEvent, exit_code: i32, stdout: String)
         2 if matches!(event, HookEvent::Stop | HookEvent::SubagentStop) => {
             // Exit 2 on Stop/SubagentStop hook → inject feedback and keep the loop going
             HookDecision::FeedbackAndContinue {
-                feedback: if stdout.is_empty() { "Continue.".into() } else { stdout },
+                feedback: if stdout.is_empty() {
+                    "Continue.".into()
+                } else {
+                    stdout
+                },
             }
         }
         2 if matches!(event, HookEvent::PreCompact) => {
@@ -148,7 +161,13 @@ pub(super) fn interpret_output(event: HookEvent, exit_code: i32, stdout: String)
         }
         _ => {
             // StopFailure, Notification: fire-and-forget, always Continue
-            if matches!(event, HookEvent::StopFailure | HookEvent::Notification | HookEvent::SessionEnd | HookEvent::PostCompact) {
+            if matches!(
+                event,
+                HookEvent::StopFailure
+                    | HookEvent::Notification
+                    | HookEvent::SessionEnd
+                    | HookEvent::PostCompact
+            ) {
                 HookDecision::Continue
             } else {
                 // Non-zero, non-2 → block with stdout as reason
@@ -163,5 +182,3 @@ pub(super) fn interpret_output(event: HookEvent, exit_code: i32, stdout: String)
         }
     }
 }
-
-

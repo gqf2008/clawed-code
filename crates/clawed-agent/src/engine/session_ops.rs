@@ -17,16 +17,23 @@ impl QueryEngine {
             turn_count: s.turn_count,
             input_tokens: s.total_input_tokens,
             output_tokens: s.total_output_tokens,
-            model_usage: s.model_usage.iter().map(|(k, v)| {
-                (k.clone(), SessionModelUsage {
-                    input_tokens: v.input_tokens,
-                    output_tokens: v.output_tokens,
-                    cache_read_tokens: v.cache_read_tokens,
-                    cache_creation_tokens: v.cache_creation_tokens,
-                    api_calls: v.api_calls,
-                    cost_usd: v.cost_usd,
+            model_usage: s
+                .model_usage
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        SessionModelUsage {
+                            input_tokens: v.input_tokens,
+                            output_tokens: v.output_tokens,
+                            cache_read_tokens: v.cache_read_tokens,
+                            cache_creation_tokens: v.cache_creation_tokens,
+                            api_calls: v.api_calls,
+                            cost_usd: v.cost_usd,
+                        },
+                    )
                 })
-            }).collect(),
+                .collect(),
             total_cost_usd: s.model_usage.values().map(|u| u.cost_usd).sum(),
             messages: s.messages.clone(),
             git_branch: None,
@@ -52,16 +59,23 @@ impl QueryEngine {
             turn_count: s.turn_count,
             input_tokens: s.total_input_tokens,
             output_tokens: s.total_output_tokens,
-            model_usage: s.model_usage.iter().map(|(k, v)| {
-                (k.clone(), SessionModelUsage {
-                    input_tokens: v.input_tokens,
-                    output_tokens: v.output_tokens,
-                    cache_read_tokens: v.cache_read_tokens,
-                    cache_creation_tokens: v.cache_creation_tokens,
-                    api_calls: v.api_calls,
-                    cost_usd: v.cost_usd,
+            model_usage: s
+                .model_usage
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        SessionModelUsage {
+                            input_tokens: v.input_tokens,
+                            output_tokens: v.output_tokens,
+                            cache_read_tokens: v.cache_read_tokens,
+                            cache_creation_tokens: v.cache_creation_tokens,
+                            api_calls: v.api_calls,
+                            cost_usd: v.cost_usd,
+                        },
+                    )
                 })
-            }).collect(),
+                .collect(),
             total_cost_usd: s.model_usage.values().map(|u| u.cost_usd).sum(),
             messages: s.messages.clone(),
             git_branch: None,
@@ -77,8 +91,8 @@ impl QueryEngine {
     /// Applies message sanitization to fix orphaned thinking blocks,
     /// unresolved tool references, and other artifacts from interrupted sessions.
     pub async fn restore_session(&self, session_id: &str) -> anyhow::Result<String> {
-        use clawed_core::session::load_session;
         use clawed_core::message_sanitize::sanitize_messages;
+        use clawed_core::session::load_session;
         let snap = load_session(session_id)?;
         let title = snap.title.clone();
         let (sanitized_messages, report) = sanitize_messages(snap.messages);

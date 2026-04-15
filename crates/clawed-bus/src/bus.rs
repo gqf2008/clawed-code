@@ -29,9 +29,12 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, watch};
 use uuid::Uuid;
 
-use crate::events::{AgentNotification, AgentRequest, ImageAttachment, PermissionRequest, PermissionResponse, RiskLevel};
 #[cfg(test)]
 use crate::events::ErrorCode;
+use crate::events::{
+    AgentNotification, AgentRequest, ImageAttachment, PermissionRequest, PermissionResponse,
+    RiskLevel,
+};
 
 // ── Lock helper ──────────────────────────────────────────────────────────────
 
@@ -461,7 +464,9 @@ impl BusHandle {
             None // Channel closed
         };
 
-        if let Ok(result) = tokio::time::timeout(timeout, wait).await { result } else {
+        if let Ok(result) = tokio::time::timeout(timeout, wait).await {
+            result
+        } else {
             tracing::warn!(
                 "Permission request timed out for tool '{}' after {:?}, auto-denying",
                 tool_name,
@@ -472,7 +477,7 @@ impl BusHandle {
     }
 
     /// Get the notification sender (for cloning to sub-agents).
-    #[must_use] 
+    #[must_use]
     pub fn notify_sender(&self) -> broadcast::Sender<AgentNotification> {
         self.notify_tx.clone()
     }
@@ -503,7 +508,7 @@ impl BusHandle {
     /// Permission requests are broadcast to all clients for display purposes,
     /// but only the primary client can respond (secondary clients have no
     /// permission response channel to prevent spoofing).
-    #[must_use] 
+    #[must_use]
     pub fn new_client(&self) -> ClientHandle {
         ClientHandle {
             notify_rx: self.notify_tx.subscribe(),
@@ -545,7 +550,7 @@ impl BusHandle {
     /// an independent channel that will never receive production requests.
     /// It exists solely for integration tests that need a `Receiver<AgentRequest>`.
     #[cfg(any(test, feature = "test-utils"))]
-    #[must_use] 
+    #[must_use]
     pub fn subscribe_requests(&self) -> mpsc::Receiver<AgentRequest> {
         let (_tx, rx) = mpsc::channel(1);
         rx
@@ -685,13 +690,13 @@ impl ClientHandle {
     /// Returns `Ok(Some(event))` if a message is available,
     /// `Ok(None)` if no messages are pending,
     /// or `Err(())` if the receiver fell behind (messages were skipped).
-    pub fn try_recv_notification(
-        &mut self,
-    ) -> Result<Option<AgentNotification>, ()> {
+    pub fn try_recv_notification(&mut self) -> Result<Option<AgentNotification>, ()> {
         match self.notify_rx.try_recv() {
             Ok(event) => Ok(Some(event)),
             Err(broadcast::error::TryRecvError::Lagged(_)) => Err(()),
-            Err(broadcast::error::TryRecvError::Empty | broadcast::error::TryRecvError::Closed) => Ok(None),
+            Err(broadcast::error::TryRecvError::Empty | broadcast::error::TryRecvError::Closed) => {
+                Ok(None)
+            }
         }
     }
 
@@ -699,7 +704,7 @@ impl ClientHandle {
     ///
     /// Useful for spawning multiple consumers (e.g., one for display,
     /// one for logging).
-    #[must_use] 
+    #[must_use]
     pub fn subscribe_notifications(&self) -> broadcast::Receiver<AgentNotification> {
         self._notify_tx.subscribe()
     }
@@ -827,7 +832,12 @@ mod tests {
         // Spawn the core side: send permission request, wait for response
         let core = tokio::spawn(async move {
             let resp = bus
-                .request_permission("Bash", serde_json::json!({"cmd": "ls"}), RiskLevel::Low, "List files")
+                .request_permission(
+                    "Bash",
+                    serde_json::json!({"cmd": "ls"}),
+                    RiskLevel::Low,
+                    "List files",
+                )
                 .await
                 .unwrap();
             assert!(resp.granted);
@@ -1012,7 +1022,10 @@ mod tests {
             )
             .await;
 
-        assert!(result.is_none(), "Timed-out permission request should return None (deny)");
+        assert!(
+            result.is_none(),
+            "Timed-out permission request should return None (deny)"
+        );
     }
 
     #[tokio::test]
@@ -1098,7 +1111,10 @@ mod tests {
 
         let client2 = bus.new_client();
         let d = client2.diagnostics();
-        assert_eq!(d.notifications_sent, 1, "secondary client sees same counters");
+        assert_eq!(
+            d.notifications_sent, 1,
+            "secondary client sees same counters"
+        );
     }
 
     // ── Event history tests ──────────────────────────────────────────────
@@ -1151,10 +1167,15 @@ mod tests {
     async fn history_zero_capacity_disables() {
         let (bus, _client) = EventBus::with_history(16, 0);
 
-        bus.notify(AgentNotification::TextDelta { text: "ignored".into() });
+        bus.notify(AgentNotification::TextDelta {
+            text: "ignored".into(),
+        });
 
         let history = bus.recent_history();
-        assert!(history.is_empty(), "zero-capacity history should store nothing");
+        assert!(
+            history.is_empty(),
+            "zero-capacity history should store nothing"
+        );
     }
 
     #[tokio::test]
@@ -1210,17 +1231,21 @@ mod tests {
     #[tokio::test]
     async fn subscription_with_custom_filter() {
         let (bus, client) = EventBus::new(16);
-        let mut sub = client.subscribe().with_filter(|n| {
-            matches!(n, AgentNotification::SessionStart { .. })
-        });
+        let mut sub = client
+            .subscribe()
+            .with_filter(|n| matches!(n, AgentNotification::SessionStart { .. }));
 
         // Send a mix of events
-        bus.notify(AgentNotification::TextDelta { text: "skip".into() });
+        bus.notify(AgentNotification::TextDelta {
+            text: "skip".into(),
+        });
         bus.notify(AgentNotification::SessionStart {
             session_id: "s1".into(),
             model: "sonnet".into(),
         });
-        bus.notify(AgentNotification::TextDelta { text: "skip2".into() });
+        bus.notify(AgentNotification::TextDelta {
+            text: "skip2".into(),
+        });
 
         // Should only get SessionStart
         let event = sub.recv().await.unwrap();
@@ -1232,12 +1257,16 @@ mod tests {
         let (bus, client) = EventBus::new(16);
         let mut sub = client.subscribe().tools_only();
 
-        bus.notify(AgentNotification::TextDelta { text: "skip".into() });
+        bus.notify(AgentNotification::TextDelta {
+            text: "skip".into(),
+        });
         bus.notify(AgentNotification::ToolUseStart {
             id: "t1".into(),
             tool_name: "Bash".into(),
         });
-        bus.notify(AgentNotification::ThinkingDelta { text: "skip".into() });
+        bus.notify(AgentNotification::ThinkingDelta {
+            text: "skip".into(),
+        });
         bus.notify(AgentNotification::ToolUseComplete {
             id: "t1".into(),
             tool_name: "Bash".into(),
@@ -1257,14 +1286,18 @@ mod tests {
         let (bus, client) = EventBus::new(16);
         let mut sub = client.subscribe().agents_only();
 
-        bus.notify(AgentNotification::TextDelta { text: "skip".into() });
+        bus.notify(AgentNotification::TextDelta {
+            text: "skip".into(),
+        });
         bus.notify(AgentNotification::AgentSpawned {
             agent_id: "a1".into(),
             name: Some("reviewer".into()),
             agent_type: "explore".into(),
             background: true,
         });
-        bus.notify(AgentNotification::TextDelta { text: "skip".into() });
+        bus.notify(AgentNotification::TextDelta {
+            text: "skip".into(),
+        });
 
         let event = sub.recv().await.unwrap();
         assert!(matches!(event, AgentNotification::AgentSpawned { .. }));
@@ -1276,7 +1309,9 @@ mod tests {
         let mut sub = client.subscribe().content_only();
 
         bus.notify(AgentNotification::TurnStart { turn: 1 });
-        bus.notify(AgentNotification::TextDelta { text: "hello".into() });
+        bus.notify(AgentNotification::TextDelta {
+            text: "hello".into(),
+        });
         bus.notify(AgentNotification::ThinkingDelta { text: "hmm".into() });
         bus.notify(AgentNotification::TurnStart { turn: 2 });
 
@@ -1292,12 +1327,16 @@ mod tests {
         let (bus, client) = EventBus::new(16);
         let mut sub = client.subscribe().errors_only();
 
-        bus.notify(AgentNotification::TextDelta { text: "skip".into() });
+        bus.notify(AgentNotification::TextDelta {
+            text: "skip".into(),
+        });
         bus.notify(AgentNotification::Error {
             code: ErrorCode::ApiError,
             message: "rate limited".into(),
         });
-        bus.notify(AgentNotification::TextDelta { text: "skip".into() });
+        bus.notify(AgentNotification::TextDelta {
+            text: "skip".into(),
+        });
 
         let event = sub.recv().await.unwrap();
         match event {
@@ -1364,6 +1403,9 @@ mod tests {
         drop(bus);
 
         let result = sub.recv().await;
-        assert!(result.is_none(), "subscription should yield None when core drops");
+        assert!(
+            result.is_none(),
+            "subscription should yield None when core drops"
+        );
     }
 }

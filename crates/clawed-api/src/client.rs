@@ -1,12 +1,15 @@
-use std::pin::Pin;
-use std::sync::Arc;
+use crate::provider::ApiBackend;
+use crate::retry::{with_retry, ApiHttpError, RetryConfig};
+use crate::types::{
+    ApiContentBlock, ApiMessage, DeltaBlock, MessageDeltaData, MessagesRequest, MessagesResponse,
+    ResponseContentBlock, StreamEvent, SystemBlock, ToolDefinition,
+};
 use anyhow::{Context, Result};
 use futures::Stream;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
-use tracing::{info, debug, trace};
-use crate::provider::ApiBackend;
-use crate::retry::{ApiHttpError, RetryConfig, with_retry};
-use crate::types::{MessagesRequest, ApiMessage, ApiContentBlock, MessagesResponse, StreamEvent, SystemBlock, ToolDefinition, ResponseContentBlock, DeltaBlock, MessageDeltaData};
+use std::pin::Pin;
+use std::sync::Arc;
+use tracing::{debug, info, trace};
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
@@ -53,13 +56,13 @@ impl ApiClient {
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub const fn with_max_tokens(mut self, max_tokens: u32) -> Self {
         self.max_tokens = max_tokens;
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub const fn with_retry_config(mut self, config: RetryConfig) -> Self {
         self.retry_config = config;
         self
@@ -69,14 +72,14 @@ impl ApiClient {
     ///
     /// When set, `messages()` and `messages_stream()` delegate to this backend
     /// with retry wrapping. The backend handles auth, URL, and model ID mapping.
-    #[must_use] 
+    #[must_use]
     pub fn with_backend(mut self, backend: Box<dyn ApiBackend>) -> Self {
         self.backend = Some(Arc::from(backend));
         self
     }
 
     /// Returns the active provider name ("firstParty", "bedrock", "vertex").
-    #[must_use] 
+    #[must_use]
     pub fn provider_name(&self) -> &str {
         match &self.backend {
             Some(b) => b.provider_name(),
@@ -92,10 +95,7 @@ impl ApiClient {
             HeaderValue::from_str(&self.api_key)
                 .map_err(|_| anyhow::anyhow!("Invalid API key format"))?,
         );
-        headers.insert(
-            "anthropic-version",
-            HeaderValue::from_static(API_VERSION),
-        );
+        headers.insert("anthropic-version", HeaderValue::from_static(API_VERSION));
         // Enable prompt caching and extended thinking
         headers.insert(
             "anthropic-beta",
@@ -113,8 +113,11 @@ impl ApiClient {
     }
 
     /// Extract rate limit metadata from response headers.
-    fn extract_rate_limit(headers: &reqwest::header::HeaderMap) -> Option<crate::retry::RateLimitInfo> {
-        let pairs: Vec<(String, String)> = headers.iter()
+    fn extract_rate_limit(
+        headers: &reqwest::header::HeaderMap,
+    ) -> Option<crate::retry::RateLimitInfo> {
+        let pairs: Vec<(String, String)> = headers
+            .iter()
             .filter_map(|(k, v)| {
                 let key = k.as_str().to_string();
                 v.to_str().ok().map(|val| (key, val.to_string()))
@@ -192,21 +195,32 @@ impl ApiClient {
                         let retry_after = Self::parse_retry_after(response.headers());
                         let rate_limit_info = Self::extract_rate_limit(response.headers());
                         let body = response.text().await.unwrap_or_default();
-                        return Err(ApiHttpError { status, body, retry_after, rate_limit_info });
+                        return Err(ApiHttpError {
+                            status,
+                            body,
+                            retry_after,
+                            rate_limit_info,
+                        });
                     }
 
-                    response.json::<MessagesResponse>().await.map_err(|e| ApiHttpError {
-                        status: 0,
-                        body: format!("Failed to parse response: {e}"),
-                        retry_after: None,
-                        rate_limit_info: None,
-                    })
+                    response
+                        .json::<MessagesResponse>()
+                        .await
+                        .map_err(|e| ApiHttpError {
+                            status: 0,
+                            body: format!("Failed to parse response: {e}"),
+                            retry_after: None,
+                            rate_limit_info: None,
+                        })
                 }
             },
             |attempt, status, delay| {
                 let msg = format!(
                     "Retrying API request (attempt {}/{}, status {}, wait {:.1}s)",
-                    attempt, self.retry_config.max_retries, status, delay.as_secs_f64()
+                    attempt,
+                    self.retry_config.max_retries,
+                    status,
+                    delay.as_secs_f64()
                 );
                 info!("{}", msg);
                 eprintln!("\x1b[33m⟳ {msg}\x1b[0m");
@@ -270,7 +284,12 @@ impl ApiClient {
                         let retry_after = Self::parse_retry_after(response.headers());
                         let rate_limit_info = Self::extract_rate_limit(response.headers());
                         let body = response.text().await.unwrap_or_default();
-                        return Err(ApiHttpError { status, body, retry_after, rate_limit_info });
+                        return Err(ApiHttpError {
+                            status,
+                            body,
+                            retry_after,
+                            rate_limit_info,
+                        });
                     }
 
                     Ok(response)
@@ -279,7 +298,10 @@ impl ApiClient {
             |attempt, status, delay| {
                 let msg = format!(
                     "Retrying stream request (attempt {}/{}, status {}, wait {:.1}s)",
-                    attempt, self.retry_config.max_retries, status, delay.as_secs_f64()
+                    attempt,
+                    self.retry_config.max_retries,
+                    status,
+                    delay.as_secs_f64()
                 );
                 info!("{}", msg);
                 eprintln!("\x1b[33m⟳ {msg}\x1b[0m");
@@ -332,7 +354,7 @@ impl ApiClient {
     }
 
     /// Convenience: build a `MessagesRequest` with defaults
-    #[must_use] 
+    #[must_use]
     pub fn build_request(
         &self,
         messages: Vec<ApiMessage>,
@@ -431,9 +453,7 @@ fn synthesize_stream_events(response: MessagesResponse) -> Vec<StreamEvent> {
     let content = response.content.clone();
 
     // MessageStart with usage (clone before consuming)
-    events.push(StreamEvent::MessageStart {
-        message: response,
-    });
+    events.push(StreamEvent::MessageStart { message: response });
 
     // Content blocks
     for (idx, block) in content.iter().enumerate() {
@@ -441,7 +461,9 @@ fn synthesize_stream_events(response: MessagesResponse) -> Vec<StreamEvent> {
             ResponseContentBlock::Text { text } => {
                 events.push(StreamEvent::ContentBlockStart {
                     index: idx,
-                    content_block: ResponseContentBlock::Text { text: String::new() },
+                    content_block: ResponseContentBlock::Text {
+                        text: String::new(),
+                    },
                 });
                 events.push(StreamEvent::ContentBlockDelta {
                     index: idx,
@@ -461,18 +483,24 @@ fn synthesize_stream_events(response: MessagesResponse) -> Vec<StreamEvent> {
                 let json_str = serde_json::to_string(input).unwrap_or_default();
                 events.push(StreamEvent::ContentBlockDelta {
                     index: idx,
-                    delta: DeltaBlock::InputJsonDelta { partial_json: json_str },
+                    delta: DeltaBlock::InputJsonDelta {
+                        partial_json: json_str,
+                    },
                 });
                 events.push(StreamEvent::ContentBlockStop { index: idx });
             }
             ResponseContentBlock::Thinking { thinking } => {
                 events.push(StreamEvent::ContentBlockStart {
                     index: idx,
-                    content_block: ResponseContentBlock::Thinking { thinking: String::new() },
+                    content_block: ResponseContentBlock::Thinking {
+                        thinking: String::new(),
+                    },
                 });
                 events.push(StreamEvent::ContentBlockDelta {
                     index: idx,
-                    delta: DeltaBlock::ThinkingDelta { thinking: thinking.clone() },
+                    delta: DeltaBlock::ThinkingDelta {
+                        thinking: thinking.clone(),
+                    },
                 });
                 events.push(StreamEvent::ContentBlockStop { index: idx });
             }
@@ -582,7 +610,10 @@ mod tests {
 
     // ── synthesize_stream_events ─────────────────────────────────────────
 
-    fn make_test_response(content: Vec<ResponseContentBlock>, stop_reason: Option<String>) -> MessagesResponse {
+    fn make_test_response(
+        content: Vec<ResponseContentBlock>,
+        stop_reason: Option<String>,
+    ) -> MessagesResponse {
         MessagesResponse {
             id: "msg_test".into(),
             response_type: "message".into(),
@@ -602,21 +633,32 @@ mod tests {
     #[test]
     fn synthesize_text_response() {
         let response = make_test_response(
-            vec![ResponseContentBlock::Text { text: "Hello world".into() }],
+            vec![ResponseContentBlock::Text {
+                text: "Hello world".into(),
+            }],
             Some("end_turn".into()),
         );
         let events = synthesize_stream_events(response);
         // MessageStart + ContentBlockStart + Delta + Stop + MessageDelta = 5
         assert_eq!(events.len(), 5);
         assert!(matches!(&events[0], StreamEvent::MessageStart { .. }));
-        assert!(matches!(&events[1], StreamEvent::ContentBlockStart { index: 0, .. }));
+        assert!(matches!(
+            &events[1],
+            StreamEvent::ContentBlockStart { index: 0, .. }
+        ));
         match &events[2] {
-            StreamEvent::ContentBlockDelta { delta: DeltaBlock::TextDelta { text }, .. } => {
+            StreamEvent::ContentBlockDelta {
+                delta: DeltaBlock::TextDelta { text },
+                ..
+            } => {
                 assert_eq!(text, "Hello world");
             }
             _ => panic!("expected TextDelta"),
         }
-        assert!(matches!(&events[3], StreamEvent::ContentBlockStop { index: 0 }));
+        assert!(matches!(
+            &events[3],
+            StreamEvent::ContentBlockStop { index: 0 }
+        ));
         match &events[4] {
             StreamEvent::MessageDelta { delta, .. } => {
                 assert_eq!(delta.stop_reason.as_deref(), Some("end_turn"));
@@ -638,14 +680,20 @@ mod tests {
         let events = synthesize_stream_events(response);
         assert_eq!(events.len(), 5);
         match &events[1] {
-            StreamEvent::ContentBlockStart { content_block: ResponseContentBlock::ToolUse { id, name, .. }, .. } => {
+            StreamEvent::ContentBlockStart {
+                content_block: ResponseContentBlock::ToolUse { id, name, .. },
+                ..
+            } => {
                 assert_eq!(id, "t1");
                 assert_eq!(name, "Bash");
             }
             _ => panic!("expected ToolUse start"),
         }
         match &events[2] {
-            StreamEvent::ContentBlockDelta { delta: DeltaBlock::InputJsonDelta { partial_json }, .. } => {
+            StreamEvent::ContentBlockDelta {
+                delta: DeltaBlock::InputJsonDelta { partial_json },
+                ..
+            } => {
                 let parsed: serde_json::Value = serde_json::from_str(partial_json).unwrap();
                 assert_eq!(parsed["command"], "ls");
             }
@@ -657,7 +705,9 @@ mod tests {
     fn synthesize_multi_block_response() {
         let response = make_test_response(
             vec![
-                ResponseContentBlock::Text { text: "I'll run that command.".into() },
+                ResponseContentBlock::Text {
+                    text: "I'll run that command.".into(),
+                },
                 ResponseContentBlock::ToolUse {
                     id: "t2".into(),
                     name: "FileRead".into(),
@@ -674,7 +724,9 @@ mod tests {
     #[test]
     fn synthesize_default_stop_reason() {
         let response = make_test_response(
-            vec![ResponseContentBlock::Text { text: "done".into() }],
+            vec![ResponseContentBlock::Text {
+                text: "done".into(),
+            }],
             None, // no stop_reason
         );
         let events = synthesize_stream_events(response);
@@ -689,13 +741,18 @@ mod tests {
     #[test]
     fn synthesize_thinking_block() {
         let response = make_test_response(
-            vec![ResponseContentBlock::Thinking { thinking: "let me think...".into() }],
+            vec![ResponseContentBlock::Thinking {
+                thinking: "let me think...".into(),
+            }],
             Some("end_turn".into()),
         );
         let events = synthesize_stream_events(response);
         assert_eq!(events.len(), 5);
         match &events[2] {
-            StreamEvent::ContentBlockDelta { delta: DeltaBlock::ThinkingDelta { thinking }, .. } => {
+            StreamEvent::ContentBlockDelta {
+                delta: DeltaBlock::ThinkingDelta { thinking },
+                ..
+            } => {
                 assert_eq!(thinking, "let me think...");
             }
             _ => panic!("expected ThinkingDelta"),
@@ -723,9 +780,6 @@ mod tests {
         let c = ApiClient::new("test-key").with_backend(backend);
         let fallback = c.clone_for_fallback();
         assert!(fallback.backend.is_some());
-        assert_eq!(
-            fallback.backend.as_ref().unwrap().provider_name(),
-            "mock"
-        );
+        assert_eq!(fallback.backend.as_ref().unwrap().provider_name(), "mock");
     }
 }

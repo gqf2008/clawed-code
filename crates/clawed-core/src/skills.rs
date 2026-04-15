@@ -25,7 +25,9 @@ use tracing::debug;
 /// Global caches use simple data (HashMap/HashSet) that remain valid
 /// even after a panic, so recovering via `into_inner()` is safe here.
 fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[derive(Debug, Clone)]
@@ -117,7 +119,10 @@ pub fn get_skills(cwd: &Path) -> Vec<SkillEntry> {
     }
 
     // Merge in dynamic skills (discovered from nested dirs + activated conditional)
-    let dyn_snapshot: Vec<SkillEntry> = lock_or_recover(dynamic_skills()).values().cloned().collect();
+    let dyn_snapshot: Vec<SkillEntry> = lock_or_recover(dynamic_skills())
+        .values()
+        .cloned()
+        .collect();
     let mut seen: HashSet<String> = result.iter().map(|s| s.name.clone()).collect();
     for skill in dyn_snapshot {
         if !seen.contains(&skill.name) {
@@ -185,7 +190,8 @@ fn skill_dirs(cwd: &Path) -> Vec<PathBuf> {
 pub fn load_skills(cwd: &Path) -> Vec<SkillEntry> {
     let all = load_skills_from_dirs(&skill_dirs(cwd));
     let mut regular = Vec::new();
-    let activated_snapshot: std::collections::HashSet<String> = lock_or_recover(activated_names()).clone();
+    let activated_snapshot: std::collections::HashSet<String> =
+        lock_or_recover(activated_names()).clone();
 
     let mut conditional_entries = Vec::new();
     let mut dynamic_entries = Vec::new();
@@ -297,9 +303,7 @@ fn parse_skill_file(path: &Path, name: &str) -> Option<SkillEntry> {
         .unwrap_or_else(|| name.replace('-', " "));
 
     let allowed_tools = fm_str
-        .and_then(|f| {
-            extract_list(f, "allowed-tools").or_else(|| extract_list(f, "allowed_tools"))
-        })
+        .and_then(|f| extract_list(f, "allowed-tools").or_else(|| extract_list(f, "allowed_tools")))
         .unwrap_or_default();
 
     let model = fm_str.and_then(|f| extract_string(f, "model"));
@@ -454,7 +458,10 @@ pub fn activate_conditional_skills(file_paths: &[&str], cwd: &Path) -> Vec<Strin
             if matches_any_pattern(&rel, &skill.paths) {
                 to_remove.push(name.clone());
                 activated.push(name.clone());
-                debug!("[skills] Activated conditional skill '{}' (matched: {})", name, rel);
+                debug!(
+                    "[skills] Activated conditional skill '{}' (matched: {})",
+                    name, rel
+                );
                 break;
             }
         }
@@ -738,7 +745,9 @@ pub fn substitute_arguments(skill: &SkillEntry, args: &str) -> String {
                 }
             }
             // Advance by full UTF-8 character (safe for non-ASCII)
-            let Some(ch) = result[idx..].chars().next() else { break };
+            let Some(ch) = result[idx..].chars().next() else {
+                break;
+            };
             new_result.push(ch);
             idx += ch.len_utf8();
         }
@@ -764,7 +773,9 @@ pub fn substitute_arguments(skill: &SkillEntry, args: &str) -> String {
                 }
             }
         }
-        let Some(ch) = result[idx..].chars().next() else { break };
+        let Some(ch) = result[idx..].chars().next() else {
+            break;
+        };
         new_result.push(ch);
         idx += ch.len_utf8();
     }
@@ -788,7 +799,9 @@ pub fn substitute_arguments(skill: &SkillEntry, args: &str) -> String {
                     continue;
                 }
             }
-            let Some(ch) = result[idx..].chars().next() else { break };
+            let Some(ch) = result[idx..].chars().next() else {
+                break;
+            };
             new_result.push(ch);
             idx += ch.len_utf8();
         }
@@ -839,12 +852,18 @@ mod tests {
 
     #[test]
     fn extract_string_plain() {
-        assert_eq!(extract_string("description: hello world", "description"), Some("hello world".into()));
+        assert_eq!(
+            extract_string("description: hello world", "description"),
+            Some("hello world".into())
+        );
     }
 
     #[test]
     fn extract_string_quoted() {
-        assert_eq!(extract_string("description: \"quoted value\"", "description"), Some("quoted value".into()));
+        assert_eq!(
+            extract_string("description: \"quoted value\"", "description"),
+            Some("quoted value".into())
+        );
     }
 
     #[test]
@@ -923,7 +942,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let skills_dir = dir.path().join(".claude").join("skills");
         std::fs::create_dir_all(&skills_dir).unwrap();
-        std::fs::write(skills_dir.join("test.md"), "---\ndescription: Test skill\n---\nDo testing.").unwrap();
+        std::fs::write(
+            skills_dir.join("test.md"),
+            "---\ndescription: Test skill\n---\nDo testing.",
+        )
+        .unwrap();
         std::fs::write(skills_dir.join("review.md"), "Review code.").unwrap();
         std::fs::write(skills_dir.join("readme.txt"), "Not a skill").unwrap();
 
@@ -1000,7 +1023,11 @@ mod tests {
 
         let dirs = skill_dirs(&project);
         // Should include: project/.claude/skills, projects/.claude/skills, home/.claude/skills
-        assert!(dirs.len() >= 2, "Should walk at least 2 levels, got {}", dirs.len());
+        assert!(
+            dirs.len() >= 2,
+            "Should walk at least 2 levels, got {}",
+            dirs.len()
+        );
         assert_eq!(dirs[0], project.join(".claude").join("skills"));
     }
 
@@ -1023,7 +1050,10 @@ mod tests {
         // "review" should only appear once (child wins), "deploy" from parent
         assert_eq!(skills.len(), 2);
         let review = skills.iter().find(|s| s.name == "review").unwrap();
-        assert_eq!(review.system_prompt, "Child review", "child should shadow parent");
+        assert_eq!(
+            review.system_prompt, "Child review",
+            "child should shadow parent"
+        );
     }
 
     // ── Cache tests ─────────────────────────────────────────────────────
@@ -1039,7 +1069,10 @@ mod tests {
         clear_all_skill_state();
 
         let first = get_skills(dir.path());
-        assert!(first.iter().any(|s| s.name == "cached"), "should contain our skill");
+        assert!(
+            first.iter().any(|s| s.name == "cached"),
+            "should contain our skill"
+        );
 
         // Remove the file — cached result should still have the skill
         std::fs::remove_file(skills_dir.join("cached.md")).unwrap();
@@ -1131,7 +1164,11 @@ Analyze $ARGUMENTS in ${file} for ${language}.
         let skill_dir = dir.path().join("my-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
         let path = skill_dir.join("SKILL.md");
-        std::fs::write(&path, "---\ndescription: dir skill\n---\nPrompt with ${CLAUDE_SKILL_DIR}").unwrap();
+        std::fs::write(
+            &path,
+            "---\ndescription: dir skill\n---\nPrompt with ${CLAUDE_SKILL_DIR}",
+        )
+        .unwrap();
 
         let skill = parse_skill_file(&path, "my-skill").unwrap();
         assert_eq!(skill.skill_root.as_deref(), Some(skill_dir.as_path()));
@@ -1209,9 +1246,15 @@ Analyze $ARGUMENTS in ${file} for ${language}.
         assert_eq!(regular[0].name, "general");
 
         // Test glob matching used by activation
-        assert!(!matches_any_pattern("docs/readme.md", &conditional[0].paths));
+        assert!(!matches_any_pattern(
+            "docs/readme.md",
+            &conditional[0].paths
+        ));
         assert!(matches_any_pattern("src/main.rs", &conditional[0].paths));
-        assert!(matches_any_pattern("src/deep/nested/lib.rs", &conditional[0].paths));
+        assert!(matches_any_pattern(
+            "src/deep/nested/lib.rs",
+            &conditional[0].paths
+        ));
     }
 
     // ── Argument substitution tests ─────────────────────────────────────

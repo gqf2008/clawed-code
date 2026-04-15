@@ -1,5 +1,5 @@
-use super::types::*;
 use super::translate::*;
+use super::types::*;
 use super::*;
 use crate::types::*;
 use serde_json::json;
@@ -296,7 +296,8 @@ fn first_chunk_emits_message_start_and_content_block_start() {
                 role: Some("assistant".into()),
                 content: Some("Hi".into()),
                 tool_calls: None,
-            ..Default::default() },
+                ..Default::default()
+            },
             finish_reason: None,
         }],
         model: Some("gpt-4o".into()),
@@ -308,7 +309,10 @@ fn first_chunk_emits_message_start_and_content_block_start() {
     // MessageStart + ContentBlockStart(text) + TextDelta
     assert_eq!(events.len(), 3);
     assert!(matches!(events[0], StreamEvent::MessageStart { .. }));
-    assert!(matches!(events[1], StreamEvent::ContentBlockStart { index: 0, .. }));
+    assert!(matches!(
+        events[1],
+        StreamEvent::ContentBlockStart { index: 0, .. }
+    ));
     match &events[2] {
         StreamEvent::ContentBlockDelta {
             delta: DeltaBlock::TextDelta { text },
@@ -328,7 +332,8 @@ fn subsequent_chunk_no_duplicate_block_start() {
                 role: Some("assistant".into()),
                 content: Some("Hello".into()),
                 tool_calls: None,
-            ..Default::default() },
+                ..Default::default()
+            },
             finish_reason: None,
         }],
         model: Some("gpt-4o".into()),
@@ -343,7 +348,8 @@ fn subsequent_chunk_no_duplicate_block_start() {
                 role: None,
                 content: Some(" world".into()),
                 tool_calls: None,
-            ..Default::default() },
+                ..Default::default()
+            },
             finish_reason: None,
         }],
         model: None,
@@ -374,7 +380,8 @@ fn finish_reason_emits_block_stop_and_message_stop() {
                 role: Some("assistant".into()),
                 content: Some("Hi".into()),
                 tool_calls: None,
-            ..Default::default() },
+                ..Default::default()
+            },
             finish_reason: None,
         }],
         model: Some("gpt-4o".into()),
@@ -389,7 +396,8 @@ fn finish_reason_emits_block_stop_and_message_stop() {
                 role: None,
                 content: None,
                 tool_calls: None,
-            ..Default::default() },
+                ..Default::default()
+            },
             finish_reason: Some("stop".into()),
         }],
         model: None,
@@ -401,7 +409,10 @@ fn finish_reason_emits_block_stop_and_message_stop() {
     let events = state.process_chunk(&chunk2);
     // ContentBlockStop(0) + MessageDelta + MessageStop
     assert_eq!(events.len(), 3);
-    assert!(matches!(events[0], StreamEvent::ContentBlockStop { index: 0 }));
+    assert!(matches!(
+        events[0],
+        StreamEvent::ContentBlockStop { index: 0 }
+    ));
     match &events[1] {
         StreamEvent::MessageDelta { delta, .. } => {
             assert_eq!(delta.stop_reason.as_deref(), Some("end_turn"));
@@ -445,7 +456,8 @@ fn tool_call_stream_emits_start_delta_stop() {
                 role: None,
                 content: None,
                 tool_calls: None,
-            ..Default::default() },
+                ..Default::default()
+            },
             finish_reason: Some("tool_calls".into()),
         }],
         model: None,
@@ -456,7 +468,10 @@ fn tool_call_stream_emits_start_delta_stop() {
     let events1 = state.process_chunk(&chunk1);
     assert_eq!(events1.len(), 3); // MessageStart + ContentBlockStart + InputJsonDelta
     assert!(matches!(events1[0], StreamEvent::MessageStart { .. }));
-    assert!(matches!(events1[1], StreamEvent::ContentBlockStart { index: 0, .. }));
+    assert!(matches!(
+        events1[1],
+        StreamEvent::ContentBlockStart { index: 0, .. }
+    ));
     match &events1[2] {
         StreamEvent::ContentBlockDelta {
             delta: DeltaBlock::InputJsonDelta { partial_json },
@@ -468,7 +483,10 @@ fn tool_call_stream_emits_start_delta_stop() {
     let events2 = state.process_chunk(&chunk2);
     // ContentBlockStop(0) + MessageDelta + MessageStop
     assert_eq!(events2.len(), 3);
-    assert!(matches!(events2[0], StreamEvent::ContentBlockStop { index: 0 }));
+    assert!(matches!(
+        events2[0],
+        StreamEvent::ContentBlockStop { index: 0 }
+    ));
     match &events2[1] {
         StreamEvent::MessageDelta { delta, .. } => {
             assert_eq!(delta.stop_reason.as_deref(), Some("tool_use"));
@@ -488,7 +506,8 @@ fn finalize_synthesizes_closing_events() {
                 role: Some("assistant".into()),
                 content: Some("partial".into()),
                 tool_calls: None,
-            ..Default::default() },
+                ..Default::default()
+            },
             finish_reason: None,
         }],
         model: Some("gpt-4o".into()),
@@ -502,7 +521,10 @@ fn finalize_synthesizes_closing_events() {
     let closing = state.finalize();
     // ContentBlockStop(0) + MessageDelta(end_turn) + MessageStop
     assert_eq!(closing.len(), 3);
-    assert!(matches!(closing[0], StreamEvent::ContentBlockStop { index: 0 }));
+    assert!(matches!(
+        closing[0],
+        StreamEvent::ContentBlockStop { index: 0 }
+    ));
     assert!(matches!(closing[1], StreamEvent::MessageDelta { .. }));
     assert!(matches!(closing[2], StreamEvent::MessageStop));
 }
@@ -520,7 +542,8 @@ fn mixed_text_and_tools_stream() {
                 role: Some("assistant".into()),
                 content: Some("Let me read that.".into()),
                 tool_calls: None,
-            ..Default::default() },
+                ..Default::default()
+            },
             finish_reason: None,
         }],
         model: Some("gpt-4o".into()),
@@ -552,7 +575,8 @@ fn mixed_text_and_tools_stream() {
         }],
         model: None,
         usage: None,
-    };        let events = state.process_chunk(&c2);
+    };
+    let events = state.process_chunk(&c2);
     assert_eq!(events.len(), 2); // ContentBlockStart(1) + InputJsonDelta
 
     // Chunk 3: finish
@@ -564,7 +588,8 @@ fn mixed_text_and_tools_stream() {
                 role: None,
                 content: None,
                 tool_calls: None,
-            ..Default::default() },
+                ..Default::default()
+            },
             finish_reason: Some("tool_calls".into()),
         }],
         model: None,
@@ -573,8 +598,14 @@ fn mixed_text_and_tools_stream() {
     let events = state.process_chunk(&c3);
     // ContentBlockStop(0) + ContentBlockStop(1) + MessageDelta + MessageStop
     assert_eq!(events.len(), 4);
-    assert!(matches!(events[0], StreamEvent::ContentBlockStop { index: 0 }));
-    assert!(matches!(events[1], StreamEvent::ContentBlockStop { index: 1 }));
+    assert!(matches!(
+        events[0],
+        StreamEvent::ContentBlockStop { index: 0 }
+    ));
+    assert!(matches!(
+        events[1],
+        StreamEvent::ContentBlockStop { index: 1 }
+    ));
     assert!(matches!(events[2], StreamEvent::MessageDelta { .. }));
     assert!(matches!(events[3], StreamEvent::MessageStop));
 }
@@ -602,10 +633,13 @@ fn reasoning_content_emits_thinking_events() {
     // MessageStart + ContentBlockStart(thinking) + ThinkingDelta
     assert_eq!(events.len(), 3);
     assert!(matches!(events[0], StreamEvent::MessageStart { .. }));
-    assert!(matches!(events[1], StreamEvent::ContentBlockStart {
-        index: 0,
-        content_block: ResponseContentBlock::Thinking { .. },
-    }));
+    assert!(matches!(
+        events[1],
+        StreamEvent::ContentBlockStart {
+            index: 0,
+            content_block: ResponseContentBlock::Thinking { .. },
+        }
+    ));
     match &events[2] {
         StreamEvent::ContentBlockDelta {
             index: 0,
@@ -632,11 +666,17 @@ fn reasoning_content_emits_thinking_events() {
     let events = state.process_chunk(&chunk2);
     // ContentBlockStop(0) + ContentBlockStart(1, text) + TextDelta
     assert_eq!(events.len(), 3);
-    assert!(matches!(events[0], StreamEvent::ContentBlockStop { index: 0 }));
-    assert!(matches!(events[1], StreamEvent::ContentBlockStart {
-        index: 1,
-        content_block: ResponseContentBlock::Text { .. },
-    }));
+    assert!(matches!(
+        events[0],
+        StreamEvent::ContentBlockStop { index: 0 }
+    ));
+    assert!(matches!(
+        events[1],
+        StreamEvent::ContentBlockStart {
+            index: 1,
+            content_block: ResponseContentBlock::Text { .. },
+        }
+    ));
     match &events[2] {
         StreamEvent::ContentBlockDelta {
             index: 1,
@@ -660,7 +700,10 @@ fn reasoning_content_emits_thinking_events() {
     let events = state.process_chunk(&chunk3);
     // ContentBlockStop(1) + MessageDelta + MessageStop
     assert_eq!(events.len(), 3);
-    assert!(matches!(events[0], StreamEvent::ContentBlockStop { index: 1 }));
+    assert!(matches!(
+        events[0],
+        StreamEvent::ContentBlockStop { index: 1 }
+    ));
     assert!(matches!(events[1], StreamEvent::MessageDelta { .. }));
     assert!(matches!(events[2], StreamEvent::MessageStop));
 }

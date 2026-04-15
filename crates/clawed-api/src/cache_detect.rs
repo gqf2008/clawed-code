@@ -171,7 +171,8 @@ fn compute_hash(data: &str) -> u64 {
 fn compute_per_tool_hashes(schemas: &[String], names: &[String]) -> HashMap<String, u64> {
     let mut hashes = HashMap::new();
     for (i, schema) in schemas.iter().enumerate() {
-        let name = names.get(i)
+        let name = names
+            .get(i)
             .cloned()
             .unwrap_or_else(|| format!("__idx_{i}"));
         hashes.insert(name, compute_hash(schema));
@@ -218,7 +219,8 @@ pub fn record_prompt_state(snapshot: &PromptStateSnapshot) {
     let system_hash = compute_hash(&snapshot.system_text);
     let tools_combined: String = snapshot.tool_schemas_json.join("\n---\n");
     let tools_hash = compute_hash(&tools_combined);
-    let cache_control_hash = snapshot.cache_control_scope
+    let cache_control_hash = snapshot
+        .cache_control_scope
         .as_deref()
         .map_or(0, compute_hash);
 
@@ -228,9 +230,7 @@ pub fn record_prompt_state(snapshot: &PromptStateSnapshot) {
         b
     };
     let effort_str = snapshot.effort_value.clone();
-    let extra_body_hash = snapshot.extra_body_json
-        .as_deref()
-        .map_or(0, compute_hash);
+    let extra_body_hash = snapshot.extra_body_json.as_deref().map_or(0, compute_hash);
 
     let mut tracker = match TRACKER.lock() {
         Ok(t) => t,
@@ -267,14 +267,26 @@ pub fn record_prompt_state(snapshot: &PromptStateSnapshot) {
             || overage_changed;
 
         if any_change {
-            let prev_tool_set: HashSet<&str> = prev.tool_names.iter().map(std::string::String::as_str).collect();
-            let new_tool_set: HashSet<&str> = snapshot.tool_names.iter().map(std::string::String::as_str).collect();
+            let prev_tool_set: HashSet<&str> = prev
+                .tool_names
+                .iter()
+                .map(std::string::String::as_str)
+                .collect();
+            let new_tool_set: HashSet<&str> = snapshot
+                .tool_names
+                .iter()
+                .map(std::string::String::as_str)
+                .collect();
 
-            let added_tools: Vec<String> = snapshot.tool_names.iter()
+            let added_tools: Vec<String> = snapshot
+                .tool_names
+                .iter()
                 .filter(|n| !prev_tool_set.contains(n.as_str()))
                 .cloned()
                 .collect();
-            let removed_tools: Vec<String> = prev.tool_names.iter()
+            let removed_tools: Vec<String> = prev
+                .tool_names
+                .iter()
                 .filter(|n| !new_tool_set.contains(n.as_str()))
                 .cloned()
                 .collect();
@@ -282,10 +294,8 @@ pub fn record_prompt_state(snapshot: &PromptStateSnapshot) {
             // Identify specific tool schema changes
             let mut changed_tool_schemas = Vec::new();
             if tool_schemas_changed {
-                let new_hashes = compute_per_tool_hashes(
-                    &snapshot.tool_schemas_json,
-                    &snapshot.tool_names,
-                );
+                let new_hashes =
+                    compute_per_tool_hashes(&snapshot.tool_schemas_json, &snapshot.tool_names);
                 for name in &snapshot.tool_names {
                     if prev_tool_set.contains(name.as_str()) {
                         let new_h = new_hashes.get(name);
@@ -298,11 +308,14 @@ pub fn record_prompt_state(snapshot: &PromptStateSnapshot) {
                 prev.per_tool_hashes = new_hashes;
             }
 
-            let added_betas: Vec<String> = sorted_betas.iter()
+            let added_betas: Vec<String> = sorted_betas
+                .iter()
                 .filter(|b| !prev.betas.contains(b))
                 .cloned()
                 .collect();
-            let removed_betas: Vec<String> = prev.betas.iter()
+            let removed_betas: Vec<String> = prev
+                .betas
+                .iter()
                 .filter(|b| !sorted_betas.contains(b))
                 .cloned()
                 .collect();
@@ -319,7 +332,8 @@ pub fn record_prompt_state(snapshot: &PromptStateSnapshot) {
                 extra_body_changed,
                 added_tool_count: added_tools.len(),
                 removed_tool_count: removed_tools.len(),
-                system_char_delta: snapshot.system_char_count as i64 - prev.system_char_count as i64,
+                system_char_delta: snapshot.system_char_count as i64
+                    - prev.system_char_count as i64,
                 added_tools,
                 removed_tools,
                 changed_tool_schemas,
@@ -352,7 +366,9 @@ pub fn record_prompt_state(snapshot: &PromptStateSnapshot) {
         // First call — initialize state
         // Evict oldest if at capacity
         while tracker.states.len() >= MAX_TRACKED_SOURCES {
-            let oldest_key = tracker.states.iter()
+            let oldest_key = tracker
+                .states
+                .iter()
                 .min_by_key(|(_, v)| v.last_call_time)
                 .map(|(k, _)| k.clone());
             if let Some(k) = oldest_key {
@@ -362,31 +378,32 @@ pub fn record_prompt_state(snapshot: &PromptStateSnapshot) {
             }
         }
 
-        let per_tool_hashes = compute_per_tool_hashes(
-            &snapshot.tool_schemas_json,
-            &snapshot.tool_names,
-        );
+        let per_tool_hashes =
+            compute_per_tool_hashes(&snapshot.tool_schemas_json, &snapshot.tool_names);
 
-        tracker.states.insert(key, PreviousState {
-            system_hash,
-            tools_hash,
-            tool_names: snapshot.tool_names.clone(),
-            per_tool_hashes,
-            system_char_count: snapshot.system_char_count,
-            model: snapshot.model.clone(),
-            fast_mode: snapshot.fast_mode,
-            betas: sorted_betas,
-            auto_mode_active: snapshot.auto_mode_active,
-            effort_value: effort_str,
-            extra_body_hash,
-            cache_control_hash,
-            is_using_overage: snapshot.is_using_overage,
-            call_count: 1,
-            pending_changes: None,
-            prev_cache_read_tokens: None,
-            cache_deletions_pending: false,
-            last_call_time: Instant::now(),
-        });
+        tracker.states.insert(
+            key,
+            PreviousState {
+                system_hash,
+                tools_hash,
+                tool_names: snapshot.tool_names.clone(),
+                per_tool_hashes,
+                system_char_count: snapshot.system_char_count,
+                model: snapshot.model.clone(),
+                fast_mode: snapshot.fast_mode,
+                betas: sorted_betas,
+                auto_mode_active: snapshot.auto_mode_active,
+                effort_value: effort_str,
+                extra_body_hash,
+                cache_control_hash,
+                is_using_overage: snapshot.is_using_overage,
+                call_count: 1,
+                pending_changes: None,
+                prev_cache_read_tokens: None,
+                cache_deletions_pending: false,
+                last_call_time: Instant::now(),
+            },
+        );
     }
 }
 
@@ -434,7 +451,9 @@ pub fn check_response_for_cache_break(
 
     // Check thresholds: >5% relative drop AND >2000 absolute drop
     let token_drop = prev_cache_read - cache_read_tokens;
-    if cache_read_tokens as f64 >= prev_cache_read as f64 * 0.95 || token_drop < MIN_CACHE_MISS_TOKENS {
+    if cache_read_tokens as f64 >= prev_cache_read as f64 * 0.95
+        || token_drop < MIN_CACHE_MISS_TOKENS
+    {
         return None;
     }
 
@@ -442,7 +461,10 @@ pub fn check_response_for_cache_break(
     let mut parts = Vec::new();
     if let Some(ref c) = changes {
         if c.model_changed {
-            parts.push(format!("model changed ({} → {})", c.previous_model, c.new_model));
+            parts.push(format!(
+                "model changed ({} → {})",
+                c.previous_model, c.new_model
+            ));
         }
         if c.system_prompt_changed {
             let delta = c.system_char_delta;
@@ -459,7 +481,10 @@ pub fn check_response_for_cache_break(
             let tool_diff = if c.added_tool_count > 0 || c.removed_tool_count > 0 {
                 format!(" (+{}/-{} tools)", c.added_tool_count, c.removed_tool_count)
             } else if !c.changed_tool_schemas.is_empty() {
-                format!(" (schemas changed: {})", sanitize_tool_names(&c.changed_tool_schemas))
+                format!(
+                    " (schemas changed: {})",
+                    sanitize_tool_names(&c.changed_tool_schemas)
+                )
             } else {
                 " (tool prompt/schema changed, same tool set)".to_string()
             };
@@ -489,8 +514,16 @@ pub fn check_response_for_cache_break(
         if c.effort_changed {
             parts.push(format!(
                 "effort changed ({} → {})",
-                if c.prev_effort_value.is_empty() { "default" } else { &c.prev_effort_value },
-                if c.new_effort_value.is_empty() { "default" } else { &c.new_effort_value },
+                if c.prev_effort_value.is_empty() {
+                    "default"
+                } else {
+                    &c.prev_effort_value
+                },
+                if c.new_effort_value.is_empty() {
+                    "default"
+                } else {
+                    &c.new_effort_value
+                },
             ));
         }
         if c.extra_body_changed {
@@ -527,7 +560,12 @@ pub fn check_response_for_cache_break(
 
     warn!(
         "[PROMPT CACHE BREAK] {} [source={}, call #{}, cache read: {} → {}, creation: {}]",
-        reason, query_source, state.call_count, prev_cache_read, cache_read_tokens, cache_creation_tokens
+        reason,
+        query_source,
+        state.call_count,
+        prev_cache_read,
+        cache_read_tokens,
+        cache_creation_tokens
     );
 
     Some(report)
@@ -577,8 +615,15 @@ pub fn reset_all() {
 
 /// Sanitize tool names for analytics (collapse MCP tools to 'mcp').
 fn sanitize_tool_names(names: &[String]) -> String {
-    names.iter()
-        .map(|n| if n.starts_with("mcp__") { "mcp" } else { n.as_str() })
+    names
+        .iter()
+        .map(|n| {
+            if n.starts_with("mcp__") {
+                "mcp"
+            } else {
+                n.as_str()
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -592,7 +637,10 @@ mod tests {
     fn make_snapshot(source: &str, model: &str, tools: &[&str]) -> PromptStateSnapshot {
         PromptStateSnapshot {
             system_text: "You are a helpful assistant.".to_string(),
-            tool_schemas_json: tools.iter().map(|t| format!(r#"{{"name":"{}","description":"A tool"}}"#, t)).collect(),
+            tool_schemas_json: tools
+                .iter()
+                .map(|t| format!(r#"{{"name":"{}","description":"A tool"}}"#, t))
+                .collect(),
             tool_names: tools.iter().map(|s| s.to_string()).collect(),
             query_source: source.to_string(),
             model: model.to_string(),
@@ -651,7 +699,11 @@ mod tests {
     #[test]
     fn record_first_state_initializes() {
         let _guard = setup();
-        let snap = make_snapshot("repl_main_thread", "claude-sonnet-4-20250514", &["Read", "Write"]);
+        let snap = make_snapshot(
+            "repl_main_thread",
+            "claude-sonnet-4-20250514",
+            &["Read", "Write"],
+        );
         record_prompt_state(&snap);
         // Should not panic, state initialized
     }
@@ -659,7 +711,11 @@ mod tests {
     #[test]
     fn record_unchanged_state_no_pending() {
         let _guard = setup();
-        let snap = make_snapshot("repl_main_thread", "claude-sonnet-4-20250514", &["Read", "Write"]);
+        let snap = make_snapshot(
+            "repl_main_thread",
+            "claude-sonnet-4-20250514",
+            &["Read", "Write"],
+        );
         record_prompt_state(&snap);
         record_prompt_state(&snap);
 
@@ -691,7 +747,11 @@ mod tests {
         let snap1 = make_snapshot("repl_main_thread", "claude-sonnet-4-20250514", &["Read"]);
         record_prompt_state(&snap1);
 
-        let snap2 = make_snapshot("repl_main_thread", "claude-sonnet-4-20250514", &["Read", "Write"]);
+        let snap2 = make_snapshot(
+            "repl_main_thread",
+            "claude-sonnet-4-20250514",
+            &["Read", "Write"],
+        );
         record_prompt_state(&snap2);
 
         let tracker = TRACKER.lock().unwrap();
@@ -705,7 +765,11 @@ mod tests {
     #[test]
     fn record_tool_removed() {
         let _guard = setup();
-        let snap1 = make_snapshot("repl_main_thread", "claude-sonnet-4-20250514", &["Read", "Write"]);
+        let snap1 = make_snapshot(
+            "repl_main_thread",
+            "claude-sonnet-4-20250514",
+            &["Read", "Write"],
+        );
         record_prompt_state(&snap1);
 
         let snap2 = make_snapshot("repl_main_thread", "claude-sonnet-4-20250514", &["Read"]);
@@ -725,9 +789,7 @@ mod tests {
         let snap = make_snapshot("repl_main_thread", "claude-sonnet-4-20250514", &["Read"]);
         record_prompt_state(&snap);
 
-        let result = check_response_for_cache_break(
-            "repl_main_thread", 10000, 0, None, None,
-        );
+        let result = check_response_for_cache_break("repl_main_thread", 10000, 0, None, None);
         assert!(result.is_none()); // First call, no baseline
     }
 
@@ -741,9 +803,7 @@ mod tests {
         check_response_for_cache_break("repl_main_thread", 10000, 0, None, None);
 
         // Small drop (< 5% of 10000 = 500)
-        let result = check_response_for_cache_break(
-            "repl_main_thread", 9800, 0, None, None,
-        );
+        let result = check_response_for_cache_break("repl_main_thread", 9800, 0, None, None);
         assert!(result.is_none());
     }
 
@@ -759,9 +819,7 @@ mod tests {
         record_prompt_state(&snap2);
 
         // Large drop: 10000 → 0
-        let result = check_response_for_cache_break(
-            "repl_main_thread", 0, 5000, None, None,
-        );
+        let result = check_response_for_cache_break("repl_main_thread", 0, 5000, None, None);
         assert!(result.is_some());
         let report = result.unwrap();
         assert!(report.reason.contains("model changed"));
@@ -776,9 +834,8 @@ mod tests {
 
         // No changes, but large drop with >5min gap
         record_prompt_state(&snap);
-        let result = check_response_for_cache_break(
-            "repl_main_thread", 0, 5000, Some(6 * 60 * 1000), None,
-        );
+        let result =
+            check_response_for_cache_break("repl_main_thread", 0, 5000, Some(6 * 60 * 1000), None);
         assert!(result.is_some());
         let report = result.unwrap();
         assert!(report.reason.contains("5min TTL"));
@@ -796,9 +853,7 @@ mod tests {
 
         // Large drop should be suppressed
         record_prompt_state(&snap);
-        let result = check_response_for_cache_break(
-            "repl_main_thread", 0, 5000, None, None,
-        );
+        let result = check_response_for_cache_break("repl_main_thread", 0, 5000, None, None);
         assert!(result.is_none());
     }
 
@@ -813,9 +868,7 @@ mod tests {
 
         // Next call should be treated as first (no baseline)
         record_prompt_state(&snap);
-        let result = check_response_for_cache_break(
-            "repl_main_thread", 0, 5000, None, None,
-        );
+        let result = check_response_for_cache_break("repl_main_thread", 0, 5000, None, None);
         assert!(result.is_none());
     }
 
@@ -826,9 +879,7 @@ mod tests {
         record_prompt_state(&snap);
         check_response_for_cache_break("repl_main_thread", 10000, 0, None, None);
 
-        let result = check_response_for_cache_break(
-            "repl_main_thread", 0, 5000, None, None,
-        );
+        let result = check_response_for_cache_break("repl_main_thread", 0, 5000, None, None);
         assert!(result.is_none()); // Haiku excluded
     }
 

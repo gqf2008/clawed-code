@@ -1,21 +1,21 @@
 mod helpers;
 
+use futures::Stream;
 use std::pin::Pin;
 use std::sync::Arc;
-use futures::Stream;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::compact::{compact_context_message, compact_conversation, AutoCompactState};
+use crate::executor::ToolExecutor;
+use crate::hooks::{HookDecision, HookEvent, HookRegistry};
+use crate::state::SharedState;
 use clawed_api::client::ApiClient;
 use clawed_api::types::*;
 use clawed_core::message::{
     AssistantMessage, ContentBlock, Message, StopReason, Usage, UserMessage,
 };
 use clawed_core::tool::ToolContext;
-use crate::compact::{AutoCompactState, compact_conversation, compact_context_message};
-use crate::executor::ToolExecutor;
-use crate::hooks::{HookDecision, HookEvent, HookRegistry};
-use crate::state::SharedState;
 
 use helpers::*;
 
@@ -23,23 +23,46 @@ use helpers::*;
 pub enum AgentEvent {
     TextDelta(String),
     ThinkingDelta(String),
-    ToolUseStart { id: String, name: String },
+    ToolUseStart {
+        id: String,
+        name: String,
+    },
     /// Emitted when tool input is fully parsed (at ContentBlockStop).
-    ToolUseReady { id: String, name: String, input: serde_json::Value },
-    ToolResult { id: String, is_error: bool, text: Option<String> },
+    ToolUseReady {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        id: String,
+        is_error: bool,
+        text: Option<String>,
+    },
     AssistantMessage(AssistantMessage),
-    TurnComplete { stop_reason: StopReason },
+    TurnComplete {
+        stop_reason: StopReason,
+    },
     UsageUpdate(Usage),
     /// Per-turn token counts for budget tracking.
-    TurnTokens { input_tokens: u64, output_tokens: u64 },
+    TurnTokens {
+        input_tokens: u64,
+        output_tokens: u64,
+    },
     /// Prompt is getting too large — may need compaction soon.
-    ContextWarning { usage_pct: f64, message: String },
+    ContextWarning {
+        usage_pct: f64,
+        message: String,
+    },
     /// Auto-compaction triggered.
     CompactStart,
     /// Compaction finished successfully.
-    CompactComplete { summary_len: usize },
+    CompactComplete {
+        summary_len: usize,
+    },
     /// Max turns limit reached.
-    MaxTurns { limit: u32 },
+    MaxTurns {
+        limit: u32,
+    },
     Error(String),
 }
 
@@ -91,8 +114,15 @@ pub fn query_stream(
     hooks: Arc<HookRegistry>,
 ) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>> {
     query_stream_with_injection(
-        client, executor, state, tool_context, config,
-        initial_messages, tools, hooks, None,
+        client,
+        executor,
+        state,
+        tool_context,
+        config,
+        initial_messages,
+        tools,
+        hooks,
+        None,
     )
 }
 
@@ -719,4 +749,3 @@ mod tests;
 
 #[cfg(test)]
 mod e2e_tests;
-

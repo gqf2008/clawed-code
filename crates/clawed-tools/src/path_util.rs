@@ -73,7 +73,9 @@ fn normalize_path(path: &Path) -> PathBuf {
             Component::CurDir => {} // skip `.`
             Component::ParentDir => {
                 // Don't pop the root component (e.g. `C:\` or `/`)
-                if result.parent().is_some() && result != result.ancestors().last().unwrap_or(Path::new("")) {
+                if result.parent().is_some()
+                    && result != result.ancestors().last().unwrap_or(Path::new(""))
+                {
                     result.pop();
                 }
             }
@@ -123,7 +125,7 @@ fn find_project_root(cwd: &Path) -> Option<PathBuf> {
 ///
 /// If the output exceeds `MAX_TOOL_OUTPUT_SIZE` bytes or `MAX_TOOL_OUTPUT_LINES` lines,
 /// it is truncated with a warning appended. Returns the (possibly truncated) string.
-#[must_use] 
+#[must_use]
 pub fn truncate_tool_output(output: &str) -> String {
     // Line limit first (cheaper check)
     let lines: Vec<&str> = output.lines().collect();
@@ -181,7 +183,7 @@ const BINARY_SIGNATURES: &[(&[u8], &str)] = &[
 /// Check if file content appears to be binary.
 ///
 /// Uses magic byte detection and NUL-byte heuristic (first 8KB).
-#[must_use] 
+#[must_use]
 pub fn is_binary_content(data: &[u8]) -> bool {
     // Check magic bytes
     for (sig, _) in BINARY_SIGNATURES {
@@ -196,7 +198,7 @@ pub fn is_binary_content(data: &[u8]) -> bool {
 }
 
 /// Get a human-readable description of a binary file.
-#[must_use] 
+#[must_use]
 pub fn binary_file_type(data: &[u8]) -> &'static str {
     for (sig, name) in BINARY_SIGNATURES {
         if data.len() >= sig.len() && &data[..sig.len()] == *sig {
@@ -207,22 +209,67 @@ pub fn binary_file_type(data: &[u8]) -> &'static str {
 }
 
 /// Check if a file extension suggests a binary file.
-#[must_use] 
+#[must_use]
 pub fn is_binary_extension(path: &Path) -> bool {
-    let ext = path.extension()
+    let ext = path
+        .extension()
         .and_then(|e| e.to_str())
         .map(str::to_lowercase);
 
-    matches!(ext.as_deref(), Some(
-        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico" | "webp" | "svg" |
-        "mp3" | "mp4" | "wav" | "avi" | "mov" | "mkv" | "flac" | "ogg" |
-        "zip" | "tar" | "gz" | "bz2" | "xz" | "7z" | "rar" |
-        "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" |
-        "exe" | "dll" | "so" | "dylib" | "o" | "a" | "lib" |
-        "wasm" | "class" | "pyc" | "pyo" |
-        "sqlite" | "db" | "sqlite3" |
-        "ttf" | "otf" | "woff" | "woff2" | "eot"
-    ))
+    matches!(
+        ext.as_deref(),
+        Some(
+            "png"
+                | "jpg"
+                | "jpeg"
+                | "gif"
+                | "bmp"
+                | "ico"
+                | "webp"
+                | "svg"
+                | "mp3"
+                | "mp4"
+                | "wav"
+                | "avi"
+                | "mov"
+                | "mkv"
+                | "flac"
+                | "ogg"
+                | "zip"
+                | "tar"
+                | "gz"
+                | "bz2"
+                | "xz"
+                | "7z"
+                | "rar"
+                | "pdf"
+                | "doc"
+                | "docx"
+                | "xls"
+                | "xlsx"
+                | "ppt"
+                | "pptx"
+                | "exe"
+                | "dll"
+                | "so"
+                | "dylib"
+                | "o"
+                | "a"
+                | "lib"
+                | "wasm"
+                | "class"
+                | "pyc"
+                | "pyo"
+                | "sqlite"
+                | "db"
+                | "sqlite3"
+                | "ttf"
+                | "otf"
+                | "woff"
+                | "woff2"
+                | "eot"
+        )
+    )
 }
 
 // ── Symlink safety ──────────────────────────────────────────────────────────
@@ -337,7 +384,9 @@ mod tests {
 
     #[test]
     fn truncate_exact_limit_not_truncated() {
-        let lines: String = (0..MAX_TOOL_OUTPUT_LINES).map(|i| format!("{i}\n")).collect();
+        let lines: String = (0..MAX_TOOL_OUTPUT_LINES)
+            .map(|i| format!("{i}\n"))
+            .collect();
         if lines.len() <= MAX_TOOL_OUTPUT_SIZE {
             let result = truncate_tool_output(&lines);
             assert!(!result.contains("truncated"));

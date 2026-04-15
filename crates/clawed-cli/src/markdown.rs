@@ -177,7 +177,10 @@ impl MarkdownRenderer {
         }
 
         // === Task lists: - [ ] or - [x] ===
-        if let Some(rest) = line.strip_prefix("- [x] ").or_else(|| line.strip_prefix("- [X] ")) {
+        if let Some(rest) = line
+            .strip_prefix("- [x] ")
+            .or_else(|| line.strip_prefix("- [X] "))
+        {
             print!("\x1b[32m☑\x1b[0m ");
             render_inline(rest);
             println!();
@@ -259,20 +262,17 @@ impl MarkdownRenderer {
         };
 
         // Parse all cells
-        let header_cells: Vec<Vec<String>> = header_lines
-            .iter()
-            .map(|l| parse_cells(l))
-            .collect();
-        let data_cells: Vec<Vec<String>> = data_lines
-            .iter()
-            .map(|l| parse_cells(l))
-            .collect();
+        let header_cells: Vec<Vec<String>> = header_lines.iter().map(|l| parse_cells(l)).collect();
+        let data_cells: Vec<Vec<String>> = data_lines.iter().map(|l| parse_cells(l)).collect();
 
         // Determine number of columns
         let num_cols = alignments.len().max(
-            header_cells.iter().map(|r| r.len()).max().unwrap_or(0).max(
-                data_cells.iter().map(|r| r.len()).max().unwrap_or(0),
-            ),
+            header_cells
+                .iter()
+                .map(|r| r.len())
+                .max()
+                .unwrap_or(0)
+                .max(data_cells.iter().map(|r| r.len()).max().unwrap_or(0)),
         );
 
         if num_cols == 0 {
@@ -416,7 +416,10 @@ fn is_table_separator(line: &str) -> bool {
 
 /// Parse column alignments from separator row.
 fn parse_alignments(sep_line: &str) -> Vec<Align> {
-    let inner = sep_line.trim().trim_start_matches('|').trim_end_matches('|');
+    let inner = sep_line
+        .trim()
+        .trim_start_matches('|')
+        .trim_end_matches('|');
     inner
         .split('|')
         .map(|cell| {
@@ -446,7 +449,9 @@ fn display_width(s: &str) -> usize {
 
 /// Get terminal width (fallback to 80).
 fn terminal_width() -> usize {
-    crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(80)
+    crossterm::terminal::size()
+        .map(|(w, _)| w as usize)
+        .unwrap_or(80)
 }
 
 /// Render a table border line: e.g., ┌───┬───┐

@@ -3,16 +3,15 @@
 pub mod auto_classifier;
 pub mod bus_prompter;
 pub mod helpers;
-pub mod tui;
 #[cfg(test)]
 mod tests;
+pub mod tui;
 
-use clawed_core::permissions::{
-    DenialState, PermissionBehavior, PermissionDestination,
-    PermissionMode, PermissionResponse, PermissionResult, PermissionRule,
-    PermissionSuggestion, is_safe_auto_tool,
-};
 use clawed_core::bash_classifier;
+use clawed_core::permissions::{
+    is_safe_auto_tool, DenialState, PermissionBehavior, PermissionDestination, PermissionMode,
+    PermissionResponse, PermissionResult, PermissionRule, PermissionSuggestion,
+};
 use clawed_core::tool::{Tool, ToolCategory};
 use serde_json::Value;
 use std::sync::Arc;
@@ -116,7 +115,12 @@ impl PermissionChecker {
         }
     }
 
-    pub async fn check(&self, tool: &dyn Tool, input: &Value, runtime_mode: Option<PermissionMode>) -> PermissionResult {
+    pub async fn check(
+        &self,
+        tool: &dyn Tool,
+        input: &Value,
+        runtime_mode: Option<PermissionMode>,
+    ) -> PermissionResult {
         let mode = runtime_mode.unwrap_or(self.mode);
         if mode == PermissionMode::BypassAll || mode == PermissionMode::DontAsk {
             return PermissionResult::allow();
@@ -169,16 +173,12 @@ impl PermissionChecker {
         }
 
         // AcceptEdits mode: auto-allow filesystem edit tools by category
-        if mode == PermissionMode::AcceptEdits
-            && tool.category() == ToolCategory::FileSystem
-        {
+        if mode == PermissionMode::AcceptEdits && tool.category() == ToolCategory::FileSystem {
             return PermissionResult::allow();
         }
 
         // AcceptEdits mode: auto-approve safe shell commands via risk classifier
-        if mode == PermissionMode::AcceptEdits
-            && tool.category() == ToolCategory::Shell
-        {
+        if mode == PermissionMode::AcceptEdits && tool.category() == ToolCategory::Shell {
             if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
                 let classification = bash_classifier::classify(cmd);
                 if classification.risk.auto_approvable() {
@@ -192,7 +192,12 @@ impl PermissionChecker {
         let prompt_msg = if tool.category() == ToolCategory::Shell {
             if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
                 let classification = bash_classifier::classify(cmd);
-                format!("Allow {} ({})? [risk: {}]", tool.name(), cmd, classification.risk.label())
+                format!(
+                    "Allow {} ({})? [risk: {}]",
+                    tool.name(),
+                    cmd,
+                    classification.risk.label()
+                )
             } else {
                 format!("Allow {} ?", tool.name())
             }
@@ -215,7 +220,10 @@ impl PermissionChecker {
             if state.should_fallback() {
                 let suggestions = build_permission_suggestions(tool, input);
                 return PermissionResult::ask_with_suggestions(
-                    format!("Auto-mode fallback: too many denials. Allow {}?", tool.name()),
+                    format!(
+                        "Auto-mode fallback: too many denials. Allow {}?",
+                        tool.name()
+                    ),
                     suggestions,
                 );
             }
@@ -243,7 +251,8 @@ impl PermissionChecker {
                     self.record_denial();
                     return PermissionResult::deny(format!(
                         "Auto-mode blocked: {} (risk: {})",
-                        cmd, classification.risk.label()
+                        cmd,
+                        classification.risk.label()
                     ));
                 }
                 // Medium-risk (Network) — could go to classifier, for now prompt
@@ -260,21 +269,21 @@ impl PermissionChecker {
         // Stage 5: Remote classifier side-query
         if let Some(ref client) = self.classifier_client {
             let classifier_input = tool.to_auto_classifier_input(input);
-            let recent = self.recent_tools.lock()
+            let recent = self
+                .recent_tools
+                .lock()
                 .map(|h| h.clone())
                 .unwrap_or_default();
 
-            match auto_classifier::classify(
-                client,
-                &recent,
-                tool.name(),
-                &classifier_input,
-                None,
-            ).await {
+            match auto_classifier::classify(client, &recent, tool.name(), &classifier_input, None)
+                .await
+            {
                 Ok(Some(decision)) => {
                     if decision.should_block {
                         self.record_denial();
-                        let reason = decision.reason.unwrap_or_else(|| "Classifier blocked".into());
+                        let reason = decision
+                            .reason
+                            .unwrap_or_else(|| "Classifier blocked".into());
                         return PermissionResult::deny(format!(
                             "Auto-mode classifier (S{}): {}",
                             decision.stage, reason
@@ -286,7 +295,9 @@ impl PermissionChecker {
                 }
                 Ok(None) => {
                     // Unparseable response — fall through to interactive
-                    tracing::warn!("Auto-classifier returned unparseable response, falling through");
+                    tracing::warn!(
+                        "Auto-classifier returned unparseable response, falling through"
+                    );
                 }
                 Err(e) => {
                     // API error — fall through to interactive
@@ -300,7 +311,12 @@ impl PermissionChecker {
         let prompt_msg = if tool.category() == ToolCategory::Shell {
             if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
                 let classification = bash_classifier::classify(cmd);
-                format!("Auto-mode: Allow {} ({})? [risk: {}]", tool.name(), cmd, classification.risk.label())
+                format!(
+                    "Auto-mode: Allow {} ({})? [risk: {}]",
+                    tool.name(),
+                    cmd,
+                    classification.risk.label()
+                )
             } else {
                 format!("Auto-mode: Allow {}?", tool.name())
             }
@@ -326,7 +342,10 @@ impl PermissionChecker {
 
     /// Get the current denial state (for testing/diagnostics).
     pub fn denial_state(&self) -> DenialState {
-        self.denial_state.lock().map(|s| s.clone()).unwrap_or_default()
+        self.denial_state
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default()
     }
 
     /// Interactive terminal permission prompt with arrow-key navigation.
@@ -404,7 +423,10 @@ impl PermissionChecker {
                     pattern: None,
                     behavior: PermissionBehavior::Allow,
                 };
-                match response.destination.unwrap_or(PermissionDestination::Session) {
+                match response
+                    .destination
+                    .unwrap_or(PermissionDestination::Session)
+                {
                     PermissionDestination::Session => {
                         self.session_allow(tool_name);
                     }

@@ -11,7 +11,9 @@ pub(crate) fn handle_memory_command_str(sub: &str, cwd: &std::path::Path) -> Str
             } else {
                 let mut out = format!("Memory files ({}):", files.len());
                 for f in &files {
-                    let type_tag = f.memory_type.as_ref()
+                    let type_tag = f
+                        .memory_type
+                        .as_ref()
                         .map(|t| format!("[{}] ", t.as_str()))
                         .unwrap_or_default();
                     let desc = f.description.as_deref().unwrap_or("");
@@ -26,8 +28,13 @@ pub(crate) fn handle_memory_command_str(sub: &str, cwd: &std::path::Path) -> Str
                 return "Usage: /memory open <filename>".to_string();
             }
             // Validate: reject path traversal attempts
-            if rel_path.contains("..") || rel_path.starts_with('/') || rel_path.starts_with('\\') || rel_path.contains(':') {
-                return "Invalid filename: must be a simple name without path separators or '..'".to_string();
+            if rel_path.contains("..")
+                || rel_path.starts_with('/')
+                || rel_path.starts_with('\\')
+                || rel_path.contains(':')
+            {
+                return "Invalid filename: must be a simple name without path separators or '..'"
+                    .to_string();
             }
             // Try to find the file in memory dirs
             let mem_dirs = clawed_core::memory::memory_dirs(cwd);
@@ -45,7 +52,10 @@ pub(crate) fn handle_memory_command_str(sub: &str, cwd: &std::path::Path) -> Str
                     return format!("Opened {} in {}", rel_path, editor);
                 }
             }
-            format!("Memory file '{}' not found in any memory directory.", rel_path)
+            format!(
+                "Memory file '{}' not found in any memory directory.",
+                rel_path
+            )
         }
         "add" => {
             let content = parts.get(1).copied().unwrap_or("").trim();
@@ -58,7 +68,8 @@ pub(crate) fn handle_memory_command_str(sub: &str, cwd: &std::path::Path) -> Str
                 return format!("Failed to create memory dir: {e}");
             }
             // Auto-generate filename from content prefix
-            let slug: String = content.chars()
+            let slug: String = content
+                .chars()
                 .take(40)
                 .filter(|c| c.is_alphanumeric() || *c == ' ')
                 .collect::<String>()
@@ -73,7 +84,10 @@ pub(crate) fn handle_memory_command_str(sub: &str, cwd: &std::path::Path) -> Str
             }
         }
         other => {
-            format!("Unknown memory subcommand: '{}'. Use list, open <file>, or add <content>.", other)
+            format!(
+                "Unknown memory subcommand: '{}'. Use list, open <file>, or add <content>.",
+                other
+            )
         }
     }
 }

@@ -2,8 +2,8 @@ use crate::theme;
 use clawed_agent::cost::CostTracker;
 use clawed_agent::query::AgentEvent;
 use clawed_core::tool::AbortSignal;
-use tokio_stream::StreamExt;
 use std::io::Write as _;
+use tokio_stream::StreamExt;
 
 use super::helpers::*;
 
@@ -85,15 +85,21 @@ pub async fn print_stream(
                 if let Some(ts) = tool_spinner.take() {
                     ts.stop();
                 }
-                let elapsed = tool_start_time
-                    .map(|t| t.elapsed())
-                    .unwrap_or_default();
+                let elapsed = tool_start_time.map(|t| t.elapsed()).unwrap_or_default();
                 tool_start_time = None;
 
                 if is_error {
-                    eprintln!("{}  ✗ failed\x1b[0m \x1b[36m({:.1}s)\x1b[0m", theme::c_err(), elapsed.as_secs_f64());
+                    eprintln!(
+                        "{}  ✗ failed\x1b[0m \x1b[36m({:.1}s)\x1b[0m",
+                        theme::c_err(),
+                        elapsed.as_secs_f64()
+                    );
                 } else {
-                    eprintln!("{}  ✓ done\x1b[0m \x1b[36m({:.1}s)\x1b[0m", theme::c_ok(), elapsed.as_secs_f64());
+                    eprintln!(
+                        "{}  ✓ done\x1b[0m \x1b[36m({:.1}s)\x1b[0m",
+                        theme::c_ok(),
+                        elapsed.as_secs_f64()
+                    );
                 }
                 if let Some(ref result_text) = text {
                     if let Some(inline) = format_tool_result_inline(&last_tool_name, result_text) {
@@ -145,26 +151,36 @@ pub async fn print_stream(
             AgentEvent::MaxTurns { limit } => {
                 eprintln!("{}Max turns ({}) reached\x1b[0m", theme::c_warn(), limit);
             }
-            AgentEvent::TurnTokens { input_tokens, output_tokens } => {
+            AgentEvent::TurnTokens {
+                input_tokens,
+                output_tokens,
+            } => {
                 tracing::debug!("Turn tokens: in={}, out={}", input_tokens, output_tokens);
             }
             AgentEvent::ContextWarning { usage_pct, message } => {
-                eprintln!("{}⚠ Context {:.0}%: {}\x1b[0m", theme::c_warn(), usage_pct * 100.0, message);
+                eprintln!(
+                    "{}⚠ Context {:.0}%: {}\x1b[0m",
+                    theme::c_warn(),
+                    usage_pct * 100.0,
+                    message
+                );
             }
             AgentEvent::CompactStart => {
                 eprintln!("{}🗜 Compacting conversation...\x1b[0m", theme::c_tool());
             }
             AgentEvent::CompactComplete { summary_len } => {
-                eprintln!("{}✓ Compacted ({} chars)\x1b[0m", theme::c_tool(), summary_len);
+                eprintln!(
+                    "{}✓ Compacted ({} chars)\x1b[0m",
+                    theme::c_tool(),
+                    summary_len
+                );
             }
         }
     }
     md.finish();
     // Stop the raw-mode listener and collect any text the user typed while the
     // AI was responding. The caller can use this to pre-fill the next prompt.
-    let typeahead = stream_guard
-        .map(|g| g.stop_and_take())
-        .unwrap_or_default();
+    let typeahead = stream_guard.map(|g| g.stop_and_take()).unwrap_or_default();
     Ok(typeahead)
 }
 

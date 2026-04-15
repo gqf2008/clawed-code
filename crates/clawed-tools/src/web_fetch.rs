@@ -10,18 +10,28 @@ fn validate_url(url: &str) -> Result<(), String> {
     // Only allow http and https schemes
     let lower = url.to_lowercase();
     if !lower.starts_with("http://") && !lower.starts_with("https://") {
-        return Err(format!("Blocked URL scheme — only http:// and https:// are allowed: {url}"));
+        return Err(format!(
+            "Blocked URL scheme — only http:// and https:// are allowed: {url}"
+        ));
     }
 
     // Extract host from URL: scheme://[user@]host[:port]/path
-    let after_scheme = if lower.starts_with("https://") { &url[8..] } else { &url[7..] };
+    let after_scheme = if lower.starts_with("https://") {
+        &url[8..]
+    } else {
+        &url[7..]
+    };
     let host_port = after_scheme.split('/').next().unwrap_or("");
     // Strip user@ if present
     let host_port = host_port.rsplit('@').next().unwrap_or(host_port);
     // Strip port
     let host = if host_port.starts_with('[') {
         // IPv6: [::1]:8080
-        host_port.trim_start_matches('[').split(']').next().unwrap_or("")
+        host_port
+            .trim_start_matches('[')
+            .split(']')
+            .next()
+            .unwrap_or("")
     } else {
         host_port.split(':').next().unwrap_or("")
     };
@@ -32,8 +42,13 @@ fn validate_url(url: &str) -> Result<(), String> {
 
     // Block localhost and common internal hostnames
     let host_lower = host.to_lowercase();
-    if host_lower == "localhost" || host_lower.ends_with(".local") || host_lower.ends_with(".internal") {
-        return Err(format!("Blocked URL — cannot fetch localhost/internal hosts: {host}"));
+    if host_lower == "localhost"
+        || host_lower.ends_with(".local")
+        || host_lower.ends_with(".internal")
+    {
+        return Err(format!(
+            "Blocked URL — cannot fetch localhost/internal hosts: {host}"
+        ));
     }
 
     // Block cloud metadata endpoints
@@ -59,7 +74,9 @@ fn validate_url(url: &str) -> Result<(), String> {
             }
         };
         if is_private {
-            return Err(format!("Blocked URL — cannot fetch private/internal IPs: {ip}"));
+            return Err(format!(
+                "Blocked URL — cannot fetch private/internal IPs: {ip}"
+            ));
         }
     }
 
@@ -88,8 +105,12 @@ fn html_to_markdown(html: &str) -> String {
 
                 // Skip script/style content
                 match tag_base {
-                    "script" | "style" | "noscript" => { skip_content = true; }
-                    "/script" | "/style" | "/noscript" => { skip_content = false; }
+                    "script" | "style" | "noscript" => {
+                        skip_content = true;
+                    }
+                    "/script" | "/style" | "/noscript" => {
+                        skip_content = false;
+                    }
                     _ => {}
                 }
 
@@ -97,7 +118,9 @@ fn html_to_markdown(html: &str) -> String {
                     match tag_base {
                         "br" | "br/" => result.push('\n'),
                         "p" | "/p" | "div" | "/div" | "section" | "/section" => {
-                            if !result.ends_with('\n') { result.push('\n'); }
+                            if !result.ends_with('\n') {
+                                result.push('\n');
+                            }
                             result.push('\n');
                         }
                         "h1" => result.push_str("\n# "),
@@ -139,15 +162,21 @@ fn html_to_markdown(html: &str) -> String {
             }
             continue;
         }
-        if skip_content { continue; }
+        if skip_content {
+            continue;
+        }
 
         // Decode common HTML entities
         if ch == '&' {
             let mut entity = String::new();
             for next_ch in chars.by_ref() {
-                if next_ch == ';' { break; }
+                if next_ch == ';' {
+                    break;
+                }
                 entity.push(next_ch);
-                if entity.len() > 8 { break; }
+                if entity.len() > 8 {
+                    break;
+                }
             }
             match entity.as_str() {
                 "amp" => result.push('&'),
@@ -205,8 +234,12 @@ pub struct WebFetchTool;
 
 #[async_trait]
 impl Tool for WebFetchTool {
-    fn name(&self) -> &'static str { "WebFetch" }
-    fn category(&self) -> ToolCategory { ToolCategory::Web }
+    fn name(&self) -> &'static str {
+        "WebFetch"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Web
+    }
     fn description(&self) -> &'static str {
         "Fetch a URL and return its content. Converts HTML to readable markdown by default. \
          Set raw=true to get raw HTML. Set extract_main_content=true to extract the main \
@@ -238,10 +271,14 @@ impl Tool for WebFetchTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
-        let url = input["url"].as_str().ok_or_else(|| anyhow::anyhow!("Missing 'url'"))?;
+        let url = input["url"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'url'"))?;
 
         // SSRF protection: block private/internal networks and non-HTTP schemes
         if let Err(msg) = validate_url(url) {
@@ -262,9 +299,16 @@ impl Tool for WebFetchTool {
 
         // Custom headers (with blocklist for security-sensitive headers)
         const BLOCKED_HEADERS: &[&str] = &[
-            "host", "authorization", "cookie", "set-cookie",
-            "proxy-authorization", "x-forwarded-for", "x-real-ip",
-            "transfer-encoding", "content-length", "connection",
+            "host",
+            "authorization",
+            "cookie",
+            "set-cookie",
+            "proxy-authorization",
+            "x-forwarded-for",
+            "x-real-ip",
+            "transfer-encoding",
+            "content-length",
+            "connection",
         ];
         if let Some(headers) = input["headers"].as_object() {
             for (k, v) in headers {
@@ -280,7 +324,8 @@ impl Tool for WebFetchTool {
 
         let resp = req.send().await?;
         let status = resp.status();
-        let content_type = resp.headers()
+        let content_type = resp
+            .headers()
             .get("content-type")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
@@ -302,7 +347,12 @@ impl Tool for WebFetchTool {
         // Truncate
         let truncated = if processed.chars().count() > max_len {
             let s: String = processed.chars().take(max_len).collect();
-            format!("{}...\n[Truncated at {}/{} chars]", s, max_len, processed.chars().count())
+            format!(
+                "{}...\n[Truncated at {}/{} chars]",
+                s,
+                max_len,
+                processed.chars().count()
+            )
         } else {
             processed
         };

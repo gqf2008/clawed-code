@@ -4,7 +4,7 @@
 //! for parsing and `syntect` for code block syntax highlighting.
 
 use super::MUTED;
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd, CodeBlockKind};
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -31,8 +31,7 @@ impl SyntaxResources {
 }
 
 /// Style stack entry for nested markdown formatting.
-#[derive(Clone, Copy)]
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct StyleState {
     bold: bool,
     italic: bool,
@@ -48,9 +47,7 @@ impl StyleState {
         let mut style = Style::default();
 
         if self.heading_level > 0 {
-            style = style
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD);
+            style = style.fg(Color::Cyan).add_modifier(Modifier::BOLD);
         }
 
         if self.bold {
@@ -77,9 +74,8 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
         return text.lines().map(|l| Line::from(l.to_string())).collect();
     }
 
-    let options = Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TABLES
-        | Options::ENABLE_TASKLISTS;
+    let options =
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
     let parser = Parser::new_ext(text, options);
 
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -106,14 +102,16 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     // Use a visual bar prefix scaled by heading level instead
                     // of echoing the raw '#' characters.
                     let prefix = match level as u8 {
-                        1 => "\u{2588} ",  // █ (full block)
-                        2 => "\u{2593} ",  // ▓
-                        3 => "\u{2592} ",  // ▒
-                        _ => "\u{2591} ",  // ░
+                        1 => "\u{2588} ", // █ (full block)
+                        2 => "\u{2593} ", // ▓
+                        3 => "\u{2592} ", // ▒
+                        _ => "\u{2591} ", // ░
                     };
                     current_spans.push(Span::styled(
                         prefix,
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
                     ));
                 }
                 Tag::Paragraph => {}
@@ -322,7 +320,9 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
     flush_line(&mut lines, &mut current_spans);
 
     // Remove trailing empty lines
-    while lines.last().is_some_and(|l| l.spans.is_empty() || (l.spans.len() == 1 && l.spans[0].content.is_empty())) {
+    while lines.last().is_some_and(|l| {
+        l.spans.is_empty() || (l.spans.len() == 1 && l.spans[0].content.is_empty())
+    }) {
         lines.pop();
     }
 
@@ -349,10 +349,7 @@ fn render_code_block(lang: &str, code: &str, lines: &mut Vec<Line<'static>>) {
             format!("\u{250C}\u{2500}\u{2500} {lang_display} "),
             Style::default().fg(MUTED),
         ),
-        Span::styled(
-            "\u{2500}".repeat(20),
-            Style::default().fg(MUTED),
-        ),
+        Span::styled("\u{2500}".repeat(20), Style::default().fg(MUTED)),
     ]));
 
     // Try to highlight with syntect
@@ -373,9 +370,8 @@ fn render_code_block(lang: &str, code: &str, lines: &mut Vec<Line<'static>>) {
             if let Ok(ranges) = highlighter.highlight_line(&line_with_nl, &res.syntax_set) {
                 // The │ prefix is a single leading span; each subsequent span
                 // is a highlighted token WITHOUT its own prefix.
-                let mut line_spans: Vec<Span<'static>> = vec![
-                    Span::styled("\u{2502} ", Style::default().fg(MUTED)),
-                ];
+                let mut line_spans: Vec<Span<'static>> =
+                    vec![Span::styled("\u{2502} ", Style::default().fg(MUTED))];
                 line_spans.extend(ranges.into_iter().filter_map(|(hl_style, text)| {
                     let t = text.trim_end_matches('\n');
                     if t.is_empty() {
@@ -433,7 +429,8 @@ fn likely_markdown(text: &str) -> bool {
     if sample.contains("**")
         || sample.contains('`')
         || sample.contains("~~")
-        || sample.contains("](")  // link [text](url) — not bare [
+        || sample.contains("](")
+    // link [text](url) — not bare [
     {
         return true;
     }
@@ -497,7 +494,10 @@ mod tests {
         assert!(!lines.is_empty());
         // First span is the visual block prefix (no raw '#' characters)
         let heading = &lines[0];
-        assert!(!heading.spans[0].content.contains('#'), "heading should not echo '#' characters");
+        assert!(
+            !heading.spans[0].content.contains('#'),
+            "heading should not echo '#' characters"
+        );
         assert!(heading.spans[0].style.fg == Some(Color::Cyan));
     }
 
@@ -537,9 +537,9 @@ mod tests {
     fn horizontal_rule() {
         let md = "above\n\n---\n\nbelow";
         let lines = render_markdown(md);
-        let rule_line = lines.iter().find(|l| {
-            l.spans.iter().any(|s| s.content.contains('\u{2500}'))
-        });
+        let rule_line = lines
+            .iter()
+            .find(|l| l.spans.iter().any(|s| s.content.contains('\u{2500}')));
         assert!(rule_line.is_some());
     }
 
@@ -571,9 +571,9 @@ mod tests {
         // At minimum: header (1), separator line (1), 2 data rows (2) = 4 lines.
         assert!(lines.len() >= 4, "expected ≥4 lines, got {}", lines.len());
         // The cell separator │ must appear in at least one line.
-        let has_pipe = lines.iter().any(|l| {
-            l.spans.iter().any(|s| s.content.contains('│'))
-        });
+        let has_pipe = lines
+            .iter()
+            .any(|l| l.spans.iter().any(|s| s.content.contains('│')));
         assert!(has_pipe, "table cells should be separated by │");
     }
 
@@ -586,6 +586,9 @@ mod tests {
             let text: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
             text.contains("Section") && !text.contains("│")
         });
-        assert!(has_heading_line, "heading should be on a separate line from table");
+        assert!(
+            has_heading_line,
+            "heading should be on a separate line from table"
+        );
     }
 }

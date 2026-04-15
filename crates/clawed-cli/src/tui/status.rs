@@ -70,8 +70,7 @@ pub fn build_spans(state: &TuiStatusState) -> Vec<Span<'static>> {
     let mins = elapsed.as_secs() / 60;
     let secs = elapsed.as_secs() % 60;
 
-    let mut spans: Vec<Span<'static>> =
-        vec![Span::styled(format!("{mins:02}:{secs:02}"), dim)];
+    let mut spans: Vec<Span<'static>> = vec![Span::styled(format!("{mins:02}:{secs:02}"), dim)];
 
     // Show spinner whenever generating — label changes based on phase:
     //   "thinking"   — extended thinking or between submit and first TextDelta
@@ -116,7 +115,10 @@ pub fn build_spans(state: &TuiStatusState) -> Vec<Span<'static>> {
     if state.active_shells > 0 {
         let s = if state.active_shells == 1 { "" } else { "s" };
         spans.push(Span::raw("  "));
-        spans.push(Span::styled(format!("{} shell{s}", state.active_shells), tool_style));
+        spans.push(Span::styled(
+            format!("{} shell{s}", state.active_shells),
+            tool_style,
+        ));
     }
 
     let agent_count = state.active_agents.len();

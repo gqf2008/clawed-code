@@ -16,7 +16,6 @@ use serde_json::Value;
 #[serde(tag = "type")]
 pub enum AgentNotification {
     // ── Streaming content ──
-
     /// Incremental text from the assistant response.
     TextDelta { text: String },
 
@@ -24,12 +23,8 @@ pub enum AgentNotification {
     ThinkingDelta { text: String },
 
     // ── Tool lifecycle ──
-
     /// A tool invocation has started (input may still be streaming).
-    ToolUseStart {
-        id: String,
-        tool_name: String,
-    },
+    ToolUseStart { id: String, tool_name: String },
 
     /// Tool input is fully available.
     ToolUseReady {
@@ -48,7 +43,6 @@ pub enum AgentNotification {
     },
 
     // ── Turn lifecycle ──
-
     /// A new turn is starting (one API request-response cycle).
     TurnStart { turn: u32 },
 
@@ -60,18 +54,11 @@ pub enum AgentNotification {
     },
 
     /// The complete assistant message for this turn (for logging/display).
-    AssistantMessage {
-        turn: u32,
-        text_blocks: Vec<String>,
-    },
+    AssistantMessage { turn: u32, text_blocks: Vec<String> },
 
     // ── Session lifecycle ──
-
     /// Session has been initialized.
-    SessionStart {
-        session_id: String,
-        model: String,
-    },
+    SessionStart { session_id: String, model: String },
 
     /// Session is ending (user exit, error, etc.).
     SessionEnd { reason: String },
@@ -93,13 +80,9 @@ pub enum AgentNotification {
     HistoryCleared,
 
     /// Model was changed (response to `SetModel` request).
-    ModelChanged {
-        model: String,
-        display_name: String,
-    },
+    ModelChanged { model: String, display_name: String },
 
     // ── Context management ──
-
     /// Context usage is getting high.
     ContextWarning { usage_pct: f64, message: String },
 
@@ -110,7 +93,6 @@ pub enum AgentNotification {
     CompactComplete { summary_len: usize },
 
     // ── Sub-agent lifecycle ──
-
     /// A sub-agent has been spawned.
     AgentSpawned {
         agent_id: String,
@@ -120,10 +102,7 @@ pub enum AgentNotification {
     },
 
     /// Progress update from a background sub-agent.
-    AgentProgress {
-        agent_id: String,
-        text: String,
-    },
+    AgentProgress { agent_id: String, text: String },
 
     /// Sub-agent has completed.
     AgentComplete {
@@ -133,7 +112,6 @@ pub enum AgentNotification {
     },
 
     // ── MCP lifecycle ──
-
     /// An MCP server connected successfully.
     McpServerConnected { name: String, tool_count: usize },
 
@@ -147,12 +125,10 @@ pub enum AgentNotification {
     McpServerList { servers: Vec<McpServerInfo> },
 
     // ── Memory ──
-
     /// Memory facts extracted from the conversation.
     MemoryExtracted { facts: Vec<String> },
 
     // ── Query responses ──
-
     /// Response to `ListModels` request.
     ModelList { models: Vec<ModelInfo> },
 
@@ -160,16 +136,12 @@ pub enum AgentNotification {
     ToolList { tools: Vec<ToolInfo> },
 
     /// Response to `SetThinking` — confirms thinking mode change.
-    ThinkingChanged {
-        enabled: bool,
-        budget: Option<u32>,
-    },
+    ThinkingChanged { enabled: bool, budget: Option<u32> },
 
     /// Response to `BreakCache` — confirms cache will be skipped.
     CacheBreakSet,
 
     // ── Swarm lifecycle ──
-
     /// A swarm team was created.
     SwarmTeamCreated {
         team_name: String,
@@ -187,10 +159,7 @@ pub enum AgentNotification {
     },
 
     /// A swarm agent was terminated.
-    SwarmAgentTerminated {
-        team_name: String,
-        agent_id: String,
-    },
+    SwarmAgentTerminated { team_name: String, agent_id: String },
 
     /// A swarm agent started processing a query.
     SwarmAgentQuery {
@@ -208,13 +177,9 @@ pub enum AgentNotification {
     },
 
     // ── Extended lifecycle ──
-
     /// A sub-agent was explicitly terminated (abort, TaskStop, user cancel).
     /// Distinct from `AgentComplete` which signals normal completion.
-    AgentTerminated {
-        agent_id: String,
-        reason: String,
-    },
+    AgentTerminated { agent_id: String, reason: String },
 
     /// The model has selected a tool for invocation (pre-execution signal).
     /// Fires before `ToolUseStart`; useful for permission checks / logging.
@@ -227,7 +192,6 @@ pub enum AgentNotification {
     },
 
     // ── Errors ──
-
     /// A non-fatal error occurred.
     Error { code: ErrorCode, message: String },
 }
@@ -261,9 +225,7 @@ pub enum AgentRequest {
     },
 
     /// Trigger manual compaction.
-    Compact {
-        instructions: Option<String>,
-    },
+    Compact { instructions: Option<String> },
 
     /// Switch the active model.
     SetModel { model: String },
@@ -272,16 +234,12 @@ pub enum AgentRequest {
     SlashCommand { command: String },
 
     /// Send a follow-up message to a background sub-agent.
-    SendAgentMessage {
-        agent_id: String,
-        message: String,
-    },
+    SendAgentMessage { agent_id: String, message: String },
 
     /// Cancel/stop a background sub-agent.
     StopAgent { agent_id: String },
 
     // ── MCP management ──
-
     /// Connect to an MCP server.
     McpConnect {
         name: String,
@@ -463,7 +421,9 @@ mod tests {
     #[test]
     fn notification_serialization_roundtrip() {
         let events = vec![
-            AgentNotification::TextDelta { text: "Hello".into() },
+            AgentNotification::TextDelta {
+                text: "Hello".into(),
+            },
             AgentNotification::ToolUseStart {
                 id: "tu_1".into(),
                 tool_name: "FileRead".into(),
@@ -586,13 +546,19 @@ mod tests {
                 granted: true,
                 remember: false,
             },
-            AgentRequest::SetModel { model: "opus".into() },
-            AgentRequest::SlashCommand { command: "/help".into() },
+            AgentRequest::SetModel {
+                model: "opus".into(),
+            },
+            AgentRequest::SlashCommand {
+                command: "/help".into(),
+            },
             AgentRequest::SendAgentMessage {
                 agent_id: "agent-1".into(),
                 message: "focus on tests".into(),
             },
-            AgentRequest::StopAgent { agent_id: "agent-1".into() },
+            AgentRequest::StopAgent {
+                agent_id: "agent-1".into(),
+            },
             AgentRequest::McpConnect {
                 name: "fs".into(),
                 command: "npx".into(),
@@ -603,7 +569,9 @@ mod tests {
             AgentRequest::McpListServers,
             AgentRequest::Shutdown,
             AgentRequest::ClearHistory,
-            AgentRequest::LoadSession { session_id: "sess_123".into() },
+            AgentRequest::LoadSession {
+                session_id: "sess_123".into(),
+            },
             AgentRequest::ListModels,
             AgentRequest::ListTools,
         ];
@@ -665,16 +633,22 @@ mod tests {
         let json = serde_json::to_string(&n).unwrap();
         assert!(json.contains("AgentTerminated"));
         let back: AgentNotification = serde_json::from_str(&json).unwrap();
-        assert!(matches!(back, AgentNotification::AgentTerminated { ref agent_id, .. } if agent_id == "task-42"));
+        assert!(
+            matches!(back, AgentNotification::AgentTerminated { ref agent_id, .. } if agent_id == "task-42")
+        );
     }
 
     #[test]
     fn serde_tool_selected() {
-        let n = AgentNotification::ToolSelected { tool_name: "BashTool".into() };
+        let n = AgentNotification::ToolSelected {
+            tool_name: "BashTool".into(),
+        };
         let json = serde_json::to_string(&n).unwrap();
         assert!(json.contains("ToolSelected"));
         let back: AgentNotification = serde_json::from_str(&json).unwrap();
-        assert!(matches!(back, AgentNotification::ToolSelected { ref tool_name } if tool_name == "BashTool"));
+        assert!(
+            matches!(back, AgentNotification::ToolSelected { ref tool_name } if tool_name == "BashTool")
+        );
     }
 
     #[test]

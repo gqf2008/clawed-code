@@ -12,8 +12,12 @@ pub struct ToolSearchTool;
 
 #[async_trait]
 impl Tool for ToolSearchTool {
-    fn name(&self) -> &'static str { "ToolSearch" }
-    fn category(&self) -> ToolCategory { ToolCategory::Code }
+    fn name(&self) -> &'static str {
+        "ToolSearch"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Code
+    }
 
     fn description(&self) -> &'static str {
         "Search for available tools by keyword. Use this when you're unsure which \
@@ -33,7 +37,9 @@ impl Tool for ToolSearchTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         let query = input["query"]
@@ -49,8 +55,7 @@ impl Tool for ToolSearchTool {
         let matches: Vec<(&str, &str)> = all_tools
             .iter()
             .filter(|(name, desc)| {
-                name.to_lowercase().contains(&query)
-                    || desc.to_lowercase().contains(&query)
+                name.to_lowercase().contains(&query) || desc.to_lowercase().contains(&query)
             })
             .copied()
             .collect();
@@ -76,7 +81,10 @@ fn built_in_tool_catalog() -> Vec<(&'static str, &'static str)> {
         ("Read", "Read the contents of a file from disk"),
         ("Edit", "Make precise text replacements in a file"),
         ("Write", "Create a new file or overwrite an existing file"),
-        ("MultiEdit", "Apply multiple edits to the same file atomically"),
+        (
+            "MultiEdit",
+            "Apply multiple edits to the same file atomically",
+        ),
         ("Glob", "Find files matching a glob pattern"),
         ("Grep", "Search file contents using regex patterns"),
         ("LS", "List directory contents"),
@@ -96,7 +104,10 @@ fn built_in_tool_catalog() -> Vec<(&'static str, &'static str)> {
         ("Sleep", "Pause execution for a specified duration"),
         ("NotebookEdit", "Edit Jupyter notebook cells"),
         ("ToolSearch", "Search available tools by keyword"),
-        ("EnterPlanMode", "Enter plan mode for structured task planning"),
+        (
+            "EnterPlanMode",
+            "Enter plan mode for structured task planning",
+        ),
         ("ExitPlanMode", "Exit plan mode and begin execution"),
     ]
 }
@@ -104,8 +115,8 @@ fn built_in_tool_catalog() -> Vec<(&'static str, &'static str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clawed_core::tool::AbortSignal;
     use clawed_core::permissions::PermissionMode;
+    use clawed_core::tool::AbortSignal;
 
     fn ctx() -> ToolContext {
         ToolContext {
@@ -153,7 +164,10 @@ mod tests {
     #[tokio::test]
     async fn search_no_match() {
         let tool = ToolSearchTool;
-        let result = tool.call(json!({"query": "zznonexistent"}), &ctx()).await.unwrap();
+        let result = tool
+            .call(json!({"query": "zznonexistent"}), &ctx())
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result_text(&result).contains("No tools found"));
     }

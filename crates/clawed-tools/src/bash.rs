@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use clawed_core::tool::{Tool, ToolCategory, ToolContext, ToolResult};
 use serde_json::{json, Value};
-use tokio::process::Command;
 use std::collections::HashMap;
+use tokio::process::Command;
 
 /// Maximum output size in bytes before truncation.
 const MAX_OUTPUT_BYTES: usize = 100_000;
@@ -17,25 +17,60 @@ const DANGEROUS_PATTERNS: &[(&str, &str, bool)] = &[
     ("mkfs.", "Refusing to format filesystem", false),
     (":(){:|:&};:", "Refusing to execute fork bomb", false),
     ("dd if=/dev/", "Refusing to run raw disk operations", false),
-    ("chmod -R 777 /", "Refusing to change root permissions", true),
-    ("chown -R", "Be cautious with recursive ownership changes", false),
+    (
+        "chmod -R 777 /",
+        "Refusing to change root permissions",
+        true,
+    ),
+    (
+        "chown -R",
+        "Be cautious with recursive ownership changes",
+        false,
+    ),
 ];
 
 /// Git operations that should be blocked unless explicitly requested.
 const BLOCKED_GIT_PATTERNS: &[(&str, &str)] = &[
-    ("git push --force", "Force push blocked — use --force-with-lease if needed"),
-    ("git push -f ", "Force push blocked — use --force-with-lease if needed"),
-    ("git reset --hard", "Hard reset blocked — could lose uncommitted changes"),
-    ("git clean -f", "Clean forced blocked — could delete untracked files"),
-    ("git checkout -- .", "Mass checkout blocked — could discard all changes"),
-    ("--no-verify", "Skipping hooks is not allowed unless explicitly requested"),
-    ("--no-gpg-sign", "Skipping GPG signing is not allowed unless explicitly requested"),
-    ("git config ", "Modifying git config is not allowed unless explicitly requested"),
+    (
+        "git push --force",
+        "Force push blocked — use --force-with-lease if needed",
+    ),
+    (
+        "git push -f ",
+        "Force push blocked — use --force-with-lease if needed",
+    ),
+    (
+        "git reset --hard",
+        "Hard reset blocked — could lose uncommitted changes",
+    ),
+    (
+        "git clean -f",
+        "Clean forced blocked — could delete untracked files",
+    ),
+    (
+        "git checkout -- .",
+        "Mass checkout blocked — could discard all changes",
+    ),
+    (
+        "--no-verify",
+        "Skipping hooks is not allowed unless explicitly requested",
+    ),
+    (
+        "--no-gpg-sign",
+        "Skipping GPG signing is not allowed unless explicitly requested",
+    ),
+    (
+        "git config ",
+        "Modifying git config is not allowed unless explicitly requested",
+    ),
 ];
 
 /// Check if a byte is a shell command boundary character.
 fn is_command_boundary(b: u8) -> bool {
-    matches!(b, b' ' | b'\t' | b'\n' | b'\r' | b';' | b'|' | b'&' | b')' | b'>' | b'<')
+    matches!(
+        b,
+        b' ' | b'\t' | b'\n' | b'\r' | b';' | b'|' | b'&' | b')' | b'>' | b'<'
+    )
 }
 
 /// Check if a command matches any dangerous pattern.
@@ -79,7 +114,9 @@ pub(crate) fn truncate_output(output: String) -> String {
     let skipped = output.len() - MAX_OUTPUT_BYTES;
     format!(
         "{}\n\n... [truncated {} bytes] ...\n\n{}",
-        &output[..first_end], skipped, &output[last_start..]
+        &output[..first_end],
+        skipped,
+        &output[last_start..]
     )
 }
 
@@ -90,21 +127,77 @@ const SEARCH_COMMANDS: &[&str] = &["grep", "egrep", "fgrep", "rg", "ag", "ack", 
 
 /// Commands considered read-only (search or listing).
 const READ_ONLY_COMMANDS: &[&str] = &[
-    "cat", "head", "tail", "less", "more", "wc", "file", "stat", "du", "df",
-    "ls", "tree", "find", "which", "type", "whereis", "locate",
-    "grep", "egrep", "fgrep", "rg", "ag", "ack",
-    "git log", "git show", "git diff", "git status", "git branch",
-    "git stash list", "git remote", "git tag", "git rev-parse",
-    "echo", "printf", "date", "whoami", "hostname", "uname", "pwd", "env", "printenv",
+    "cat",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "wc",
+    "file",
+    "stat",
+    "du",
+    "df",
+    "ls",
+    "tree",
+    "find",
+    "which",
+    "type",
+    "whereis",
+    "locate",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "ag",
+    "ack",
+    "git log",
+    "git show",
+    "git diff",
+    "git status",
+    "git branch",
+    "git stash list",
+    "git remote",
+    "git tag",
+    "git rev-parse",
+    "echo",
+    "printf",
+    "date",
+    "whoami",
+    "hostname",
+    "uname",
+    "pwd",
+    "env",
+    "printenv",
 ];
 
 /// Commands that modify the filesystem or state.
 const WRITE_COMMANDS: &[&str] = &[
-    "rm", "mv", "cp", "mkdir", "touch", "chmod", "chown",
-    "git add", "git commit", "git push", "git merge", "git rebase",
-    "git checkout", "git switch", "git restore", "git reset",
-    "npm install", "pip install", "cargo install", "apt install", "brew install",
-    "make", "cmake", "cargo build", "npm run", "yarn",
+    "rm",
+    "mv",
+    "cp",
+    "mkdir",
+    "touch",
+    "chmod",
+    "chown",
+    "git add",
+    "git commit",
+    "git push",
+    "git merge",
+    "git rebase",
+    "git checkout",
+    "git switch",
+    "git restore",
+    "git reset",
+    "npm install",
+    "pip install",
+    "cargo install",
+    "apt install",
+    "brew install",
+    "make",
+    "cmake",
+    "cargo build",
+    "npm run",
+    "yarn",
 ];
 
 /// Classify what kind of command this is.
@@ -120,7 +213,8 @@ pub(crate) enum CommandType {
 fn extract_base_command(command: &str) -> &str {
     // Strip leading env vars, sudo, etc.
     let trimmed = command.trim();
-    let without_env = trimmed.trim_start_matches(' ')
+    let without_env = trimmed
+        .trim_start_matches(' ')
         .strip_prefix("sudo ")
         .unwrap_or(trimmed)
         .trim();
@@ -171,13 +265,19 @@ pub(crate) fn interpret_exit_code(command: &str, code: i32) -> (bool, Option<Str
 
     // Search commands: exit code 1 = no matches found (not an error)
     if cmd_type == CommandType::Search && code == 1 {
-        return (true, Some("No matches found (exit code 1 is normal for search commands)".to_string()));
+        return (
+            true,
+            Some("No matches found (exit code 1 is normal for search commands)".to_string()),
+        );
     }
 
     // diff: exit code 1 = differences found
     let base = extract_base_command(command).to_lowercase();
     if (base.starts_with("diff") || base.starts_with("git diff")) && code == 1 {
-        return (true, Some("Differences found (exit code 1 is normal for diff)".to_string()));
+        return (
+            true,
+            Some("Differences found (exit code 1 is normal for diff)".to_string()),
+        );
     }
 
     // test/[: exit code 1 = condition false
@@ -192,8 +292,12 @@ pub struct BashTool;
 
 #[async_trait]
 impl Tool for BashTool {
-    fn name(&self) -> &'static str { "Bash" }
-    fn category(&self) -> ToolCategory { ToolCategory::Shell }
+    fn name(&self) -> &'static str {
+        "Bash"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Shell
+    }
 
     fn description(&self) -> &'static str {
         "Execute a shell command in the working directory. Use for system commands, \
@@ -236,7 +340,9 @@ impl Tool for BashTool {
 
         // Security: check for dangerous patterns
         if let Some(reason) = check_dangerous(command) {
-            return Ok(ToolResult::error(format!("🚫 {reason}\nCommand: {command}")));
+            return Ok(ToolResult::error(format!(
+                "🚫 {reason}\nCommand: {command}"
+            )));
         }
 
         // Resolve working directory (allow override within project boundary)
@@ -271,7 +377,11 @@ impl Tool for BashTool {
             })
             .unwrap_or_default();
 
-        let (shell, flag) = if cfg!(windows) { ("cmd", "/C") } else { ("bash", "-c") };
+        let (shell, flag) = if cfg!(windows) {
+            ("cmd", "/C")
+        } else {
+            ("bash", "-c")
+        };
 
         let mut cmd = Command::new(shell);
         cmd.arg(flag)
@@ -284,7 +394,8 @@ impl Tool for BashTool {
             cmd.env(k, v);
         }
 
-        let child = cmd.spawn()
+        let child = cmd
+            .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to execute: {e}"))?;
 
         let child_id = child.id();
@@ -316,7 +427,9 @@ impl Tool for BashTool {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let mut result = stdout.to_string();
                 if !stderr.is_empty() {
-                    if !result.is_empty() { result.push('\n'); }
+                    if !result.is_empty() {
+                        result.push('\n');
+                    }
                     result.push_str("STDERR:\n");
                     result.push_str(&stderr);
                 }
@@ -326,19 +439,30 @@ impl Tool for BashTool {
                 let exit_code = output.status.code().unwrap_or(-1);
 
                 if output.status.success() {
-                    Ok(ToolResult::text(if result.is_empty() { "(no output)".into() } else { result }))
+                    Ok(ToolResult::text(if result.is_empty() {
+                        "(no output)".into()
+                    } else {
+                        result
+                    }))
                 } else {
                     // Context-aware exit code interpretation
                     let (ok, note) = interpret_exit_code(command, exit_code);
                     if ok {
                         let text = match note {
                             Some(n) => {
-                                if result.is_empty() { n }
-                                else { format!("{result}\n({n})") }
+                                if result.is_empty() {
+                                    n
+                                } else {
+                                    format!("{result}\n({n})")
+                                }
                             }
                             None => result,
                         };
-                        Ok(ToolResult::text(if text.is_empty() { "(no output)".into() } else { text }))
+                        Ok(ToolResult::text(if text.is_empty() {
+                            "(no output)".into()
+                        } else {
+                            text
+                        }))
                     } else {
                         Ok(ToolResult::error(format!(
                             "Exit code {exit_code}\n{result}"
@@ -351,7 +475,9 @@ impl Tool for BashTool {
                 if let Some(pid) = child_id {
                     kill_process(pid);
                 }
-                Ok(ToolResult::error(format!("Command timed out after {timeout_ms}ms")))
+                Ok(ToolResult::error(format!(
+                    "Command timed out after {timeout_ms}ms"
+                )))
             }
         }
     }
@@ -431,9 +557,15 @@ mod tests {
         assert_eq!(classify_command("npm install"), CommandType::Write);
         assert_eq!(classify_command("some-custom-script"), CommandType::Unknown);
         // With sudo prefix
-        assert_eq!(classify_command("sudo cat /etc/passwd"), CommandType::ReadOnly);
+        assert_eq!(
+            classify_command("sudo cat /etc/passwd"),
+            CommandType::ReadOnly
+        );
         // With env vars
-        assert_eq!(classify_command("NODE_ENV=prod echo hello"), CommandType::ReadOnly);
+        assert_eq!(
+            classify_command("NODE_ENV=prod echo hello"),
+            CommandType::ReadOnly
+        );
     }
 
     #[test]
@@ -509,7 +641,10 @@ mod tests {
     #[test]
     fn test_classify_find_readonly() {
         // `find` is in READ_ONLY_COMMANDS, not SEARCH_COMMANDS
-        assert_eq!(classify_command("find . -name '*.rs'"), CommandType::ReadOnly);
+        assert_eq!(
+            classify_command("find . -name '*.rs'"),
+            CommandType::ReadOnly
+        );
     }
 
     #[test]
@@ -580,8 +715,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_bash_abort_interrupts_long_command() {
-        use clawed_core::tool::{AbortSignal, Tool, ToolContext};
         use clawed_core::permissions::PermissionMode;
+        use clawed_core::tool::{AbortSignal, Tool, ToolContext};
 
         let tool = BashTool;
         let abort = AbortSignal::new();
@@ -597,16 +732,26 @@ mod tests {
         };
 
         // Use a long-running command; abort should stop it immediately
-        let cmd = if cfg!(windows) { "ping 127.0.0.1 -n 60" } else { "sleep 60" };
-        let result = tool.call(
-            serde_json::json!({ "command": cmd }),
-            &ctx,
-        ).await.unwrap();
+        let cmd = if cfg!(windows) {
+            "ping 127.0.0.1 -n 60"
+        } else {
+            "sleep 60"
+        };
+        let result = tool
+            .call(serde_json::json!({ "command": cmd }), &ctx)
+            .await
+            .unwrap();
 
         // Should be interrupted, not timed out
-        assert!(result.is_error, "Expected error result for interrupted command");
+        assert!(
+            result.is_error,
+            "Expected error result for interrupted command"
+        );
         let text = format!("{:?}", result.content);
-        assert!(text.contains("Interrupted"), "Expected 'Interrupted', got: {text}");
+        assert!(
+            text.contains("Interrupted"),
+            "Expected 'Interrupted', got: {text}"
+        );
     }
 
     // ── dangerous command edge cases ────────────────────────────────────
@@ -643,7 +788,10 @@ mod tests {
         // --force-with-lease is safer, but current impl uses substring match on
         // "git push --force" which also catches --force-with-lease. Known limitation.
         let result = check_dangerous("git push --force-with-lease");
-        assert!(result.is_some(), "current impl blocks --force-with-lease (known limitation)");
+        assert!(
+            result.is_some(),
+            "current impl blocks --force-with-lease (known limitation)"
+        );
     }
 
     #[test]

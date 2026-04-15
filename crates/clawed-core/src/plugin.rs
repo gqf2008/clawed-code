@@ -51,7 +51,6 @@ pub struct PluginManifest {
     pub dependencies: Option<Vec<String>>,
 
     // ── Component fields (all optional) ─────────────────────────────────
-
     /// Slash commands — path(s) to `.md` files or inline map.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commands: Option<CommandsSpec>,

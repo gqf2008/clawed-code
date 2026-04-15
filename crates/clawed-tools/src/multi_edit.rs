@@ -10,8 +10,12 @@ pub struct MultiEditTool;
 
 #[async_trait]
 impl Tool for MultiEditTool {
-    fn name(&self) -> &'static str { "MultiEdit" }
-    fn category(&self) -> ToolCategory { ToolCategory::FileSystem }
+    fn name(&self) -> &'static str {
+        "MultiEdit"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::FileSystem
+    }
 
     fn description(&self) -> &'static str {
         "Perform multiple edits to a single file in one atomic operation. Each edit replaces an \
@@ -22,7 +26,11 @@ impl Tool for MultiEditTool {
     fn to_auto_classifier_input(&self, input: &Value) -> Value {
         // Only pass path and edit count; strip content
         let path = input.get("file_path").cloned().unwrap_or(Value::Null);
-        let edit_count = input.get("edits").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+        let edit_count = input
+            .get("edits")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
         json!({"MultiEdit": {"path": path, "edit_count": edit_count}})
     }
 
@@ -85,19 +93,24 @@ impl Tool for MultiEditTool {
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("Edit {i} missing 'old_string'"))?;
             if old_str.is_empty() {
-                return Ok(ToolResult::error(format!("Edit {i}: old_string must not be empty")));
+                return Ok(ToolResult::error(format!(
+                    "Edit {i}: old_string must not be empty"
+                )));
             }
             let count = original.matches(old_str).count();
             if count == 0 {
                 return Ok(ToolResult::error(format!(
                     "Edit {}: old_string not found in file.\nold_string: {:?}",
-                    i, truncate(old_str, 100)
+                    i,
+                    truncate(old_str, 100)
                 )));
             }
             if count > 1 {
                 return Ok(ToolResult::error(format!(
                     "Edit {}: old_string found {} times — must be unique.\nold_string: {:?}",
-                    i, count, truncate(old_str, 100)
+                    i,
+                    count,
+                    truncate(old_str, 100)
                 )));
             }
             if let Some(pos) = original.find(old_str) {
@@ -155,8 +168,8 @@ fn truncate(s: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clawed_core::tool::AbortSignal;
     use clawed_core::permissions::PermissionMode;
+    use clawed_core::tool::AbortSignal;
     use tempfile::TempDir;
 
     fn ctx(dir: &std::path::Path) -> ToolContext {
@@ -309,7 +322,11 @@ mod tests {
             ]
         });
         let result = tool.call(input, &ctx(tmp.path())).await.unwrap();
-        assert!(!result.is_error, "adjacent edits should succeed: {}", result_text(&result));
+        assert!(
+            !result.is_error,
+            "adjacent edits should succeed: {}",
+            result_text(&result)
+        );
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "xxyyzz");
     }
 
@@ -326,6 +343,9 @@ mod tests {
         });
         let result = tool.call(input, &ctx(tmp.path())).await.unwrap();
         assert!(!result.is_error);
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "Hello 世界 world 🎉");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "Hello 世界 world 🎉"
+        );
     }
 }

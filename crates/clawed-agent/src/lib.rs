@@ -5,20 +5,20 @@
 //! auto-compaction, and supports multi-agent coordination.
 
 pub mod audit;
-pub mod engine;
-pub mod query;
-pub mod executor;
-pub mod state;
-pub mod hooks;
-pub mod permissions;
-pub mod dispatch_agent;
+pub mod bus_adapter;
 pub mod compact;
-pub mod task_runner;
 pub mod coordinator;
 pub mod cost;
-pub mod system_prompt;
-pub mod plugin;
-pub mod memory_extractor;
-pub mod bus_adapter;
 pub mod cron_scheduler;
+pub mod dispatch_agent;
+pub mod engine;
+pub mod executor;
+pub mod hooks;
+pub mod memory_extractor;
+pub mod permissions;
+pub mod plugin;
+pub mod query;
+pub mod state;
+pub mod system_prompt;
+pub mod task_runner;
 pub mod traits;

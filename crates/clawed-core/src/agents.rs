@@ -27,7 +27,9 @@ use tracing::debug;
 
 /// Lock a std::sync::Mutex, recovering gracefully from poisoning.
 fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -145,12 +147,18 @@ impl AgentDefinition {
     pub fn to_markdown(&self) -> String {
         let mut fm = String::from("---\n");
         fm.push_str(&format!("name: {}\n", self.agent_type));
-        fm.push_str(&format!("description: \"{}\"\n", self.description.replace('"', "\\\"")));
+        fm.push_str(&format!(
+            "description: \"{}\"\n",
+            self.description.replace('"', "\\\"")
+        ));
         if !self.allowed_tools.is_empty() {
             fm.push_str(&format!("tools: [{}]\n", self.allowed_tools.join(", ")));
         }
         if !self.disallowed_tools.is_empty() {
-            fm.push_str(&format!("disallowed_tools: [{}]\n", self.disallowed_tools.join(", ")));
+            fm.push_str(&format!(
+                "disallowed_tools: [{}]\n",
+                self.disallowed_tools.join(", ")
+            ));
         }
         if let Some(ref m) = self.model {
             fm.push_str(&format!("model: {}\n", m));
@@ -303,7 +311,11 @@ pub fn load_agents(cwd: &Path) -> Vec<AgentDefinition> {
 }
 
 /// Parse a single agent definition from a `.md` file.
-fn parse_agent_file(path: &Path, fallback_name: &str, source: AgentSource) -> Option<AgentDefinition> {
+fn parse_agent_file(
+    path: &Path,
+    fallback_name: &str,
+    source: AgentSource,
+) -> Option<AgentDefinition> {
     let content = std::fs::read_to_string(path).ok()?;
     let (fm, body) = split_frontmatter(&content);
     let fm_str = fm.as_deref();
@@ -324,8 +336,7 @@ fn parse_agent_file(path: &Path, fallback_name: &str, source: AgentSource) -> Op
 
     let disallowed_tools = fm_str
         .and_then(|f| {
-            extract_list(f, "disallowed_tools")
-                .or_else(|| extract_list(f, "disallowedTools"))
+            extract_list(f, "disallowed_tools").or_else(|| extract_list(f, "disallowedTools"))
         })
         .unwrap_or_default();
 
@@ -333,14 +344,10 @@ fn parse_agent_file(path: &Path, fallback_name: &str, source: AgentSource) -> Op
     let effort = fm_str.and_then(|f| extract_string(f, "effort"));
     let color = fm_str.and_then(|f| extract_string(f, "color"));
     let permission_mode = fm_str.and_then(|f| {
-        extract_string(f, "permissionMode")
-            .or_else(|| extract_string(f, "permission_mode"))
+        extract_string(f, "permissionMode").or_else(|| extract_string(f, "permission_mode"))
     });
     let max_turns = fm_str
-        .and_then(|f| {
-            extract_string(f, "maxTurns")
-                .or_else(|| extract_string(f, "max_turns"))
-        })
+        .and_then(|f| extract_string(f, "maxTurns").or_else(|| extract_string(f, "max_turns")))
         .and_then(|s| s.parse::<u32>().ok());
 
     let background = fm_str
@@ -357,8 +364,7 @@ fn parse_agent_file(path: &Path, fallback_name: &str, source: AgentSource) -> Op
         .unwrap_or_default();
 
     let initial_prompt = fm_str.and_then(|f| {
-        extract_string(f, "initialPrompt")
-            .or_else(|| extract_string(f, "initial_prompt"))
+        extract_string(f, "initialPrompt").or_else(|| extract_string(f, "initial_prompt"))
     });
 
     let system_prompt = body.trim().to_string();
@@ -421,15 +427,16 @@ pub fn save_agent(agent: &AgentDefinition, cwd: &Path) -> Result<PathBuf, String
 
 /// Delete an agent definition file from disk.
 pub fn delete_agent(agent: &AgentDefinition) -> Result<(), String> {
-    let path = agent.file_path.as_ref()
+    let path = agent
+        .file_path
+        .as_ref()
         .ok_or("Cannot delete a built-in agent")?;
 
     if !path.exists() {
         return Err(format!("Agent file not found: {}", path.display()));
     }
 
-    std::fs::remove_file(path)
-        .map_err(|e| format!("Failed to delete agent file: {}", e))?;
+    std::fs::remove_file(path).map_err(|e| format!("Failed to delete agent file: {}", e))?;
 
     clear_agent_cache();
     Ok(())
@@ -461,7 +468,11 @@ pub fn validate_agent(agent: &AgentDefinition, existing: &[AgentDefinition]) -> 
     if agent.agent_type.len() > 50 {
         errors.push("Agent name must be 50 characters or less".into());
     }
-    if !agent.agent_type.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+    if !agent
+        .agent_type
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
         errors.push("Agent name must contain only alphanumeric characters and hyphens".into());
     }
     if agent.agent_type.starts_with('-') || agent.agent_type.ends_with('-') {
@@ -618,7 +629,10 @@ mod tests {
     fn test_extract_string_basic() {
         let yaml = "name: my-agent\ndescription: \"Test agent\"";
         assert_eq!(extract_string(yaml, "name"), Some("my-agent".into()));
-        assert_eq!(extract_string(yaml, "description"), Some("Test agent".into()));
+        assert_eq!(
+            extract_string(yaml, "description"),
+            Some("Test agent".into())
+        );
         assert_eq!(extract_string(yaml, "missing"), None);
     }
 
@@ -647,7 +661,9 @@ mod tests {
     fn test_parse_agent_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test-agent.md");
-        fs::write(&path, "\
+        fs::write(
+            &path,
+            "\
 ---
 name: test-agent
 description: \"A test agent for unit testing\"
@@ -659,7 +675,9 @@ maxTurns: 20
 background: true
 ---
 You are a test agent. Your job is to test things thoroughly.
-").unwrap();
+",
+        )
+        .unwrap();
 
         let agent = parse_agent_file(&path, "test-agent", AgentSource::Project).unwrap();
         assert_eq!(agent.agent_type, "test-agent");
@@ -704,22 +722,30 @@ You are a test agent. Your job is to test things thoroughly.
         let agents_dir = dir.path().join(".claude").join("agents");
         fs::create_dir_all(&agents_dir).unwrap();
 
-        fs::write(agents_dir.join("reviewer.md"), "\
+        fs::write(
+            agents_dir.join("reviewer.md"),
+            "\
 ---
 name: reviewer
 description: \"Code review agent\"
 tools: [FileRead, Grep]
 ---
 You are a code reviewer. Analyze code for bugs and best practices.
-").unwrap();
+",
+        )
+        .unwrap();
 
-        fs::write(agents_dir.join("tester.md"), "\
+        fs::write(
+            agents_dir.join("tester.md"),
+            "\
 ---
 name: tester
 description: \"Test runner agent\"
 ---
 You are a test runner. Execute tests and report results.
-").unwrap();
+",
+        )
+        .unwrap();
 
         // Non-md file should be ignored
         fs::write(agents_dir.join("notes.txt"), "Not an agent").unwrap();
@@ -898,14 +924,19 @@ You are a test runner. Execute tests and report results.
     fn test_agent_source_display() {
         assert_eq!(AgentSource::BuiltIn.to_string(), "built-in");
         assert_eq!(AgentSource::User.to_string(), "user (~/.claude/agents/)");
-        assert_eq!(AgentSource::Project.to_string(), "project (.claude/agents/)");
+        assert_eq!(
+            AgentSource::Project.to_string(),
+            "project (.claude/agents/)"
+        );
     }
 
     #[test]
     fn test_parse_with_memory_and_disallowed() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("full.md");
-        fs::write(&path, "\
+        fs::write(
+            &path,
+            "\
 ---
 name: full-agent
 description: \"Full featured agent\"
@@ -917,7 +948,9 @@ skills: [review, test]
 initialPrompt: \"Start by reading the README\"
 ---
 You are a fully configured agent with all options set.
-").unwrap();
+",
+        )
+        .unwrap();
 
         let agent = parse_agent_file(&path, "full", AgentSource::Project).unwrap();
         assert_eq!(agent.allowed_tools, vec!["FileRead", "FileWrite"]);
@@ -925,17 +958,32 @@ You are a fully configured agent with all options set.
         assert_eq!(agent.memory, Some(AgentMemoryScope::User));
         assert_eq!(agent.permission_mode.as_deref(), Some("auto"));
         assert_eq!(agent.skills, vec!["review", "test"]);
-        assert_eq!(agent.initial_prompt.as_deref(), Some("Start by reading the README"));
+        assert_eq!(
+            agent.initial_prompt.as_deref(),
+            Some("Start by reading the README")
+        );
     }
 
     #[test]
     fn test_inherits_model() {
         let mut agent = AgentDefinition {
-            agent_type: "t".into(), description: "t".into(), system_prompt: "t".into(),
-            allowed_tools: vec![], disallowed_tools: vec![], model: None, effort: None,
-            memory: None, color: None, permission_mode: None, max_turns: None,
-            background: false, skills: vec![], initial_prompt: None,
-            source: AgentSource::Project, file_path: None, base_dir: None,
+            agent_type: "t".into(),
+            description: "t".into(),
+            system_prompt: "t".into(),
+            allowed_tools: vec![],
+            disallowed_tools: vec![],
+            model: None,
+            effort: None,
+            memory: None,
+            color: None,
+            permission_mode: None,
+            max_turns: None,
+            background: false,
+            skills: vec![],
+            initial_prompt: None,
+            source: AgentSource::Project,
+            file_path: None,
+            base_dir: None,
         };
         assert!(agent.inherits_model());
 

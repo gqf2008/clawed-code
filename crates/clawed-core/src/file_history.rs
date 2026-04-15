@@ -225,11 +225,14 @@ pub fn make_snapshot(state: &mut FileHistoryState, message_id: &str) -> anyhow::
             // File was deleted — record null backup
             let latest = state.latest_backup(tracking_path);
             let version = latest.map(|b| b.version + 1).unwrap_or(1);
-            backups.insert(tracking_path.clone(), FileHistoryBackup {
-                backup_file_name: None,
-                version,
-                backup_time: SystemTime::now(),
-            });
+            backups.insert(
+                tracking_path.clone(),
+                FileHistoryBackup {
+                    backup_file_name: None,
+                    version,
+                    backup_time: SystemTime::now(),
+                },
+            );
             continue;
         }
 
@@ -248,7 +251,9 @@ pub fn make_snapshot(state: &mut FileHistoryState, message_id: &str) -> anyhow::
                 // File changed — create new version
                 let next_version = prev_backup.version + 1;
                 match create_backup(state, &abs_path, tracking_path, next_version) {
-                    Ok(backup) => { backups.insert(tracking_path.clone(), backup); }
+                    Ok(backup) => {
+                        backups.insert(tracking_path.clone(), backup);
+                    }
                     Err(e) => {
                         warn!("Failed to backup {}: {}", tracking_path, e);
                         backups.insert(tracking_path.clone(), prev_backup.clone());
@@ -258,7 +263,9 @@ pub fn make_snapshot(state: &mut FileHistoryState, message_id: &str) -> anyhow::
             None => {
                 // First backup for this file
                 match create_backup(state, &abs_path, tracking_path, 1) {
-                    Ok(backup) => { backups.insert(tracking_path.clone(), backup); }
+                    Ok(backup) => {
+                        backups.insert(tracking_path.clone(), backup);
+                    }
                     Err(e) => {
                         warn!("Failed to backup {}: {}", tracking_path, e);
                     }
@@ -308,7 +315,9 @@ pub fn rewind(state: &mut FileHistoryState, message_id: &str) -> anyhow::Result<
     }
 
     // Find target snapshot
-    let target_idx = state.snapshots.iter()
+    let target_idx = state
+        .snapshots
+        .iter()
         .position(|s| s.message_id == message_id)
         .ok_or_else(|| anyhow::anyhow!("Snapshot not found for message: {}", message_id))?;
 
@@ -319,7 +328,9 @@ pub fn rewind(state: &mut FileHistoryState, message_id: &str) -> anyhow::Result<
         let abs_path = state.expand_path(tracking_path);
 
         // Get target backup (what the file should look like)
-        let target_backup = target_snapshot.tracked_file_backups.get(tracking_path.as_str());
+        let target_backup = target_snapshot
+            .tracked_file_backups
+            .get(tracking_path.as_str());
 
         // If no backup at target, try to find the v1 backup
         let fallback_backup = if target_backup.is_none() {
@@ -368,7 +379,9 @@ pub fn rewind(state: &mut FileHistoryState, message_id: &str) -> anyhow::Result<
 ///
 /// Does NOT modify any files — this is a preview operation.
 pub fn get_diff_stats(state: &FileHistoryState, message_id: &str) -> anyhow::Result<DiffStats> {
-    let target_idx = state.snapshots.iter()
+    let target_idx = state
+        .snapshots
+        .iter()
         .position(|s| s.message_id == message_id)
         .ok_or_else(|| anyhow::anyhow!("Snapshot not found for message: {}", message_id))?;
 
@@ -378,7 +391,9 @@ pub fn get_diff_stats(state: &FileHistoryState, message_id: &str) -> anyhow::Res
     for tracking_path in &state.tracked_files {
         let abs_path = state.expand_path(tracking_path);
 
-        let target_backup = target_snapshot.tracked_file_backups.get(tracking_path.as_str());
+        let target_backup = target_snapshot
+            .tracked_file_backups
+            .get(tracking_path.as_str());
         let backup_name = target_backup.and_then(|b| b.backup_file_name.as_deref());
 
         let current_content = read_file_or_empty(&abs_path);
@@ -532,7 +547,10 @@ fn check_file_changed(original: &Path, backup: &Path) -> bool {
 }
 
 /// Find the first v1 backup for a file across all snapshots.
-fn get_first_version_backup(state: &FileHistoryState, tracking_path: &str) -> Option<FileHistoryBackup> {
+fn get_first_version_backup(
+    state: &FileHistoryState,
+    tracking_path: &str,
+) -> Option<FileHistoryBackup> {
     for snapshot in &state.snapshots {
         if let Some(backup) = snapshot.tracked_file_backups.get(tracking_path) {
             if backup.version == 1 {
@@ -590,7 +608,10 @@ pub fn copy_history_for_resume(
         }
     }
 
-    debug!("Copied {} backup files from session {} to {}", copied, prev_session_id, new_session_id);
+    debug!(
+        "Copied {} backup files from session {} to {}",
+        copied, prev_session_id, new_session_id
+    );
     Ok(copied)
 }
 
@@ -705,7 +726,10 @@ mod tests {
         track_edit(&mut state, &file_path.to_string_lossy()).unwrap();
 
         // Should still have only one backup per file
-        assert_eq!(state.snapshots.last().unwrap().tracked_file_backups.len(), 1);
+        assert_eq!(
+            state.snapshots.last().unwrap().tracked_file_backups.len(),
+            1
+        );
     }
 
     #[test]

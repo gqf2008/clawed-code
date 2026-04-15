@@ -9,8 +9,12 @@ pub struct AskUserTool;
 
 #[async_trait]
 impl Tool for AskUserTool {
-    fn name(&self) -> &'static str { "AskUser" }
-    fn description(&self) -> &'static str { "Ask the user a question and wait for a response." }
+    fn name(&self) -> &'static str {
+        "AskUser"
+    }
+    fn description(&self) -> &'static str {
+        "Ask the user a question and wait for a response."
+    }
 
     fn input_schema(&self) -> Value {
         json!({
@@ -20,10 +24,15 @@ impl Tool for AskUserTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
-        let question = input["question"].as_str().ok_or_else(|| anyhow::anyhow!("Missing 'question'"))?.to_string();
+        let question = input["question"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'question'"))?
+            .to_string();
         println!("\n\x1b[33m? {question}\x1b[0m");
         print!("> ");
         let read_result = tokio::time::timeout(
@@ -35,12 +44,15 @@ impl Tool for AskUserTool {
                 std::io::stdin().read_line(&mut r)?;
                 Ok::<String, std::io::Error>(r)
             }),
-        ).await;
+        )
+        .await;
         match read_result {
             Ok(Ok(Ok(response))) => Ok(ToolResult::text(response.trim().to_string())),
             Ok(Ok(Err(io_err))) => Err(io_err.into()),
             Ok(Err(join_err)) => Err(join_err.into()),
-            Err(_elapsed) => Ok(ToolResult::error("User input timed out (5 minutes). Continuing without response.")),
+            Err(_elapsed) => Ok(ToolResult::error(
+                "User input timed out (5 minutes). Continuing without response.",
+            )),
         }
     }
 }

@@ -159,8 +159,14 @@ mod tests {
 
     #[test]
     fn format_agent_id_basic() {
-        assert_eq!(format_agent_id("researcher", "my-team"), "researcher@my-team");
-        assert_eq!(format_agent_id(TEAM_LEAD_NAME, "Alpha Squad"), "team-lead@alpha-squad");
+        assert_eq!(
+            format_agent_id("researcher", "my-team"),
+            "researcher@my-team"
+        );
+        assert_eq!(
+            format_agent_id(TEAM_LEAD_NAME, "Alpha Squad"),
+            "team-lead@alpha-squad"
+        );
     }
 
     #[test]

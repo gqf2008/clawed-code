@@ -263,12 +263,12 @@ mod tests {
     #[test]
     fn test_fits_in_context() {
         let system = "System prompt";
-        let messages = vec![
-            Message::User(UserMessage {
-                uuid: "u1".into(),
-                content: vec![ContentBlock::Text { text: "Hello".into() }],
-            }),
-        ];
+        let messages = vec![Message::User(UserMessage {
+            uuid: "u1".into(),
+            content: vec![ContentBlock::Text {
+                text: "Hello".into(),
+            }],
+        })];
         let (fits, _) = fits_in_context(system, &messages, 200_000, 0.9);
         assert!(fits);
     }
@@ -343,12 +343,12 @@ mod tests {
 
     #[test]
     fn hybrid_counting_no_usage_falls_back() {
-        let messages = vec![
-            Message::User(UserMessage {
-                uuid: "u1".into(),
-                content: vec![ContentBlock::Text { text: "Hello world".into() }],
-            }),
-        ];
+        let messages = vec![Message::User(UserMessage {
+            uuid: "u1".into(),
+            content: vec![ContentBlock::Text {
+                text: "Hello world".into(),
+            }],
+        })];
         let hybrid = token_count_with_estimation(&messages);
         let pure = estimate_messages_tokens(&messages);
         assert_eq!(hybrid, pure);
@@ -359,11 +359,15 @@ mod tests {
         let messages = vec![
             Message::User(UserMessage {
                 uuid: "u1".into(),
-                content: vec![ContentBlock::Text { text: "Hello".into() }],
+                content: vec![ContentBlock::Text {
+                    text: "Hello".into(),
+                }],
             }),
             Message::Assistant(AssistantMessage {
                 uuid: "a1".into(),
-                content: vec![ContentBlock::Text { text: "Hi there".into() }],
+                content: vec![ContentBlock::Text {
+                    text: "Hi there".into(),
+                }],
                 stop_reason: None,
                 usage: Some(Usage {
                     input_tokens: 1000,
@@ -374,7 +378,9 @@ mod tests {
             }),
             Message::User(UserMessage {
                 uuid: "u2".into(),
-                content: vec![ContentBlock::Text { text: "Follow up".into() }],
+                content: vec![ContentBlock::Text {
+                    text: "Follow up".into(),
+                }],
             }),
         ];
         let hybrid = token_count_with_estimation(&messages);
@@ -388,17 +394,23 @@ mod tests {
         let messages = vec![
             Message::Assistant(AssistantMessage {
                 uuid: "shared".into(),
-                content: vec![ContentBlock::Text { text: "tool1".into() }],
+                content: vec![ContentBlock::Text {
+                    text: "tool1".into(),
+                }],
                 stop_reason: None,
                 usage: None,
             }),
             Message::User(UserMessage {
                 uuid: "tool-result-1".into(),
-                content: vec![ContentBlock::Text { text: "result1".into() }],
+                content: vec![ContentBlock::Text {
+                    text: "result1".into(),
+                }],
             }),
             Message::Assistant(AssistantMessage {
                 uuid: "shared".into(),
-                content: vec![ContentBlock::Text { text: "tool2".into() }],
+                content: vec![ContentBlock::Text {
+                    text: "tool2".into(),
+                }],
                 stop_reason: None,
                 usage: Some(Usage {
                     input_tokens: 5000,
@@ -409,7 +421,9 @@ mod tests {
             }),
             Message::User(UserMessage {
                 uuid: "u3".into(),
-                content: vec![ContentBlock::Text { text: "next".into() }],
+                content: vec![ContentBlock::Text {
+                    text: "next".into(),
+                }],
             }),
         ];
         let hybrid = token_count_with_estimation(&messages);

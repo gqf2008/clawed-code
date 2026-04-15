@@ -96,10 +96,12 @@ pub struct HooksConfig {
 pub(super) fn merge_hooks(mut base: HooksConfig, overlay: &HooksConfig) -> HooksConfig {
     base.pre_tool_use.extend(overlay.pre_tool_use.clone());
     base.post_tool_use.extend(overlay.post_tool_use.clone());
-    base.post_tool_use_failure.extend(overlay.post_tool_use_failure.clone());
+    base.post_tool_use_failure
+        .extend(overlay.post_tool_use_failure.clone());
     base.stop.extend(overlay.stop.clone());
     base.stop_failure.extend(overlay.stop_failure.clone());
-    base.user_prompt_submit.extend(overlay.user_prompt_submit.clone());
+    base.user_prompt_submit
+        .extend(overlay.user_prompt_submit.clone());
     base.session_start.extend(overlay.session_start.clone());
     base.session_end.extend(overlay.session_end.clone());
     base.setup.extend(overlay.setup.clone());
@@ -109,9 +111,12 @@ pub(super) fn merge_hooks(mut base: HooksConfig, overlay: &HooksConfig) -> Hooks
     base.subagent_stop.extend(overlay.subagent_stop.clone());
     base.notification.extend(overlay.notification.clone());
     base.post_sampling.extend(overlay.post_sampling.clone());
-    base.permission_request.extend(overlay.permission_request.clone());
-    base.permission_denied.extend(overlay.permission_denied.clone());
-    base.instructions_loaded.extend(overlay.instructions_loaded.clone());
+    base.permission_request
+        .extend(overlay.permission_request.clone());
+    base.permission_denied
+        .extend(overlay.permission_denied.clone());
+    base.instructions_loaded
+        .extend(overlay.instructions_loaded.clone());
     base.cwd_changed.extend(overlay.cwd_changed.clone());
     base.file_changed.extend(overlay.file_changed.clone());
     base.config_change.extend(overlay.config_change.clone());
@@ -119,7 +124,8 @@ pub(super) fn merge_hooks(mut base: HooksConfig, overlay: &HooksConfig) -> Hooks
     base.task_completed.extend(overlay.task_completed.clone());
     base.teammate_idle.extend(overlay.teammate_idle.clone());
     base.elicitation.extend(overlay.elicitation.clone());
-    base.elicitation_result.extend(overlay.elicitation_result.clone());
+    base.elicitation_result
+        .extend(overlay.elicitation_result.clone());
     base.worktree_create.extend(overlay.worktree_create.clone());
     base.worktree_remove.extend(overlay.worktree_remove.clone());
     base

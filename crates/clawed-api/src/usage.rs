@@ -3,8 +3,8 @@
 //! Aligned with TS `cost-tracker.ts`: accumulates input/output/cache tokens
 //! per model, calculates running cost, and formats summary for display.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::model::calculate_cost;
 use crate::types::ApiUsage;
@@ -30,7 +30,7 @@ pub struct UsageTracker {
 }
 
 impl UsageTracker {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -54,37 +54,37 @@ impl UsageTracker {
     }
 
     /// Total cost across all models.
-    #[must_use] 
+    #[must_use]
     pub fn total_cost(&self) -> f64 {
         self.per_model.values().map(|s| s.cost_usd).sum()
     }
 
     /// Total input tokens across all models.
-    #[must_use] 
+    #[must_use]
     pub fn total_input_tokens(&self) -> u64 {
         self.per_model.values().map(|s| s.input_tokens).sum()
     }
 
     /// Total output tokens across all models.
-    #[must_use] 
+    #[must_use]
     pub fn total_output_tokens(&self) -> u64 {
         self.per_model.values().map(|s| s.output_tokens).sum()
     }
 
     /// Total API calls.
-    #[must_use] 
+    #[must_use]
     pub const fn total_calls(&self) -> u32 {
         self.total_calls
     }
 
     /// Get stats for a specific model.
-    #[must_use] 
+    #[must_use]
     pub fn model_stats(&self, model: &str) -> Option<&ModelUsageStats> {
         self.per_model.get(model)
     }
 
     /// Get all per-model stats.
-    #[must_use] 
+    #[must_use]
     pub const fn all_model_stats(&self) -> &HashMap<String, ModelUsageStats> {
         &self.per_model
     }
@@ -92,7 +92,7 @@ impl UsageTracker {
     /// Format a compact usage summary for display.
     ///
     /// Example: "📊 3 calls | 12.5K in / 3.2K out | $0.0523"
-    #[must_use] 
+    #[must_use]
     pub fn format_summary(&self) -> String {
         let total_in = self.total_input_tokens();
         let total_out = self.total_output_tokens();
@@ -109,16 +109,23 @@ impl UsageTracker {
     }
 
     /// Format a detailed per-model breakdown.
-    #[must_use] 
+    #[must_use]
     pub fn format_detailed(&self) -> String {
         if self.per_model.is_empty() {
             return "No API usage recorded.".to_string();
         }
 
-        let mut lines = vec![format!("📊 Usage Summary ({} total calls)\n", self.total_calls)];
+        let mut lines = vec![format!(
+            "📊 Usage Summary ({} total calls)\n",
+            self.total_calls
+        )];
 
         let mut models: Vec<_> = self.per_model.iter().collect();
-        models.sort_by(|a, b| b.1.cost_usd.partial_cmp(&a.1.cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+        models.sort_by(|a, b| {
+            b.1.cost_usd
+                .partial_cmp(&a.1.cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         for (model, stats) in &models {
             lines.push(format!(
@@ -143,13 +150,13 @@ impl UsageTracker {
     }
 
     /// Export per-model stats as a serializable map (for session persistence).
-    #[must_use] 
+    #[must_use]
     pub fn to_session_usage(&self) -> HashMap<String, ModelUsageStats> {
         self.per_model.clone()
     }
 
     /// Restore from previously saved session usage.
-    #[must_use] 
+    #[must_use]
     pub fn from_session_usage(saved: HashMap<String, ModelUsageStats>) -> Self {
         let total_calls = saved.values().map(|s| s.api_calls).sum();
         Self {
@@ -243,7 +250,10 @@ mod tests {
     #[test]
     fn cached_tokens_tracked() {
         let mut tracker = UsageTracker::new();
-        tracker.record("claude-sonnet-4-6", &make_usage_cached(1000, 500, 5000, 2000));
+        tracker.record(
+            "claude-sonnet-4-6",
+            &make_usage_cached(1000, 500, 5000, 2000),
+        );
 
         let stats = tracker.model_stats("claude-sonnet-4-6").unwrap();
         assert_eq!(stats.cache_read_tokens, 5000);
@@ -297,7 +307,10 @@ mod tests {
     fn format_detailed_multi_model() {
         let mut tracker = UsageTracker::new();
         tracker.record("claude-sonnet-4-6", &make_usage(10000, 5000));
-        tracker.record("claude-haiku-4-5", &make_usage_cached(20000, 8000, 5000, 1000));
+        tracker.record(
+            "claude-haiku-4-5",
+            &make_usage_cached(20000, 8000, 5000, 1000),
+        );
 
         let detailed = tracker.format_detailed();
         assert!(detailed.contains("Usage Summary"));

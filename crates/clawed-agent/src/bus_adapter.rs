@@ -87,11 +87,7 @@ impl AgentCoreAdapter {
 
     /// Create from a shared Arc<QueryEngine> — allows the caller to retain
     /// a reference to the engine while the adapter runs in the background.
-    pub fn from_arc(
-        engine: Arc<QueryEngine>,
-        bus: BusHandle,
-        mcp: Option<McpBusAdapter>,
-    ) -> Self {
+    pub fn from_arc(engine: Arc<QueryEngine>, bus: BusHandle, mcp: Option<McpBusAdapter>) -> Self {
         Self {
             engine,
             bus: Mutex::new(bus),
@@ -140,7 +136,10 @@ impl AgentCoreAdapter {
                 }
             };
 
-            debug!("Adapter received request: {:?}", std::mem::discriminant(&request));
+            debug!(
+                "Adapter received request: {:?}",
+                std::mem::discriminant(&request)
+            );
 
             match request {
                 AgentRequest::Submit { text, images } => {
@@ -203,7 +202,10 @@ impl AgentCoreAdapter {
                     let bus = self.bus.lock().await;
                     bus.notify(AgentNotification::Error {
                         code: ErrorCode::InternalError,
-                        message: format!("Slash commands must be handled client-side: /{}", command),
+                        message: format!(
+                            "Slash commands must be handled client-side: /{}",
+                            command
+                        ),
                     });
                 }
                 AgentRequest::SendAgentMessage { agent_id, message } => {
@@ -215,7 +217,10 @@ impl AgentCoreAdapter {
                             let bus = self.bus.lock().await;
                             bus.notify(AgentNotification::Error {
                                 code: ErrorCode::InternalError,
-                                message: format!("Failed to send message to agent '{}': {}", agent_id, e),
+                                message: format!(
+                                    "Failed to send message to agent '{}': {}",
+                                    agent_id, e
+                                ),
                             });
                         }
                     }
@@ -244,7 +249,12 @@ impl AgentCoreAdapter {
                     // not the general request channel.
                     warn!("Unexpected PermissionResponse in request channel");
                 }
-                AgentRequest::McpConnect { name, command, args, env } => {
+                AgentRequest::McpConnect {
+                    name,
+                    command,
+                    args,
+                    env,
+                } => {
                     self.handle_mcp_connect(&name, &command, &args, &env).await;
                 }
                 AgentRequest::McpDisconnect { name } => {
@@ -265,7 +275,10 @@ impl AgentCoreAdapter {
                 AgentRequest::LoadSession { session_id } => {
                     // Session loading requires creating a new engine — cannot be done
                     // from within the adapter. The CLI layer handles this.
-                    warn!("LoadSession '{}' via bus — requires CLI-layer handling", session_id);
+                    warn!(
+                        "LoadSession '{}' via bus — requires CLI-layer handling",
+                        session_id
+                    );
                     let bus = self.bus.lock().await;
                     bus.notify(AgentNotification::Error {
                         code: ErrorCode::InternalError,
@@ -338,10 +351,15 @@ impl AgentCoreAdapter {
                 AgentEvent::ThinkingDelta(text) => AgentNotification::ThinkingDelta { text },
 
                 AgentEvent::ToolUseStart { id, name } => {
-                    self.tool_names.lock().await.insert(id.clone(), name.clone());
+                    self.tool_names
+                        .lock()
+                        .await
+                        .insert(id.clone(), name.clone());
                     // Pre-emit ToolSelected before the full ToolUseStart
                     let bus = self.bus.lock().await;
-                    bus.notify(AgentNotification::ToolSelected { tool_name: name.clone() });
+                    bus.notify(AgentNotification::ToolSelected {
+                        tool_name: name.clone(),
+                    });
                     drop(bus);
                     AgentNotification::ToolUseStart {
                         id,
@@ -350,7 +368,10 @@ impl AgentCoreAdapter {
                 }
 
                 AgentEvent::ToolUseReady { id, name, input } => {
-                    self.tool_names.lock().await.insert(id.clone(), name.clone());
+                    self.tool_names
+                        .lock()
+                        .await
+                        .insert(id.clone(), name.clone());
                     AgentNotification::ToolUseReady {
                         id,
                         tool_name: name,
@@ -358,13 +379,8 @@ impl AgentCoreAdapter {
                     }
                 }
 
-                AgentEvent::ToolResult {
-                    id,
-                    is_error,
-                    text,
-                } => {
-                    let tool_name = self.tool_names.lock().await.remove(&id)
-                        .unwrap_or_default();
+                AgentEvent::ToolResult { id, is_error, text } => {
+                    let tool_name = self.tool_names.lock().await.remove(&id).unwrap_or_default();
                     AgentNotification::ToolUseComplete {
                         id,
                         tool_name,
@@ -373,21 +389,17 @@ impl AgentCoreAdapter {
                     }
                 }
 
-                AgentEvent::AssistantMessage(_msg) => {
-                    AgentNotification::AssistantMessage {
-                        turn,
-                        text_blocks: _msg
-                            .content
-                            .iter()
-                            .filter_map(|b| match b {
-                                ContentBlock::Text { text } => {
-                                    Some(text.clone())
-                                }
-                                _ => None,
-                            })
-                            .collect(),
-                    }
-                }
+                AgentEvent::AssistantMessage(_msg) => AgentNotification::AssistantMessage {
+                    turn,
+                    text_blocks: _msg
+                        .content
+                        .iter()
+                        .filter_map(|b| match b {
+                            ContentBlock::Text { text } => Some(text.clone()),
+                            _ => None,
+                        })
+                        .collect(),
+                },
 
                 AgentEvent::TurnComplete { stop_reason } => AgentNotification::TurnComplete {
                     turn,
@@ -529,9 +541,7 @@ impl AgentCoreAdapter {
     async fn handle_mcp_list_servers(&self) {
         let notification = match &self.mcp {
             Some(mcp) => mcp.list_servers().await,
-            None => AgentNotification::McpServerList {
-                servers: vec![],
-            },
+            None => AgentNotification::McpServerList { servers: vec![] },
         };
         let bus = self.bus.lock().await;
         bus.notify(notification);
@@ -596,7 +606,10 @@ impl AgentCoreAdapter {
             .map(|alias| {
                 let id = clawed_core::model::resolve_model_string(alias);
                 let display = clawed_core::model::display_name_any(&id);
-                ModelInfo { id, display_name: display }
+                ModelInfo {
+                    id,
+                    display_name: display,
+                }
             })
             .chain(std::iter::once(ModelInfo {
                 id: current_model.clone(),
@@ -606,7 +619,10 @@ impl AgentCoreAdapter {
 
         // Deduplicate by id
         let mut seen = std::collections::HashSet::new();
-        let models: Vec<ModelInfo> = models.into_iter().filter(|m| seen.insert(m.id.clone())).collect();
+        let models: Vec<ModelInfo> = models
+            .into_iter()
+            .filter(|m| seen.insert(m.id.clone()))
+            .collect();
 
         let bus = self.bus.lock().await;
         bus.notify(AgentNotification::ModelList { models });
@@ -614,9 +630,15 @@ impl AgentCoreAdapter {
 
     /// List available tools.
     async fn handle_list_tools(&self) {
-        let tools: Vec<ToolInfo> = self.engine.tool_list()
+        let tools: Vec<ToolInfo> = self
+            .engine
+            .tool_list()
             .into_iter()
-            .map(|(name, description, enabled)| ToolInfo { name, description, enabled })
+            .map(|(name, description, enabled)| ToolInfo {
+                name,
+                description,
+                enabled,
+            })
             .collect();
 
         let bus = self.bus.lock().await;
@@ -734,9 +756,7 @@ mod tests {
         let notification = convert_event(event, 3);
         match notification {
             Some(AgentNotification::TurnComplete {
-                turn,
-                stop_reason,
-                ..
+                turn, stop_reason, ..
             }) => {
                 assert_eq!(turn, 3);
                 assert!(stop_reason.contains("EndTurn"));
@@ -788,23 +808,19 @@ mod tests {
                 id,
                 tool_name: name,
             }),
-            AgentEvent::ToolUseReady { id, name, input } => {
-                Some(AgentNotification::ToolUseReady {
+            AgentEvent::ToolUseReady { id, name, input } => Some(AgentNotification::ToolUseReady {
+                id,
+                tool_name: name,
+                input,
+            }),
+            AgentEvent::ToolResult { id, is_error, text } => {
+                Some(AgentNotification::ToolUseComplete {
                     id,
-                    tool_name: name,
-                    input,
+                    tool_name: String::new(), // stateless helper; real adapter uses tool_names map
+                    is_error,
+                    result_preview: text,
                 })
             }
-            AgentEvent::ToolResult {
-                id,
-                is_error,
-                text,
-            } => Some(AgentNotification::ToolUseComplete {
-                id,
-                tool_name: String::new(), // stateless helper; real adapter uses tool_names map
-                is_error,
-                result_preview: text,
-            }),
             AgentEvent::AssistantMessage(msg) => Some(AgentNotification::AssistantMessage {
                 turn,
                 text_blocks: msg

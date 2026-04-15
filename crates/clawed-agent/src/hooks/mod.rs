@@ -26,15 +26,15 @@ mod execution;
 mod types;
 
 // Re-export public types
-pub use types::{HookDecision, HookEvent};
 pub(crate) use types::HookContext;
+pub use types::{HookDecision, HookEvent};
 
 use std::path::PathBuf;
 
 use serde_json::Value;
 use tracing::{debug, warn};
 
-use clawed_core::config::{HooksConfig, HookRule};
+use clawed_core::config::{HookRule, HooksConfig};
 
 use execution::{interpret_output, run_shell_hook, tool_matches};
 
@@ -56,7 +56,11 @@ impl HookRegistry {
     }
 
     /// Build a registry from user settings.
-    pub fn from_config(config: HooksConfig, cwd: impl Into<PathBuf>, session_id: impl Into<String>) -> Self {
+    pub fn from_config(
+        config: HooksConfig,
+        cwd: impl Into<PathBuf>,
+        session_id: impl Into<String>,
+    ) -> Self {
         Self {
             config,
             cwd: cwd.into(),
@@ -172,7 +176,14 @@ impl HookRegistry {
     }
 
     /// Build a `HookContext` for tool events.
-    pub(crate) fn tool_ctx(&self, event: HookEvent, tool_name: &str, input: Option<Value>, output: Option<String>, is_error: Option<bool>) -> HookContext {
+    pub(crate) fn tool_ctx(
+        &self,
+        event: HookEvent,
+        tool_name: &str,
+        input: Option<Value>,
+        output: Option<String>,
+        is_error: Option<bool>,
+    ) -> HookContext {
         HookContext {
             event: event.as_str().to_string(),
             tool_name: Some(tool_name.to_string()),
@@ -190,7 +201,12 @@ impl HookRegistry {
     }
 
     /// Build a `HookContext` for tool failure events.
-    pub(crate) fn tool_failure_ctx(&self, tool_name: &str, input: Option<Value>, error_msg: &str) -> HookContext {
+    pub(crate) fn tool_failure_ctx(
+        &self,
+        tool_name: &str,
+        input: Option<Value>,
+        error_msg: &str,
+    ) -> HookContext {
         HookContext {
             event: HookEvent::PostToolUseFailure.as_str().to_string(),
             tool_name: Some(tool_name.to_string()),
@@ -226,7 +242,12 @@ impl HookRegistry {
     }
 
     /// Build a `HookContext` for compaction events.
-    pub(crate) fn compact_ctx(&self, event: HookEvent, trigger: &str, summary: Option<String>) -> HookContext {
+    pub(crate) fn compact_ctx(
+        &self,
+        event: HookEvent,
+        trigger: &str,
+        summary: Option<String>,
+    ) -> HookContext {
         HookContext {
             event: event.as_str().to_string(),
             tool_name: None,
@@ -263,7 +284,13 @@ impl HookRegistry {
     }
 
     /// Build a `HookContext` for permission events.
-    pub(crate) fn permission_ctx(&self, event: HookEvent, tool_name: &str, input: &Value, reason: &str) -> HookContext {
+    pub(crate) fn permission_ctx(
+        &self,
+        event: HookEvent,
+        tool_name: &str,
+        input: &Value,
+        reason: &str,
+    ) -> HookContext {
         HookContext {
             event: event.as_str().to_string(),
             tool_name: Some(tool_name.to_string()),
@@ -300,7 +327,12 @@ impl HookRegistry {
     }
 
     /// Build a `HookContext` for task events.
-    pub(crate) fn task_ctx(&self, event: HookEvent, task_desc: &str, status: Option<String>) -> HookContext {
+    pub(crate) fn task_ctx(
+        &self,
+        event: HookEvent,
+        task_desc: &str,
+        status: Option<String>,
+    ) -> HookContext {
         let mut input = serde_json::json!({"task": task_desc});
         if let Some(s) = status {
             input["status"] = serde_json::Value::String(s);

@@ -16,17 +16,17 @@
 //! let summary = compact_conversation(&client, &messages, model, max_tokens, None).await?;
 //! ```
 
-pub mod micro;
 pub mod memory;
+pub mod micro;
 
 // Re-export commonly used items from submodules
-pub use micro::{
-    clear_old_tool_results, truncate_large_tool_results, snip_old_messages,
-    TOOL_RESULT_CLEARED, MAX_TOOL_RESULT_CHARS,
-};
 pub use memory::{
-    ExtractedMemory, build_memory_extraction_prompt, parse_extracted_memories,
-    save_extracted_memories,
+    build_memory_extraction_prompt, parse_extracted_memories, save_extracted_memories,
+    ExtractedMemory,
+};
+pub use micro::{
+    clear_old_tool_results, snip_old_messages, truncate_large_tool_results, MAX_TOOL_RESULT_CHARS,
+    TOOL_RESULT_CLEARED,
 };
 
 use clawed_api::client::ApiClient;
@@ -173,7 +173,11 @@ pub fn format_compact_summary(raw: &str) -> String {
     // Remove <example>...</example> blocks (model may echo from prompt)
     while let (Some(start), Some(end_tag)) = (text.find("<example>"), text.find("</example>")) {
         if end_tag > start {
-            text = format!("{}{}", &text[..start], &text[end_tag + "</example>".len()..]);
+            text = format!(
+                "{}{}",
+                &text[..start],
+                &text[end_tag + "</example>".len()..]
+            );
         } else {
             break;
         }
@@ -182,21 +186,26 @@ pub fn format_compact_summary(raw: &str) -> String {
     // Remove <analysis>...</analysis> — drafting scratchpad
     if let (Some(start), Some(end_tag)) = (text.find("<analysis>"), text.find("</analysis>")) {
         if end_tag > start {
-            text = format!("{}{}", &text[..start], &text[end_tag + "</analysis>".len()..]);
+            text = format!(
+                "{}{}",
+                &text[..start],
+                &text[end_tag + "</analysis>".len()..]
+            );
         }
     }
 
     // Extract <summary>...</summary> content
-    let result = if let (Some(start), Some(end_tag)) = (text.find("<summary>"), text.find("</summary>")) {
-        if end_tag > start {
-            let content = &text[start + "<summary>".len()..end_tag];
-            format!("Summary:\n{}", content.trim())
+    let result =
+        if let (Some(start), Some(end_tag)) = (text.find("<summary>"), text.find("</summary>")) {
+            if end_tag > start {
+                let content = &text[start + "<summary>".len()..end_tag];
+                format!("Summary:\n{}", content.trim())
+            } else {
+                text
+            }
         } else {
             text
-        }
-    } else {
-        text
-    };
+        };
 
     // Collapse excessive blank lines
     clawed_core::text_util::collapse_blank_lines(&result)
@@ -215,7 +224,10 @@ fn messages_for_compact(messages: &[Message]) -> Vec<ApiMessage> {
                     .iter()
                     .map(|b| match b {
                         clawed_core::message::ContentBlock::Text { text } => {
-                            ApiContentBlock::Text { text: text.clone(), cache_control: None }
+                            ApiContentBlock::Text {
+                                text: text.clone(),
+                                cache_control: None,
+                            }
                         }
                         clawed_core::message::ContentBlock::ToolResult {
                             tool_use_id,
@@ -258,7 +270,10 @@ fn messages_for_compact(messages: &[Message]) -> Vec<ApiMessage> {
                     .iter()
                     .filter_map(|b| match b {
                         clawed_core::message::ContentBlock::Text { text } => {
-                            Some(ApiContentBlock::Text { text: text.clone(), cache_control: None })
+                            Some(ApiContentBlock::Text {
+                                text: text.clone(),
+                                cache_control: None,
+                            })
                         }
                         clawed_core::message::ContentBlock::ToolUse { id, name, input } => {
                             Some(ApiContentBlock::ToolUse {
@@ -337,7 +352,9 @@ pub async fn compact_conversation(
         thinking: None,
     };
 
-    let response = client.messages(&request).await
+    let response = client
+        .messages(&request)
+        .await
         .map_err(|e| anyhow::anyhow!("Compact API call failed: {}", e))?;
 
     // Extract text from response
@@ -365,7 +382,9 @@ pub async fn compact_conversation(
         tracing::debug!("Compaction response missing <summary> tags — using raw text as fallback");
     }
     if summary.trim().is_empty() || summary.len() < 30 {
-        anyhow::bail!("Compaction produced an empty or too-short summary — keeping original messages");
+        anyhow::bail!(
+            "Compaction produced an empty or too-short summary — keeping original messages"
+        );
     }
 
     Ok(summary)
@@ -381,9 +400,11 @@ pub fn compact_context_message(summary: &str, transcript_note: Option<&str>) -> 
     if let Some(note) = transcript_note {
         msg.push_str(&format!("\n\n{}", note));
     }
-    msg.push_str("\n\nContinue the conversation from where it left off without asking \
+    msg.push_str(
+        "\n\nContinue the conversation from where it left off without asking \
         the user any further questions. Resume directly — do not acknowledge the summary, \
-        do not recap what was happening. Pick up the last task as if the break never happened.");
+        do not recap what was happening. Pick up the last task as if the break never happened.",
+    );
     msg
 }
 
@@ -441,7 +462,12 @@ pub fn summarize_tool_uses(messages: &[Message]) -> String {
     if !files_modified.is_empty() {
         summary.push_str(&format!(
             "Files modified: {}\n",
-            files_modified.iter().take(10).cloned().collect::<Vec<_>>().join(", ")
+            files_modified
+                .iter()
+                .take(10)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
         if files_modified.len() > 10 {
             summary.push_str(&format!("  ... and {} more\n", files_modified.len() - 10));
@@ -451,7 +477,12 @@ pub fn summarize_tool_uses(messages: &[Message]) -> String {
     if !files_read.is_empty() {
         summary.push_str(&format!(
             "Files read: {}\n",
-            files_read.iter().take(10).cloned().collect::<Vec<_>>().join(", ")
+            files_read
+                .iter()
+                .take(10)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
         if files_read.len() > 10 {
             summary.push_str(&format!("  ... and {} more\n", files_read.len() - 10));
@@ -506,12 +537,19 @@ pub enum TokenWarningState {
 }
 
 pub fn calculate_token_warning(current_tokens: u64, threshold: u64) -> TokenWarningState {
-    if threshold == 0 { return TokenWarningState::Normal; }
+    if threshold == 0 {
+        return TokenWarningState::Normal;
+    }
     let ratio = current_tokens as f64 / threshold as f64;
-    if ratio >= 0.9 { TokenWarningState::Imminent }
-    else if ratio >= 0.75 { TokenWarningState::Critical }
-    else if ratio >= 0.5 { TokenWarningState::Warning }
-    else { TokenWarningState::Normal }
+    if ratio >= 0.9 {
+        TokenWarningState::Imminent
+    } else if ratio >= 0.75 {
+        TokenWarningState::Critical
+    } else if ratio >= 0.5 {
+        TokenWarningState::Warning
+    } else {
+        TokenWarningState::Normal
+    }
 }
 
 // ── Auto-compact trigger ────────────────────────────────────────────────────
@@ -576,9 +614,15 @@ impl AutoCompactState {
 
     /// Should we trigger auto-compact given the current token count and model's context window?
     pub fn should_auto_compact(&self, current_tokens: u64, context_window: u64) -> bool {
-        if self.disabled { return false; }
-        if self.consecutive_failures >= MAX_CONSECUTIVE_FAILURES { return false; }
-        if context_window == 0 { return false; }
+        if self.disabled {
+            return false;
+        }
+        if self.consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+            return false;
+        }
+        if context_window == 0 {
+            return false;
+        }
 
         // Effective window = context - reserved output tokens (20k)
         let effective = context_window.saturating_sub(20_000);
@@ -667,30 +711,51 @@ impl AutoCompactState {
         let avg_ratio = self.average_compression_ratio();
         format!(
             "Compactions: {}/{} succeeded | Tokens saved: {} | Avg ratio: {:.1}%",
-            success, total, saved, avg_ratio * 100.0
+            success,
+            total,
+            saved,
+            avg_ratio * 100.0
         )
     }
 }
 
 impl Default for AutoCompactState {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clawed_core::message::{
-        AssistantMessage, ContentBlock, SystemMessage,
-    };
+    use clawed_core::message::{AssistantMessage, ContentBlock, SystemMessage};
 
     #[test]
     fn test_token_warning_levels() {
-        assert_eq!(calculate_token_warning(0, 100_000), TokenWarningState::Normal);
-        assert_eq!(calculate_token_warning(40_000, 100_000), TokenWarningState::Normal);
-        assert_eq!(calculate_token_warning(55_000, 100_000), TokenWarningState::Warning);
-        assert_eq!(calculate_token_warning(80_000, 100_000), TokenWarningState::Critical);
-        assert_eq!(calculate_token_warning(95_000, 100_000), TokenWarningState::Imminent);
-        assert_eq!(calculate_token_warning(1_000_000, 0), TokenWarningState::Normal);
+        assert_eq!(
+            calculate_token_warning(0, 100_000),
+            TokenWarningState::Normal
+        );
+        assert_eq!(
+            calculate_token_warning(40_000, 100_000),
+            TokenWarningState::Normal
+        );
+        assert_eq!(
+            calculate_token_warning(55_000, 100_000),
+            TokenWarningState::Warning
+        );
+        assert_eq!(
+            calculate_token_warning(80_000, 100_000),
+            TokenWarningState::Critical
+        );
+        assert_eq!(
+            calculate_token_warning(95_000, 100_000),
+            TokenWarningState::Imminent
+        );
+        assert_eq!(
+            calculate_token_warning(1_000_000, 0),
+            TokenWarningState::Normal
+        );
     }
 
     #[test]
@@ -702,30 +767,28 @@ mod tests {
 
     #[test]
     fn test_summarize_tool_uses_with_tools() {
-        let messages = vec![
-            Message::Assistant(AssistantMessage {
-                uuid: "a1".into(),
-                content: vec![
-                    ContentBlock::ToolUse {
-                        id: "t1".into(),
-                        name: "Read".into(),
-                        input: serde_json::json!({"file_path": "src/main.rs"}),
-                    },
-                    ContentBlock::ToolUse {
-                        id: "t2".into(),
-                        name: "Edit".into(),
-                        input: serde_json::json!({"file_path": "src/lib.rs"}),
-                    },
-                    ContentBlock::ToolUse {
-                        id: "t3".into(),
-                        name: "Read".into(),
-                        input: serde_json::json!({"file_path": "Cargo.toml"}),
-                    },
-                ],
-                stop_reason: None,
-                usage: None,
-            }),
-        ];
+        let messages = vec![Message::Assistant(AssistantMessage {
+            uuid: "a1".into(),
+            content: vec![
+                ContentBlock::ToolUse {
+                    id: "t1".into(),
+                    name: "Read".into(),
+                    input: serde_json::json!({"file_path": "src/main.rs"}),
+                },
+                ContentBlock::ToolUse {
+                    id: "t2".into(),
+                    name: "Edit".into(),
+                    input: serde_json::json!({"file_path": "src/lib.rs"}),
+                },
+                ContentBlock::ToolUse {
+                    id: "t3".into(),
+                    name: "Read".into(),
+                    input: serde_json::json!({"file_path": "Cargo.toml"}),
+                },
+            ],
+            stop_reason: None,
+            usage: None,
+        })];
         let summary = summarize_tool_uses(&messages);
         assert!(summary.contains("Read"));
         assert!(summary.contains("Edit"));
@@ -736,9 +799,18 @@ mod tests {
     #[test]
     fn test_post_compact_cleanup_removes_duplicates() {
         let mut messages = vec![
-            Message::System(SystemMessage { uuid: "s1".into(), message: "Hello".into() }),
-            Message::System(SystemMessage { uuid: "s2".into(), message: "Hello".into() }),
-            Message::System(SystemMessage { uuid: "s3".into(), message: "World".into() }),
+            Message::System(SystemMessage {
+                uuid: "s1".into(),
+                message: "Hello".into(),
+            }),
+            Message::System(SystemMessage {
+                uuid: "s2".into(),
+                message: "Hello".into(),
+            }),
+            Message::System(SystemMessage {
+                uuid: "s3".into(),
+                message: "World".into(),
+            }),
         ];
         post_compact_cleanup(&mut messages);
         assert_eq!(messages.len(), 2);
@@ -747,7 +819,10 @@ mod tests {
     #[test]
     fn test_post_compact_cleanup_removes_empty_assistant() {
         let mut messages = vec![
-            Message::System(SystemMessage { uuid: "s1".into(), message: "Ctx".into() }),
+            Message::System(SystemMessage {
+                uuid: "s1".into(),
+                message: "Ctx".into(),
+            }),
             Message::Assistant(AssistantMessage {
                 uuid: "a1".into(),
                 content: vec![],

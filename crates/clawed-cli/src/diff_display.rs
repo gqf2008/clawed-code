@@ -258,7 +258,10 @@ mod tests {
 
     #[test]
     fn diff_stats_display() {
-        let stats = DiffStats { added: 5, removed: 3 };
+        let stats = DiffStats {
+            added: 5,
+            removed: 3,
+        };
         let s = format!("{}", stats);
         assert!(s.contains("+5"));
         assert!(s.contains("-3"));

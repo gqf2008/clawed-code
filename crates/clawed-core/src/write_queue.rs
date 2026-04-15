@@ -230,10 +230,7 @@ async fn drain_loop(
 }
 
 /// Flush buffered entries to disk, grouped by file path.
-async fn flush_buffer(
-    buffer: &mut Vec<QueuedEntry>,
-    state: &Arc<Mutex<WriteQueueState>>,
-) {
+async fn flush_buffer(buffer: &mut Vec<QueuedEntry>, state: &Arc<Mutex<WriteQueueState>>) {
     use std::collections::HashMap;
     use std::io::Write;
 
@@ -288,7 +285,10 @@ async fn flush_buffer(
         s.buffered_count = 0;
     }
 
-    debug!("WriteQueue: flushed {} entries, {} bytes", entry_count, total_bytes);
+    debug!(
+        "WriteQueue: flushed {} entries, {} bytes",
+        entry_count, total_bytes
+    );
 }
 
 #[cfg(test)]

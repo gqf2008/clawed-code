@@ -26,7 +26,9 @@ impl SyntheticOutputTool {
 
     /// Create an output tool that validates against the given JSON Schema.
     pub fn with_schema(schema: Value) -> Self {
-        Self { schema: Some(schema) }
+        Self {
+            schema: Some(schema),
+        }
     }
 
     /// Basic structural validation against schema.
@@ -86,7 +88,9 @@ impl SyntheticOutputTool {
 }
 
 impl Default for SyntheticOutputTool {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 fn value_type_name(v: &Value) -> &'static str {
@@ -102,8 +106,12 @@ fn value_type_name(v: &Value) -> &'static str {
 
 #[async_trait]
 impl Tool for SyntheticOutputTool {
-    fn name(&self) -> &'static str { "SyntheticOutput" }
-    fn category(&self) -> ToolCategory { ToolCategory::Session }
+    fn name(&self) -> &'static str {
+        "SyntheticOutput"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Session
+    }
 
     fn description(&self) -> &'static str {
         "Return structured output in the requested format. \
@@ -124,8 +132,12 @@ impl Tool for SyntheticOutputTool {
         }
     }
 
-    fn is_read_only(&self) -> bool { true }
-    fn is_concurrency_safe(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
+    fn is_concurrency_safe(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         // Validate against schema if provided
@@ -187,7 +199,9 @@ mod tests {
             }
         }));
 
-        assert!(tool.validate(&json!({"name": "X", "count": 5, "active": true})).is_ok());
+        assert!(tool
+            .validate(&json!({"name": "X", "count": 5, "active": true}))
+            .is_ok());
         assert!(tool.validate(&json!({"name": 123})).is_err());
         assert!(tool.validate(&json!({"count": "five"})).is_err());
         assert!(tool.validate(&json!({"active": "yes"})).is_err());

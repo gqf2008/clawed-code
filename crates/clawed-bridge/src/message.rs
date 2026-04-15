@@ -86,11 +86,7 @@ pub struct InboundMessage {
 
 impl InboundMessage {
     /// Create a simple text message.
-    pub fn text(
-        channel_id: ChannelId,
-        sender: SenderInfo,
-        text: impl Into<String>,
-    ) -> Self {
+    pub fn text(channel_id: ChannelId, sender: SenderInfo, text: impl Into<String>) -> Self {
         Self {
             channel_id,
             sender,
@@ -251,12 +247,15 @@ mod tests {
     fn outbound_with_code_blocks() {
         let msg = OutboundMessage {
             text: "Here's the code:".into(),
-            code_blocks: vec![
-                CodeBlock { language: Some("rust".into()), code: "fn main() {}".into() },
-            ],
-            tool_results: vec![
-                ToolResult { tool_name: "FileRead".into(), summary: "Read config.rs".into(), success: true },
-            ],
+            code_blocks: vec![CodeBlock {
+                language: Some("rust".into()),
+                code: "fn main() {}".into(),
+            }],
+            tool_results: vec![ToolResult {
+                tool_name: "FileRead".into(),
+                summary: "Read config.rs".into(),
+                success: true,
+            }],
             is_streaming: false,
             message_id: None,
         };

@@ -48,12 +48,17 @@ impl TelegramAdapter {
 
     /// Build the API URL for a method.
     fn api_url(&self, method: &str) -> String {
-        format!("{}/bot{}/{}", TELEGRAM_API_BASE, self.config.bot_token, method)
+        format!(
+            "{}/bot{}/{}",
+            TELEGRAM_API_BASE, self.config.bot_token, method
+        )
     }
 
     /// Send a text message to a chat.
     async fn send_text(&self, chat_id: &str, text: &str) -> AdapterResult<String> {
-        let resp = self.http.post(self.api_url("sendMessage"))
+        let resp = self
+            .http
+            .post(self.api_url("sendMessage"))
             .json(&serde_json::json!({
                 "chat_id": chat_id,
                 "text": text,
@@ -65,7 +70,8 @@ impl TelegramAdapter {
         let body: serde_json::Value = resp.json().await?;
 
         if body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-            let desc = body.get("description")
+            let desc = body
+                .get("description")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
             return Err(AdapterError::PlatformApi(format!("Telegram API: {}", desc)));
@@ -82,7 +88,9 @@ impl TelegramAdapter {
 
     /// Send a typing action to a chat.
     async fn send_chat_action(&self, chat_id: &str) -> AdapterResult<()> {
-        let _ = self.http.post(self.api_url("sendChatAction"))
+        let _ = self
+            .http
+            .post(self.api_url("sendChatAction"))
             .json(&serde_json::json!({
                 "chat_id": chat_id,
                 "action": "typing",
@@ -101,15 +109,20 @@ impl TelegramAdapter {
         let from = message.get("from")?;
         let user_id = from.get("id").and_then(|v| v.as_i64())?;
 
-        let first_name = from.get("first_name").and_then(|v| v.as_str()).unwrap_or("");
+        let first_name = from
+            .get("first_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let last_name = from.get("last_name").and_then(|v| v.as_str()).unwrap_or("");
         let display_name = format!("{} {}", first_name, last_name).trim().to_string();
 
-        let message_id = message.get("message_id")
+        let message_id = message
+            .get("message_id")
             .and_then(|v| v.as_i64())
             .map(|id| id.to_string());
 
-        let reply_to = message.get("reply_to_message")
+        let reply_to = message
+            .get("reply_to_message")
             .and_then(|v| v.get("message_id"))
             .and_then(|v| v.as_i64())
             .map(|id| id.to_string());
@@ -182,16 +195,21 @@ impl ChannelAdapter for TelegramAdapter {
                     match poll_result {
                         Ok(resp) => {
                             if let Ok(body) = resp.json::<serde_json::Value>().await {
-                                if let Some(updates) = body.get("result").and_then(|v| v.as_array()) {
+                                if let Some(updates) = body.get("result").and_then(|v| v.as_array())
+                                {
                                     for update in updates {
-                                        if let Some(update_id) = update.get("update_id").and_then(|v| v.as_i64()) {
+                                        if let Some(update_id) =
+                                            update.get("update_id").and_then(|v| v.as_i64())
+                                        {
                                             offset = Some(update_id + 1);
                                         }
                                         if let Some(msg) = TelegramAdapter::parse_update(update) {
                                             // Check allowed chats
                                             if let Some(ref ids) = allowed_chat_ids {
                                                 if !ids.is_empty() {
-                                                    if let Ok(cid) = msg.channel_id.channel.parse::<i64>() {
+                                                    if let Ok(cid) =
+                                                        msg.channel_id.channel.parse::<i64>()
+                                                    {
                                                         if !ids.contains(&cid) {
                                                             continue;
                                                         }

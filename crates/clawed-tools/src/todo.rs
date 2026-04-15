@@ -36,21 +36,23 @@ fn format_todos(todos: &[TodoItem]) -> String {
     let mut out = format!("Todo list ({} items):\n", todos.len());
     for t in todos {
         let icon = match t.status.as_str() {
-            "completed"  => "✓",
+            "completed" => "✓",
             "in_progress" => "→",
-            _            => "○",
+            _ => "○",
         };
         let pri = match t.priority.as_str() {
-            "high"   => "❗",
+            "high" => "❗",
             "medium" => "·",
-            _        => " ",
+            _ => " ",
         };
         out.push_str(&format!("  {} {} [{}] {}\n", icon, pri, t.id, t.content));
     }
-    let pending  = todos.iter().filter(|t| t.status == "pending").count();
-    let in_prog  = todos.iter().filter(|t| t.status == "in_progress").count();
-    let done     = todos.iter().filter(|t| t.status == "completed").count();
-    out.push_str(&format!("\nSummary: {pending} pending, {in_prog} in_progress, {done} completed"));
+    let pending = todos.iter().filter(|t| t.status == "pending").count();
+    let in_prog = todos.iter().filter(|t| t.status == "in_progress").count();
+    let done = todos.iter().filter(|t| t.status == "completed").count();
+    out.push_str(&format!(
+        "\nSummary: {pending} pending, {in_prog} in_progress, {done} completed"
+    ));
     out
 }
 
@@ -60,7 +62,9 @@ pub struct TodoWriteTool;
 
 #[async_trait]
 impl Tool for TodoWriteTool {
-    fn name(&self) -> &'static str { "TodoWrite" }
+    fn name(&self) -> &'static str {
+        "TodoWrite"
+    }
 
     fn description(&self) -> &'static str {
         "Create or update the structured task list for this session. The list is the \
@@ -97,16 +101,20 @@ impl Tool for TodoWriteTool {
         let path = todos_path(&context.cwd);
 
         let new_todos: Vec<TodoItem> = match serde_json::from_value(input["todos"].clone()) {
-            Ok(t)  => t,
+            Ok(t) => t,
             Err(e) => return Ok(ToolResult::error(format!("Invalid todos format: {e}"))),
         };
 
         // Validate: at most one in_progress at a time
-        let in_progress_count = new_todos.iter().filter(|t| t.status == "in_progress").count();
+        let in_progress_count = new_todos
+            .iter()
+            .filter(|t| t.status == "in_progress")
+            .count();
         if in_progress_count > 1 {
             return Ok(ToolResult::error(
                 "At most one task can be in_progress at a time. \
-                 Mark only the task you are currently working on as in_progress.".to_string(),
+                 Mark only the task you are currently working on as in_progress."
+                    .to_string(),
             ));
         }
 
@@ -114,14 +122,21 @@ impl Tool for TodoWriteTool {
         let json_str = serde_json::to_string_pretty(&new_todos)?;
         tokio::fs::write(&path, &json_str).await?;
 
-        let pending  = new_todos.iter().filter(|t| t.status == "pending").count();
-        let in_prog  = new_todos.iter().filter(|t| t.status == "in_progress").count();
-        let done     = new_todos.iter().filter(|t| t.status == "completed").count();
+        let pending = new_todos.iter().filter(|t| t.status == "pending").count();
+        let in_prog = new_todos
+            .iter()
+            .filter(|t| t.status == "in_progress")
+            .count();
+        let done = new_todos.iter().filter(|t| t.status == "completed").count();
 
         Ok(ToolResult::text(format!(
             "Todos updated ({} total: {} pending, {} in_progress, {} completed). \
              Previously had {} todos.\n\n{}",
-            new_todos.len(), pending, in_prog, done, old_len,
+            new_todos.len(),
+            pending,
+            in_prog,
+            done,
+            old_len,
             format_todos(&new_todos)
         )))
     }
@@ -133,7 +148,9 @@ pub struct TodoReadTool;
 
 #[async_trait]
 impl Tool for TodoReadTool {
-    fn name(&self) -> &'static str { "TodoRead" }
+    fn name(&self) -> &'static str {
+        "TodoRead"
+    }
 
     fn description(&self) -> &'static str {
         "Read the current task list to check progress. Returns all todos with their \
@@ -145,7 +162,9 @@ impl Tool for TodoReadTool {
         json!({ "type": "object", "properties": {} })
     }
 
-    fn is_read_only(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
 
     async fn call(&self, _input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
         let todos = read_todos(&context.cwd).await;
@@ -203,9 +222,24 @@ mod tests {
     #[test]
     fn format_todos_mixed_statuses() {
         let todos = vec![
-            TodoItem { id: "a".into(), content: "Pending task".into(), status: "pending".into(), priority: "low".into() },
-            TodoItem { id: "b".into(), content: "Active task".into(), status: "in_progress".into(), priority: "medium".into() },
-            TodoItem { id: "c".into(), content: "Done task".into(), status: "completed".into(), priority: "high".into() },
+            TodoItem {
+                id: "a".into(),
+                content: "Pending task".into(),
+                status: "pending".into(),
+                priority: "low".into(),
+            },
+            TodoItem {
+                id: "b".into(),
+                content: "Active task".into(),
+                status: "in_progress".into(),
+                priority: "medium".into(),
+            },
+            TodoItem {
+                id: "c".into(),
+                content: "Done task".into(),
+                status: "completed".into(),
+                priority: "high".into(),
+            },
         ];
         let result = format_todos(&todos);
         assert!(result.contains("○"), "pending icon");
@@ -218,9 +252,24 @@ mod tests {
     #[test]
     fn format_todos_priority_icons() {
         let todos = vec![
-            TodoItem { id: "h".into(), content: "High".into(), status: "pending".into(), priority: "high".into() },
-            TodoItem { id: "m".into(), content: "Medium".into(), status: "pending".into(), priority: "medium".into() },
-            TodoItem { id: "l".into(), content: "Low".into(), status: "pending".into(), priority: "low".into() },
+            TodoItem {
+                id: "h".into(),
+                content: "High".into(),
+                status: "pending".into(),
+                priority: "high".into(),
+            },
+            TodoItem {
+                id: "m".into(),
+                content: "Medium".into(),
+                status: "pending".into(),
+                priority: "medium".into(),
+            },
+            TodoItem {
+                id: "l".into(),
+                content: "Low".into(),
+                status: "pending".into(),
+                priority: "low".into(),
+            },
         ];
         let result = format_todos(&todos);
         assert!(result.contains("❗"), "high priority should use ❗ icon");
@@ -250,4 +299,3 @@ mod tests {
         assert!(!TodoWriteTool.is_read_only());
     }
 }
-

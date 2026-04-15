@@ -8,10 +8,16 @@ pub struct LsTool;
 
 #[async_trait]
 impl Tool for LsTool {
-    fn name(&self) -> &'static str { "LS" }
-    fn category(&self) -> ToolCategory { ToolCategory::FileSystem }
+    fn name(&self) -> &'static str {
+        "LS"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::FileSystem
+    }
 
-    fn is_read_only(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
 
     fn description(&self) -> &'static str {
         "Lists files and directories in a given path. Use this to explore project structure \
@@ -40,7 +46,11 @@ impl Tool for LsTool {
         let raw_path = input["path"].as_str().unwrap_or(".");
         let ignore: Vec<String> = input["ignore"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let dir = match path_util::resolve_path_safe(raw_path, &context.cwd) {
@@ -49,10 +59,16 @@ impl Tool for LsTool {
         };
 
         if !dir.exists() {
-            return Ok(ToolResult::error(format!("Path does not exist: {}", dir.display())));
+            return Ok(ToolResult::error(format!(
+                "Path does not exist: {}",
+                dir.display()
+            )));
         }
         if !dir.is_dir() {
-            return Ok(ToolResult::error(format!("Not a directory: {}", dir.display())));
+            return Ok(ToolResult::error(format!(
+                "Not a directory: {}",
+                dir.display()
+            )));
         }
 
         let mut entries = Vec::new();
@@ -115,7 +131,9 @@ fn human_size(bytes: u64) -> String {
 
 /// Minimal glob matching: supports leading/trailing `*` wildcards and `*x*` contains.
 fn glob_match(pattern: &str, name: &str) -> bool {
-    if pattern == "*" { return true; }
+    if pattern == "*" {
+        return true;
+    }
     // Handle *needle* (contains) before the prefix/suffix checks
     if pattern.starts_with('*') && pattern.ends_with('*') && pattern.len() >= 2 {
         return name.contains(&pattern[1..pattern.len() - 1]);
@@ -132,8 +150,8 @@ fn glob_match(pattern: &str, name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clawed_core::tool::AbortSignal;
     use clawed_core::permissions::PermissionMode;
+    use clawed_core::tool::AbortSignal;
     use tempfile::TempDir;
 
     fn ctx(dir: &std::path::Path) -> ToolContext {

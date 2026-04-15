@@ -17,10 +17,25 @@ pub const MAX_TOOL_RESULT_CHARS: usize = 50_000;
 
 /// Tools whose results are compactable (safe to clear after they've been consumed).
 const COMPACTABLE_TOOLS: &[&str] = &[
-    "Read", "Bash", "PowerShell", "Grep", "Glob",
-    "WebSearch", "WebFetch", "Edit", "Write", "MultiEdit",
-    "ListDir", "FileRead", "FileEdit", "FileWrite",
-    "GlobTool", "GrepTool", "BashTool", "WebSearchTool", "WebFetchTool",
+    "Read",
+    "Bash",
+    "PowerShell",
+    "Grep",
+    "Glob",
+    "WebSearch",
+    "WebFetch",
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "ListDir",
+    "FileRead",
+    "FileEdit",
+    "FileWrite",
+    "GlobTool",
+    "GrepTool",
+    "BashTool",
+    "WebSearchTool",
+    "WebFetchTool",
 ];
 
 // ── Clear old tool results ───────────────────────────────────────────────────
@@ -34,7 +49,8 @@ const COMPACTABLE_TOOLS: &[&str] = &[
 pub fn clear_old_tool_results(messages: &mut [Message], keep_recent: usize) -> usize {
     // Collect all compactable tool result IDs, newest first.
     // We need to know which tool_use_id maps to which tool name.
-    let mut tool_use_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut tool_use_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     for msg in messages.iter() {
         if let Message::Assistant(a) = msg {
             for block in &a.content {
@@ -52,7 +68,10 @@ pub fn clear_old_tool_results(messages: &mut [Message], keep_recent: usize) -> u
             for block in &u.content {
                 if let ContentBlock::ToolResult { tool_use_id, .. } = block {
                     if let Some(name) = tool_use_names.get(tool_use_id) {
-                        if COMPACTABLE_TOOLS.iter().any(|t| t.eq_ignore_ascii_case(name)) {
+                        if COMPACTABLE_TOOLS
+                            .iter()
+                            .any(|t| t.eq_ignore_ascii_case(name))
+                        {
                             compactable_ids.push(tool_use_id.clone());
                         }
                     }
@@ -76,7 +95,12 @@ pub fn clear_old_tool_results(messages: &mut [Message], keep_recent: usize) -> u
     for msg in messages.iter_mut() {
         if let Message::User(u) = msg {
             for block in u.content.iter_mut() {
-                if let ContentBlock::ToolResult { tool_use_id, content, .. } = block {
+                if let ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    ..
+                } = block
+                {
                     if clear_set.contains(tool_use_id.as_str()) {
                         // Check if already cleared
                         let already_cleared = content.len() == 1
@@ -184,13 +208,16 @@ pub fn snip_old_messages(messages: &mut Vec<Message>, keep_recent_pairs: usize) 
     // Insert boundary message at the start
     if removed > 0 {
         use clawed_core::message::SystemMessage;
-        messages.insert(0, Message::System(SystemMessage {
-            uuid: uuid::Uuid::new_v4().to_string(),
-            message: format!(
-                "[{} earlier messages snipped to manage context size]",
-                removed
-            ),
-        }));
+        messages.insert(
+            0,
+            Message::System(SystemMessage {
+                uuid: uuid::Uuid::new_v4().to_string(),
+                message: format!(
+                    "[{} earlier messages snipped to manage context size]",
+                    removed
+                ),
+            }),
+        );
     }
 
     removed
@@ -336,11 +363,15 @@ mod tests {
         for i in 0..5 {
             msgs.push(Message::User(UserMessage {
                 uuid: format!("u{i}"),
-                content: vec![ContentBlock::Text { text: format!("question {i}") }],
+                content: vec![ContentBlock::Text {
+                    text: format!("question {i}"),
+                }],
             }));
             msgs.push(Message::Assistant(AssistantMessage {
                 uuid: format!("a{i}"),
-                content: vec![ContentBlock::Text { text: format!("answer {i}") }],
+                content: vec![ContentBlock::Text {
+                    text: format!("answer {i}"),
+                }],
                 stop_reason: None,
                 usage: None,
             }));

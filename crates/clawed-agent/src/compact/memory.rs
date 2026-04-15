@@ -73,7 +73,9 @@ pub fn parse_extracted_memories(response: &str) -> Vec<ExtractedMemory> {
     // Try to find JSON array in response (Claude sometimes wraps in markdown)
     if let Some(start) = response.find('[') {
         if let Some(end) = response.rfind(']') {
-            if let Ok(memories) = serde_json::from_str::<Vec<ExtractedMemory>>(&response[start..=end]) {
+            if let Ok(memories) =
+                serde_json::from_str::<Vec<ExtractedMemory>>(&response[start..=end])
+            {
                 return memories;
             }
         }
@@ -96,9 +98,17 @@ pub fn save_extracted_memories(
 
     let mut saved = 0;
     for mem in memories {
-        let slug: String = mem.fact.chars()
+        let slug: String = mem
+            .fact
+            .chars()
             .take(40)
-            .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+            .map(|c| {
+                if c.is_alphanumeric() {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
             .collect();
         let slug = slug.trim_matches('-').to_string();
         let filename = format!(
@@ -114,7 +124,9 @@ pub fn save_extracted_memories(
             &format!("{} (source: {})", mem.fact, mem.source),
             mem.memory_type(),
             &format!("{}\n\nSource: {}", mem.fact, mem.source),
-        ).is_ok() {
+        )
+        .is_ok()
+        {
             saved += 1;
         }
     }

@@ -30,13 +30,22 @@ mod tests {
     #[test]
     fn test_parse_bypass() {
         assert_eq!(parse_permission_mode("bypass"), PermissionMode::BypassAll);
-        assert_eq!(parse_permission_mode("bypassPermissions"), PermissionMode::BypassAll);
+        assert_eq!(
+            parse_permission_mode("bypassPermissions"),
+            PermissionMode::BypassAll
+        );
     }
 
     #[test]
     fn test_parse_accept_edits() {
-        assert_eq!(parse_permission_mode("acceptEdits"), PermissionMode::AcceptEdits);
-        assert_eq!(parse_permission_mode("accept-edits"), PermissionMode::AcceptEdits);
+        assert_eq!(
+            parse_permission_mode("acceptEdits"),
+            PermissionMode::AcceptEdits
+        );
+        assert_eq!(
+            parse_permission_mode("accept-edits"),
+            PermissionMode::AcceptEdits
+        );
     }
 
     #[test]

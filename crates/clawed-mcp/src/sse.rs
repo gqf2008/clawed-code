@@ -17,7 +17,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{debug, info, warn};
 
-use crate::protocol::{JsonRpcResponse, JsonRpcNotification, JsonRpcRequest};
+use crate::protocol::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
 use crate::types::McpSseConfig;
 
 struct PendingRequest {
@@ -99,14 +99,16 @@ impl SseTransport {
                     anyhow::bail!("SSE stream ended before receiving endpoint event");
                 }
                 Err(_) => {
-                    anyhow::bail!("Timeout waiting for SSE endpoint event ({}s)", endpoint_timeout.as_secs());
+                    anyhow::bail!(
+                        "Timeout waiting for SSE endpoint event ({}s)",
+                        endpoint_timeout.as_secs()
+                    );
                 }
             }
         }
 
-        let post_url = post_url.ok_or_else(|| {
-            anyhow::anyhow!("SSE server closed before sending endpoint event")
-        })?;
+        let post_url = post_url
+            .ok_or_else(|| anyhow::anyhow!("SSE server closed before sending endpoint event"))?;
         info!("MCP SSE: POST endpoint = {}", post_url);
 
         let pending: Arc<Mutex<HashMap<u64, PendingRequest>>> =
@@ -257,7 +259,13 @@ impl SseTransport {
         }
 
         let body = serde_json::to_string(&notification)?;
-        let _ = self.http.post(&self.post_url).headers(header_map).body(body).send().await?;
+        let _ = self
+            .http
+            .post(&self.post_url)
+            .headers(header_map)
+            .body(body)
+            .send()
+            .await?;
         Ok(())
     }
 
@@ -284,7 +292,11 @@ fn parse_sse_endpoint_event(block: &str) -> Option<String> {
             data = Some(rest.trim().to_string());
         }
     }
-    if event_type.as_deref() == Some("endpoint") { data } else { None }
+    if event_type.as_deref() == Some("endpoint") {
+        data
+    } else {
+        None
+    }
 }
 
 fn extract_sse_data(block: &str) -> Option<String> {
@@ -336,7 +348,10 @@ mod tests {
     #[test]
     fn parse_endpoint_event() {
         let block = "event: endpoint\ndata: /messages";
-        assert_eq!(parse_sse_endpoint_event(block), Some("/messages".to_string()));
+        assert_eq!(
+            parse_sse_endpoint_event(block),
+            Some("/messages".to_string())
+        );
     }
 
     #[test]
@@ -348,21 +363,33 @@ mod tests {
     #[test]
     fn extract_data_field() {
         let block = "event: message\ndata: {\"jsonrpc\":\"2.0\"}";
-        assert_eq!(extract_sse_data(block), Some("{\"jsonrpc\":\"2.0\"}".to_string()));
+        assert_eq!(
+            extract_sse_data(block),
+            Some("{\"jsonrpc\":\"2.0\"}".to_string())
+        );
     }
 
     #[test]
     fn resolve_relative_url() {
-        assert_eq!(resolve_url("https://mcp.example.com/sse", "/messages"), "https://mcp.example.com/messages");
+        assert_eq!(
+            resolve_url("https://mcp.example.com/sse", "/messages"),
+            "https://mcp.example.com/messages"
+        );
     }
 
     #[test]
     fn resolve_absolute_url() {
-        assert_eq!(resolve_url("https://mcp.example.com/sse", "https://other.com/api"), "https://other.com/api");
+        assert_eq!(
+            resolve_url("https://mcp.example.com/sse", "https://other.com/api"),
+            "https://other.com/api"
+        );
     }
 
     #[test]
     fn resolve_url_no_path() {
-        assert_eq!(resolve_url("https://mcp.example.com", "/messages"), "https://mcp.example.com/messages");
+        assert_eq!(
+            resolve_url("https://mcp.example.com", "/messages"),
+            "https://mcp.example.com/messages"
+        );
     }
 }

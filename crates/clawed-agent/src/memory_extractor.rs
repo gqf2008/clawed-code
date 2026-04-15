@@ -35,14 +35,10 @@ const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 // ── Tool permission for extraction agent ────────────────────────────────────
 
 /// Tools the memory extraction agent is allowed to use.
-const ALLOWED_READONLY_TOOLS: &[&str] = &[
-    "Read", "Grep", "Glob", "Bash",
-];
+const ALLOWED_READONLY_TOOLS: &[&str] = &["Read", "Grep", "Glob", "Bash"];
 
 /// Tools allowed for writing (restricted to memory directory only).
-const ALLOWED_WRITE_TOOLS: &[&str] = &[
-    "Edit", "Write",
-];
+const ALLOWED_WRITE_TOOLS: &[&str] = &["Edit", "Write"];
 
 /// Check if a tool is allowed for the memory extraction agent.
 ///
@@ -147,10 +143,7 @@ impl MemoryExtractor {
     /// 4. No overlap (not already extracting)
     /// 5. Throttle interval reached
     /// 6. Main agent hasn't written to memory since last extraction
-    pub fn should_extract(
-        &self,
-        messages: &[Message],
-    ) -> bool {
+    pub fn should_extract(&self, messages: &[Message]) -> bool {
         if !self.enabled {
             return false;
         }
@@ -197,10 +190,7 @@ impl MemoryExtractor {
     }
 
     /// Build the extraction prompt from new messages since cursor.
-    pub fn build_extraction_prompt(
-        &self,
-        messages: &[Message],
-    ) -> Option<String> {
+    pub fn build_extraction_prompt(&self, messages: &[Message]) -> Option<String> {
         let new_count = self.count_new_messages(messages);
         if new_count == 0 {
             return None;
@@ -245,11 +235,7 @@ impl MemoryExtractor {
     /// Process extraction results: parse, save, update cursor and index.
     ///
     /// Returns the number of memories saved.
-    pub fn process_results(
-        &mut self,
-        response: &str,
-        messages: &[Message],
-    ) -> usize {
+    pub fn process_results(&mut self, response: &str, messages: &[Message]) -> usize {
         let memories = compact_mem::parse_extracted_memories(response);
         if memories.is_empty() {
             self.advance_cursor(messages);
@@ -280,11 +266,7 @@ impl MemoryExtractor {
         if file_names.is_empty() {
             format!("{} memories saved", saved_count)
         } else {
-            format!(
-                "{} memories saved: {}",
-                saved_count,
-                file_names.join(", ")
-            )
+            format!("{} memories saved: {}", saved_count, file_names.join(", "))
         }
     }
 
@@ -311,12 +293,11 @@ impl MemoryExtractor {
     fn has_memory_writes_since(&self, messages: &[Message]) -> bool {
         let start_idx = match &self.last_cursor_uuid {
             None => 0,
-            Some(cursor) => {
-                messages.iter()
-                    .position(|m| m.uuid() == cursor)
-                    .map(|i| i + 1)
-                    .unwrap_or(0)
-            }
+            Some(cursor) => messages
+                .iter()
+                .position(|m| m.uuid() == cursor)
+                .map(|i| i + 1)
+                .unwrap_or(0),
         };
 
         for msg in &messages[start_idx..] {
@@ -363,7 +344,10 @@ impl MemoryExtractor {
         };
         let mut lock = self.pending_context.lock().await;
         *lock = Some(pending);
-        debug!("Pending extraction queued (direct_writes={})", has_direct_writes);
+        debug!(
+            "Pending extraction queued (direct_writes={})",
+            has_direct_writes
+        );
     }
 
     /// Check if there is a pending extraction waiting.
@@ -383,19 +367,16 @@ impl MemoryExtractor {
     /// for the current extraction to complete, then runs the pending one.
     ///
     /// Returns the number of memories saved (0 if nothing was pending or timed out).
-    pub async fn drain_pending_extraction(
-        &mut self,
-        timeout: Option<Duration>,
-    ) -> usize {
+    pub async fn drain_pending_extraction(&mut self, timeout: Option<Duration>) -> usize {
         let timeout = timeout.unwrap_or(DEFAULT_DRAIN_TIMEOUT);
 
         // Wait for in-progress extraction to finish
         if self.in_progress.load(Ordering::Relaxed) {
-            debug!("Drain: waiting for in-progress extraction (timeout {:?})", timeout);
-            let result = tokio::time::timeout(
-                timeout,
-                self.drain_notify.notified(),
-            ).await;
+            debug!(
+                "Drain: waiting for in-progress extraction (timeout {:?})",
+                timeout
+            );
+            let result = tokio::time::timeout(timeout, self.drain_notify.notified()).await;
 
             if result.is_err() {
                 warn!("Drain: timed out waiting for in-progress extraction");
@@ -407,23 +388,28 @@ impl MemoryExtractor {
         let pending = self.pending_context.lock().await.take();
         if let Some(pending) = pending {
             // Re-check for direct writes (main agent may have written since queueing)
-            if pending.has_direct_writes || self.has_memory_writes_since(&pending.message_snapshot) {
+            if pending.has_direct_writes || self.has_memory_writes_since(&pending.message_snapshot)
+            {
                 debug!("Drain: skipping pending extraction — main agent wrote directly");
                 return 0;
             }
-            debug!("Drain: executing pending extraction ({} messages)", pending.message_snapshot.len());
+            debug!(
+                "Drain: executing pending extraction ({} messages)",
+                pending.message_snapshot.len()
+            );
             if !self.try_acquire() {
                 debug!("Drain: overlap guard still held, skipping");
                 return 0;
             }
-            let saved = if let Some(_prompt) = self.build_extraction_prompt(&pending.message_snapshot) {
-                // Build and process: in a full integration, the prompt would be sent
-                // to a sub-agent. Here we run the local extraction pipeline.
-                let response = String::new(); // Placeholder: agent would return response
-                self.process_results(&response, &pending.message_snapshot)
-            } else {
-                0
-            };
+            let saved =
+                if let Some(_prompt) = self.build_extraction_prompt(&pending.message_snapshot) {
+                    // Build and process: in a full integration, the prompt would be sent
+                    // to a sub-agent. Here we run the local extraction pipeline.
+                    let response = String::new(); // Placeholder: agent would return response
+                    self.process_results(&response, &pending.message_snapshot)
+                } else {
+                    0
+                };
             self.release();
             self.notify_drain();
             saved
@@ -505,7 +491,11 @@ pub fn find_relevant_memories(
     // Tokenize query into lowercase keywords (>= 3 chars)
     let keywords: Vec<String> = query
         .split_whitespace()
-        .map(|w| w.to_lowercase().trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+        .map(|w| {
+            w.to_lowercase()
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_string()
+        })
         .filter(|w| w.len() >= 3)
         .collect();
 
@@ -523,9 +513,11 @@ pub fn find_relevant_memories(
                 h.filename,
                 h.name.as_deref().unwrap_or(""),
                 h.description.as_deref().unwrap_or("")
-            ).to_lowercase();
+            )
+            .to_lowercase();
 
-            let score = keywords.iter()
+            let score = keywords
+                .iter()
                 .filter(|kw| searchable.contains(kw.as_str()))
                 .count();
             (score, h)
@@ -533,10 +525,7 @@ pub fn find_relevant_memories(
         .collect();
 
     // Sort by score (descending), then by mtime (newest first)
-    scored.sort_by(|a, b| {
-        b.0.cmp(&a.0)
-            .then_with(|| b.1.mtime.cmp(&a.1.mtime))
-    });
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.mtime.cmp(&a.1.mtime)));
 
     scored
         .into_iter()
@@ -554,14 +543,18 @@ mod tests {
     fn make_user_msg(uuid: &str, text: &str) -> Message {
         Message::User(UserMessage {
             uuid: uuid.to_string(),
-            content: vec![ContentBlock::Text { text: text.to_string() }],
+            content: vec![ContentBlock::Text {
+                text: text.to_string(),
+            }],
         })
     }
 
     fn make_assistant_msg(uuid: &str, text: &str) -> Message {
         Message::Assistant(AssistantMessage {
             uuid: uuid.to_string(),
-            content: vec![ContentBlock::Text { text: text.to_string() }],
+            content: vec![ContentBlock::Text {
+                text: text.to_string(),
+            }],
             stop_reason: None,
             usage: None,
         })
@@ -625,8 +618,7 @@ mod tests {
     #[test]
     fn should_extract_subagent() {
         let tmp = tempfile::tempdir().unwrap();
-        let ext = MemoryExtractor::new(tmp.path().to_path_buf())
-            .with_subagent(true);
+        let ext = MemoryExtractor::new(tmp.path().to_path_buf()).with_subagent(true);
         ext.turns_since_last.store(5, Ordering::Relaxed);
         assert!(!ext.should_extract(&[]));
     }
@@ -882,8 +874,7 @@ mod tests {
     #[test]
     fn should_extract_remote_blocked() {
         let tmp = tempfile::tempdir().unwrap();
-        let ext = MemoryExtractor::new(tmp.path().to_path_buf())
-            .with_remote(true);
+        let ext = MemoryExtractor::new(tmp.path().to_path_buf()).with_remote(true);
         ext.turns_since_last.store(5, Ordering::Relaxed);
         assert!(!ext.should_extract(&[]));
     }

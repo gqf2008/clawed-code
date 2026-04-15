@@ -4,9 +4,7 @@
 //! - Mouse: click, double-click, move, scroll
 //! - Keyboard: type text, press/release keys, key combinations
 
-use enigo::{
-    Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings,
-};
+use enigo::{Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -51,9 +49,11 @@ fn create_enigo() -> anyhow::Result<Enigo> {
 pub fn click(x: i32, y: i32, button: MouseButton) -> anyhow::Result<()> {
     debug!(x, y, ?button, "click");
     let mut enigo = create_enigo()?;
-    enigo.move_mouse(x, y, Coordinate::Abs)
+    enigo
+        .move_mouse(x, y, Coordinate::Abs)
         .map_err(|e| anyhow::anyhow!("move_mouse failed: {e}"))?;
-    enigo.button(button.into(), Direction::Click)
+    enigo
+        .button(button.into(), Direction::Click)
         .map_err(|e| anyhow::anyhow!("click failed: {e}"))?;
     Ok(())
 }
@@ -62,11 +62,14 @@ pub fn click(x: i32, y: i32, button: MouseButton) -> anyhow::Result<()> {
 pub fn double_click(x: i32, y: i32, button: MouseButton) -> anyhow::Result<()> {
     debug!(x, y, ?button, "double_click");
     let mut enigo = create_enigo()?;
-    enigo.move_mouse(x, y, Coordinate::Abs)
+    enigo
+        .move_mouse(x, y, Coordinate::Abs)
         .map_err(|e| anyhow::anyhow!("move_mouse failed: {e}"))?;
-    enigo.button(button.into(), Direction::Click)
+    enigo
+        .button(button.into(), Direction::Click)
         .map_err(|e| anyhow::anyhow!("click 1 failed: {e}"))?;
-    enigo.button(button.into(), Direction::Click)
+    enigo
+        .button(button.into(), Direction::Click)
         .map_err(|e| anyhow::anyhow!("click 2 failed: {e}"))?;
     Ok(())
 }
@@ -75,7 +78,8 @@ pub fn double_click(x: i32, y: i32, button: MouseButton) -> anyhow::Result<()> {
 pub fn mouse_move(x: i32, y: i32) -> anyhow::Result<()> {
     debug!(x, y, "mouse_move");
     let mut enigo = create_enigo()?;
-    enigo.move_mouse(x, y, Coordinate::Abs)
+    enigo
+        .move_mouse(x, y, Coordinate::Abs)
         .map_err(|e| anyhow::anyhow!("move_mouse failed: {e}"))?;
     Ok(())
 }
@@ -84,7 +88,8 @@ pub fn mouse_move(x: i32, y: i32) -> anyhow::Result<()> {
 pub fn scroll(x: i32, y: i32, direction: ScrollDirection, amount: i32) -> anyhow::Result<()> {
     debug!(x, y, ?direction, amount, "scroll");
     let mut enigo = create_enigo()?;
-    enigo.move_mouse(x, y, Coordinate::Abs)
+    enigo
+        .move_mouse(x, y, Coordinate::Abs)
         .map_err(|e| anyhow::anyhow!("move_mouse failed: {e}"))?;
 
     match direction {
@@ -100,7 +105,8 @@ pub fn scroll(x: i32, y: i32, direction: ScrollDirection, amount: i32) -> anyhow
 /// Get the current cursor position.
 pub fn cursor_position() -> anyhow::Result<(i32, i32)> {
     let enigo = create_enigo()?;
-    let (x, y) = enigo.location()
+    let (x, y) = enigo
+        .location()
         .map_err(|e| anyhow::anyhow!("cursor_position failed: {e}"))?;
     Ok((x, y))
 }
@@ -111,7 +117,8 @@ pub fn cursor_position() -> anyhow::Result<(i32, i32)> {
 pub fn type_text(text: &str) -> anyhow::Result<()> {
     debug!(len = text.len(), "type_text");
     let mut enigo = create_enigo()?;
-    enigo.text(text)
+    enigo
+        .text(text)
         .map_err(|e| anyhow::anyhow!("type_text failed: {e}"))?;
     Ok(())
 }
@@ -134,17 +141,20 @@ pub fn key_press(key_combo: &str) -> anyhow::Result<()> {
 
     // Press modifiers
     for &m in &modifiers {
-        enigo.key(m, Direction::Press)
+        enigo
+            .key(m, Direction::Press)
             .map_err(|e| anyhow::anyhow!("modifier press failed: {e}"))?;
     }
 
     // Press and release main key
-    enigo.key(main_key, Direction::Click)
+    enigo
+        .key(main_key, Direction::Click)
         .map_err(|e| anyhow::anyhow!("key press failed: {e}"))?;
 
     // Release modifiers in reverse order
     for &m in modifiers.iter().rev() {
-        enigo.key(m, Direction::Release)
+        enigo
+            .key(m, Direction::Release)
             .map_err(|e| anyhow::anyhow!("modifier release failed: {e}"))?;
     }
 

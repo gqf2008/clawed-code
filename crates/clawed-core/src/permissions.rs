@@ -218,13 +218,31 @@ pub struct PermissionResponse {
 
 impl PermissionResponse {
     pub fn allow_once() -> Self {
-        Self { allowed: true, persist: false, feedback: None, selected_suggestion: None, destination: None }
+        Self {
+            allowed: true,
+            persist: false,
+            feedback: None,
+            selected_suggestion: None,
+            destination: None,
+        }
     }
     pub fn allow_always() -> Self {
-        Self { allowed: true, persist: true, feedback: None, selected_suggestion: None, destination: Some(PermissionDestination::Session) }
+        Self {
+            allowed: true,
+            persist: true,
+            feedback: None,
+            selected_suggestion: None,
+            destination: Some(PermissionDestination::Session),
+        }
     }
     pub fn deny() -> Self {
-        Self { allowed: false, persist: false, feedback: None, selected_suggestion: None, destination: None }
+        Self {
+            allowed: false,
+            persist: false,
+            feedback: None,
+            selected_suggestion: None,
+            destination: None,
+        }
     }
 }
 
@@ -297,17 +315,15 @@ mod tests {
 
     #[test]
     fn test_permission_result_ask_with_suggestions() {
-        let suggestions = vec![
-            PermissionSuggestion {
-                label: "Allow npm*".into(),
-                rule: PermissionRule {
-                    tool_name: "Bash".into(),
-                    pattern: Some("npm*".into()),
-                    behavior: PermissionBehavior::Allow,
-                },
-                destination: PermissionDestination::Session,
+        let suggestions = vec![PermissionSuggestion {
+            label: "Allow npm*".into(),
+            rule: PermissionRule {
+                tool_name: "Bash".into(),
+                pattern: Some("npm*".into()),
+                behavior: PermissionBehavior::Allow,
             },
-        ];
+            destination: PermissionDestination::Session,
+        }];
         let r = PermissionResult::ask_with_suggestions("Allow Bash?".into(), suggestions);
         assert!(matches!(r.behavior, PermissionBehavior::Ask));
         assert_eq!(r.suggestions.len(), 1);
@@ -396,7 +412,8 @@ mod tests {
 
     #[test]
     fn test_auto_mode_config_deserialize() {
-        let json = r#"{"allow": ["git*", "npm*"], "soft_deny": ["rm*"], "environment": "CI server"}"#;
+        let json =
+            r#"{"allow": ["git*", "npm*"], "soft_deny": ["rm*"], "environment": "CI server"}"#;
         let config: AutoModeConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.allow, vec!["git*", "npm*"]);
         assert_eq!(config.soft_deny, vec!["rm*"]);

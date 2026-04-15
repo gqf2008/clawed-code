@@ -19,7 +19,12 @@ const SUPPORTED_TYPES: &[&str] = &["image/png", "image/jpeg", "image/gif", "imag
 
 /// Detect MIME type from file extension.
 fn mime_from_extension(path: &Path) -> Option<&'static str> {
-    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
         Some("png") => Some("image/png"),
         Some("jpg" | "jpeg") => Some("image/jpeg"),
         Some("gif") => Some("image/gif"),
@@ -164,12 +169,30 @@ mod tests {
 
     #[test]
     fn mime_from_extension_known() {
-        assert_eq!(mime_from_extension(Path::new("photo.png")), Some("image/png"));
-        assert_eq!(mime_from_extension(Path::new("photo.jpg")), Some("image/jpeg"));
-        assert_eq!(mime_from_extension(Path::new("photo.jpeg")), Some("image/jpeg"));
-        assert_eq!(mime_from_extension(Path::new("anim.gif")), Some("image/gif"));
-        assert_eq!(mime_from_extension(Path::new("pic.webp")), Some("image/webp"));
-        assert_eq!(mime_from_extension(Path::new("PHOTO.PNG")), Some("image/png"));
+        assert_eq!(
+            mime_from_extension(Path::new("photo.png")),
+            Some("image/png")
+        );
+        assert_eq!(
+            mime_from_extension(Path::new("photo.jpg")),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            mime_from_extension(Path::new("photo.jpeg")),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            mime_from_extension(Path::new("anim.gif")),
+            Some("image/gif")
+        );
+        assert_eq!(
+            mime_from_extension(Path::new("pic.webp")),
+            Some("image/webp")
+        );
+        assert_eq!(
+            mime_from_extension(Path::new("PHOTO.PNG")),
+            Some("image/png")
+        );
     }
 
     #[test]
@@ -216,7 +239,8 @@ mod tests {
         let path = dir.path().join("test.png");
         let mut f = std::fs::File::create(&path).unwrap();
         // PNG header + minimal IHDR (not a real renderable image, but valid magic)
-        f.write_all(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00]).unwrap();
+        f.write_all(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00])
+            .unwrap();
         drop(f);
 
         let block = read_image_file(&path).unwrap();
@@ -314,7 +338,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.png");
         let mut f = std::fs::File::create(&path).unwrap();
-        f.write_all(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00]).unwrap();
+        f.write_all(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00])
+            .unwrap();
         drop(f);
 
         let input = format!("describe this image\n@{}", path.display());
@@ -332,7 +357,8 @@ mod tests {
 
     #[test]
     fn extract_image_refs_url() {
-        let (text, images, urls) = extract_image_refs("check this:\n@https://example.com/photo.png");
+        let (text, images, urls) =
+            extract_image_refs("check this:\n@https://example.com/photo.png");
         assert_eq!(text, "check this:");
         assert!(images.is_empty());
         assert_eq!(urls, vec!["https://example.com/photo.png"]);
@@ -374,6 +400,8 @@ mod tests {
         assert_eq!(json["type"], "image");
         assert_eq!(json["source"]["media_type"], "image/jpeg");
         let back: ContentBlock = serde_json::from_value(json).unwrap();
-        assert!(matches!(back, ContentBlock::Image { source } if source.media_type == "image/jpeg"));
+        assert!(
+            matches!(back, ContentBlock::Image { source } if source.media_type == "image/jpeg")
+        );
     }
 }

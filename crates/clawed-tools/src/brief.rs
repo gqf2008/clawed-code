@@ -51,8 +51,12 @@ fn resolve_attachment(raw: &str, cwd: &std::path::Path) -> AttachmentMeta {
 
 #[async_trait]
 impl Tool for BriefTool {
-    fn name(&self) -> &'static str { "Brief" }
-    fn category(&self) -> ToolCategory { ToolCategory::Agent }
+    fn name(&self) -> &'static str {
+        "Brief"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Agent
+    }
 
     fn description(&self) -> &'static str {
         "Send a message to the user — your primary visible output channel. \
@@ -83,8 +87,12 @@ impl Tool for BriefTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
-    fn is_concurrency_safe(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
+    fn is_concurrency_safe(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
         let message = input["message"]
@@ -95,17 +103,19 @@ impl Tool for BriefTool {
         let sent_at = chrono::Utc::now().to_rfc3339();
 
         // Resolve attachments
-        let attachments: Option<Vec<AttachmentMeta>> = input["attachments"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str())
-                    .map(|p| resolve_attachment(p, &context.cwd))
-                    .collect()
-            });
+        let attachments: Option<Vec<AttachmentMeta>> = input["attachments"].as_array().map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(|p| resolve_attachment(p, &context.cwd))
+                .collect()
+        });
 
         // Print to stderr (CLI mode)
-        let prefix = if status == "proactive" { "📢 " } else { "💬 " };
+        let prefix = if status == "proactive" {
+            "📢 "
+        } else {
+            "💬 "
+        };
         eprintln!("\n\x1b[36m{prefix}{message}\x1b[0m");
 
         if let Some(ref atts) = attachments {

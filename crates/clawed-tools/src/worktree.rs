@@ -15,7 +15,9 @@ pub struct EnterWorktreeTool;
 
 #[async_trait]
 impl Tool for EnterWorktreeTool {
-    fn name(&self) -> &'static str { "EnterWorktree" }
+    fn name(&self) -> &'static str {
+        "EnterWorktree"
+    }
 
     fn description(&self) -> &'static str {
         "Create an isolated git worktree and switch the session into it. \
@@ -35,7 +37,9 @@ impl Tool for EnterWorktreeTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { false }
+    fn is_read_only(&self) -> bool {
+        false
+    }
 
     async fn call(&self, input: Value, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let cwd_path = &ctx.cwd;
@@ -47,8 +51,7 @@ impl Tool for EnterWorktreeTool {
         // Generate or validate name
         let slug = match input["name"].as_str() {
             Some(name) => {
-                validate_worktree_name(name)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                validate_worktree_name(name).map_err(|e| anyhow::anyhow!("{e}"))?;
                 name.to_string()
             }
             None => generate_worktree_slug(),
@@ -70,29 +73,44 @@ impl Tool for EnterWorktreeTool {
             .await?;
 
         if !head_output.status.success() {
-            return Ok(ToolResult::error("Failed to get current HEAD. Is this a valid git repository?"));
+            return Ok(ToolResult::error(
+                "Failed to get current HEAD. Is this a valid git repository?",
+            ));
         }
 
-        let head_sha = String::from_utf8_lossy(&head_output.stdout).trim().to_string();
+        let head_sha = String::from_utf8_lossy(&head_output.stdout)
+            .trim()
+            .to_string();
 
         // Create worktree with new branch
         let wt_output = tokio::process::Command::new("git")
-            .args(["worktree", "add", "-b", &branch_name,
-                   worktree_dir.to_str().unwrap_or("."), &head_sha])
+            .args([
+                "worktree",
+                "add",
+                "-b",
+                &branch_name,
+                worktree_dir.to_str().unwrap_or("."),
+                &head_sha,
+            ])
             .current_dir(&git_root)
             .output()
             .await?;
 
         if !wt_output.status.success() {
             let stderr = String::from_utf8_lossy(&wt_output.stderr);
-            return Ok(ToolResult::error(format!("Failed to create worktree: {}", stderr.trim())));
+            return Ok(ToolResult::error(format!(
+                "Failed to create worktree: {}",
+                stderr.trim()
+            )));
         }
 
         Ok(ToolResult::text(format!(
             "Created worktree at: {}\nBranch: {}\nBased on: {}\n\n\
              The working directory has been switched to the worktree.\n\
              Use ExitWorktree to return to the original directory.",
-            worktree_dir.display(), branch_name, &head_sha[..head_sha.len().min(8)]
+            worktree_dir.display(),
+            branch_name,
+            &head_sha[..head_sha.len().min(8)]
         )))
     }
 }
@@ -103,7 +121,9 @@ pub struct ExitWorktreeTool;
 
 #[async_trait]
 impl Tool for ExitWorktreeTool {
-    fn name(&self) -> &'static str { "ExitWorktree" }
+    fn name(&self) -> &'static str {
+        "ExitWorktree"
+    }
 
     fn description(&self) -> &'static str {
         "Exit the current worktree session and return to the original working directory. \
@@ -128,7 +148,9 @@ impl Tool for ExitWorktreeTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { false }
+    fn is_read_only(&self) -> bool {
+        false
+    }
 
     async fn call(&self, input: Value, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let cwd_path = &ctx.cwd;
@@ -137,8 +159,8 @@ impl Tool for ExitWorktreeTool {
         let discard = input["discard_changes"].as_bool().unwrap_or(false);
 
         // Find git root and check if we're in a worktree
-        let git_root = find_git_root(cwd_path)
-            .ok_or_else(|| anyhow::anyhow!("Not in a git repository."))?;
+        let git_root =
+            find_git_root(cwd_path).ok_or_else(|| anyhow::anyhow!("Not in a git repository."))?;
 
         // Check if current directory is a worktree
         let git_dir_output = tokio::process::Command::new("git")
@@ -147,11 +169,15 @@ impl Tool for ExitWorktreeTool {
             .output()
             .await?;
 
-        let git_dir = String::from_utf8_lossy(&git_dir_output.stdout).trim().to_string();
+        let git_dir = String::from_utf8_lossy(&git_dir_output.stdout)
+            .trim()
+            .to_string();
 
         let is_worktree = git_dir.contains("worktrees");
         if !is_worktree {
-            return Ok(ToolResult::error("Not currently in a git worktree. Use EnterWorktree first."));
+            return Ok(ToolResult::error(
+                "Not currently in a git worktree. Use EnterWorktree first.",
+            ));
         }
 
         // Get branch name
@@ -161,7 +187,9 @@ impl Tool for ExitWorktreeTool {
             .output()
             .await?;
 
-        let branch = String::from_utf8_lossy(&branch_output.stdout).trim().to_string();
+        let branch = String::from_utf8_lossy(&branch_output.stdout)
+            .trim()
+            .to_string();
 
         match action {
             "remove" => {
@@ -197,7 +225,10 @@ impl Tool for ExitWorktreeTool {
 
                 if !rm_output.status.success() {
                     let stderr = String::from_utf8_lossy(&rm_output.stderr);
-                    return Ok(ToolResult::error(format!("Failed to remove worktree: {}", stderr.trim())));
+                    return Ok(ToolResult::error(format!(
+                        "Failed to remove worktree: {}",
+                        stderr.trim()
+                    )));
                 }
 
                 // Delete the branch
@@ -211,15 +242,16 @@ impl Tool for ExitWorktreeTool {
 
                 Ok(ToolResult::text(format!(
                     "Removed worktree and branch '{}'.\nReturned to: {}",
-                    branch, git_root.display()
+                    branch,
+                    git_root.display()
                 )))
             }
-            _ => {
-                Ok(ToolResult::text(format!(
-                    "Exited worktree (kept on disk).\nWorktree: {}\nBranch: {}\nReturned to: {}",
-                    cwd_path.display(), branch, git_root.display()
-                )))
-            }
+            _ => Ok(ToolResult::text(format!(
+                "Exited worktree (kept on disk).\nWorktree: {}\nBranch: {}\nReturned to: {}",
+                cwd_path.display(),
+                branch,
+                git_root.display()
+            ))),
         }
     }
 }
@@ -327,15 +359,25 @@ mod tests {
     #[test]
     fn generate_slug_format() {
         let slug = generate_worktree_slug();
-        assert!(slug.starts_with("agent-"), "slug should start with 'agent-': {slug}");
+        assert!(
+            slug.starts_with("agent-"),
+            "slug should start with 'agent-': {slug}"
+        );
         let num_part = &slug["agent-".len()..];
-        assert!(num_part.parse::<u64>().is_ok(), "suffix should be numeric: {num_part}");
+        assert!(
+            num_part.parse::<u64>().is_ok(),
+            "suffix should be numeric: {num_part}"
+        );
     }
 
     #[test]
     fn generate_slug_length() {
         let slug = generate_worktree_slug();
         // "agent-" (6) + 1..5 digits → 7..11 chars
-        assert!(slug.len() >= 7 && slug.len() <= 11, "unexpected slug length: {}", slug.len());
+        assert!(
+            slug.len() >= 7 && slug.len() <= 11,
+            "unexpected slug length: {}",
+            slug.len()
+        );
     }
 }

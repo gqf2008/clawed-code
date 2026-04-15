@@ -25,11 +25,11 @@ struct FieldRange {
 }
 
 const FIELD_RANGES: [FieldRange; 5] = [
-    FieldRange { min: 0, max: 59 },  // minute
-    FieldRange { min: 0, max: 23 },  // hour
-    FieldRange { min: 1, max: 31 },  // day_of_month
-    FieldRange { min: 1, max: 12 },  // month
-    FieldRange { min: 0, max: 6 },   // day_of_week (0=Sunday; 7 accepted as alias)
+    FieldRange { min: 0, max: 59 }, // minute
+    FieldRange { min: 0, max: 23 }, // hour
+    FieldRange { min: 1, max: 31 }, // day_of_month
+    FieldRange { min: 1, max: 12 }, // month
+    FieldRange { min: 0, max: 6 },  // day_of_week (0=Sunday; 7 accepted as alias)
 ];
 
 /// Parse a single cron field into a sorted array of matching values.
@@ -143,9 +143,7 @@ pub fn compute_next_cron_run(fields: &CronFields, from: NaiveDateTime) -> Option
     let dow_wild = fields.day_of_week.len() == 7;
 
     // Round up to the next whole minute (strictly after `from`)
-    let mut t = from
-        .with_second(0)?
-        .with_nanosecond(0)?;
+    let mut t = from.with_second(0)?.with_nanosecond(0)?;
     t += chrono::Duration::minutes(1);
 
     let max_iter = 366 * 24 * 60;
@@ -158,8 +156,7 @@ pub fn compute_next_cron_run(fields: &CronFields, from: NaiveDateTime) -> Option
             } else {
                 (t.year(), month as u32 + 1)
             };
-            t = NaiveDate::from_ymd_opt(y, m, 1)?
-                .and_hms_opt(0, 0, 0)?;
+            t = NaiveDate::from_ymd_opt(y, m, 1)?.and_hms_opt(0, 0, 0)?;
             continue;
         }
 
@@ -214,7 +211,13 @@ pub fn next_cron_run_ms(cron: &str, from_ms: i64) -> Option<i64> {
 // --- Human-readable descriptions ---
 
 const DAY_NAMES: [&str; 7] = [
-    "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
 ];
 
 fn format_local_time(minute: u32, hour: u32) -> String {
@@ -291,9 +294,7 @@ pub fn cron_to_human(cron: &str) -> String {
     }
 
     // Remaining: need fixed minute + hour
-    if !minute.chars().all(|c| c.is_ascii_digit())
-        || !hour.chars().all(|c| c.is_ascii_digit())
-    {
+    if !minute.chars().all(|c| c.is_ascii_digit()) || !hour.chars().all(|c| c.is_ascii_digit()) {
         return cron.to_string();
     }
     let m: u32 = minute.parse().unwrap_or(0);
@@ -437,7 +438,7 @@ mod tests {
     #[test]
     fn test_compute_next_weekday() {
         let fields = parse_cron_expression("0 9 * * 1").unwrap(); // Monday
-        // 2024-06-15 is Saturday
+                                                                  // 2024-06-15 is Saturday
         let from = NaiveDate::from_ymd_opt(2024, 6, 15)
             .unwrap()
             .and_hms_opt(10, 0, 0)

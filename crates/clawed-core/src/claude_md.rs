@@ -106,7 +106,12 @@ fn detect_git_root(cwd: &Path) -> Option<PathBuf> {
 ///
 /// Matches `@./relative/path`, `@~/home/path`, `@/absolute/path` at the
 /// start of a line or after whitespace. Skips code blocks.
-fn resolve_includes(content: &str, base_dir: &Path, depth: usize, visited: &mut HashSet<PathBuf>) -> String {
+fn resolve_includes(
+    content: &str,
+    base_dir: &Path,
+    depth: usize,
+    visited: &mut HashSet<PathBuf>,
+) -> String {
     if depth >= MAX_INCLUDE_DEPTH {
         return content.to_string();
     }
@@ -147,7 +152,8 @@ fn resolve_includes(content: &str, base_dir: &Path, depth: usize, visited: &mut 
                         Ok(included) => {
                             visited.insert(resolved.clone());
                             let include_dir = resolved.parent().unwrap_or(base_dir);
-                            let processed = resolve_includes(&included, include_dir, depth + 1, visited);
+                            let processed =
+                                resolve_includes(&included, include_dir, depth + 1, visited);
                             result.push_str(&processed);
                             if !processed.ends_with('\n') {
                                 result.push('\n');
@@ -329,7 +335,11 @@ pub fn load_claude_md(cwd: &Path) -> String {
         }
         match std::fs::read_to_string(&path) {
             Ok(content) if !content.trim().is_empty() => {
-                let label = if path.file_name().map(|n| n == "CLAUDE.local.md").unwrap_or(false) {
+                let label = if path
+                    .file_name()
+                    .map(|n| n == "CLAUDE.local.md")
+                    .unwrap_or(false)
+                {
                     "CLAUDE.local.md"
                 } else if path.components().any(|c| c.as_os_str() == "rules") {
                     "rules"

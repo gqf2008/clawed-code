@@ -28,12 +28,18 @@ pub enum RiskLevel {
 impl RiskLevel {
     /// Whether this risk level should be auto-approved in "accept edits" mode.
     pub fn auto_approvable(&self) -> bool {
-        matches!(self, RiskLevel::Safe | RiskLevel::ProjectWrite | RiskLevel::Build)
+        matches!(
+            self,
+            RiskLevel::Safe | RiskLevel::ProjectWrite | RiskLevel::Build
+        )
     }
 
     /// Whether this risk level should always require explicit permission.
     pub fn always_ask(&self) -> bool {
-        matches!(self, RiskLevel::CodeExec | RiskLevel::System | RiskLevel::Destructive)
+        matches!(
+            self,
+            RiskLevel::CodeExec | RiskLevel::System | RiskLevel::Destructive
+        )
     }
 
     /// Human-readable label.
@@ -65,57 +71,179 @@ pub struct ClassifyResult {
 
 /// Read-only commands that never modify state.
 const SAFE_COMMANDS: &[&str] = &[
-    "cat", "head", "tail", "less", "more", "wc", "file", "stat",
-    "du", "df", "ls", "tree", "find", "which", "type", "whereis", "locate",
-    "grep", "egrep", "fgrep", "rg", "ag", "ack",
-    "echo", "printf", "date", "whoami", "hostname", "uname", "pwd",
-    "env", "printenv", "id", "groups",
-    "diff", "comm", "cmp", "sort", "uniq", "cut", "tr", "sed", "awk",
-    "jq", "yq", "xq",
-    "git log", "git show", "git diff", "git status", "git branch",
-    "git stash list", "git remote", "git tag", "git rev-parse",
-    "git describe", "git blame", "git shortlog",
-    "cargo check", "cargo clippy", "cargo doc",
-    "npm ls", "npm list", "npm outdated", "npm view",
-    "pip list", "pip show", "pip freeze",
-    "rustc --version", "node --version", "python --version",
-    "man", "help", "info",
-    "true", "false", "test",
+    "cat",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "wc",
+    "file",
+    "stat",
+    "du",
+    "df",
+    "ls",
+    "tree",
+    "find",
+    "which",
+    "type",
+    "whereis",
+    "locate",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "ag",
+    "ack",
+    "echo",
+    "printf",
+    "date",
+    "whoami",
+    "hostname",
+    "uname",
+    "pwd",
+    "env",
+    "printenv",
+    "id",
+    "groups",
+    "diff",
+    "comm",
+    "cmp",
+    "sort",
+    "uniq",
+    "cut",
+    "tr",
+    "sed",
+    "awk",
+    "jq",
+    "yq",
+    "xq",
+    "git log",
+    "git show",
+    "git diff",
+    "git status",
+    "git branch",
+    "git stash list",
+    "git remote",
+    "git tag",
+    "git rev-parse",
+    "git describe",
+    "git blame",
+    "git shortlog",
+    "cargo check",
+    "cargo clippy",
+    "cargo doc",
+    "npm ls",
+    "npm list",
+    "npm outdated",
+    "npm view",
+    "pip list",
+    "pip show",
+    "pip freeze",
+    "rustc --version",
+    "node --version",
+    "python --version",
+    "man",
+    "help",
+    "info",
+    "true",
+    "false",
+    "test",
 ];
 
 /// Project-scope write commands.
 const PROJECT_WRITE_COMMANDS: &[&str] = &[
-    "mkdir", "touch", "cp", "mv", "rm", "ln",
-    "git add", "git commit", "git stash", "git merge", "git rebase",
-    "git checkout", "git switch", "git restore", "git cherry-pick",
-    "git fetch", "git pull", "git push",
-    "chmod", "patch",
+    "mkdir",
+    "touch",
+    "cp",
+    "mv",
+    "rm",
+    "ln",
+    "git add",
+    "git commit",
+    "git stash",
+    "git merge",
+    "git rebase",
+    "git checkout",
+    "git switch",
+    "git restore",
+    "git cherry-pick",
+    "git fetch",
+    "git pull",
+    "git push",
+    "chmod",
+    "patch",
 ];
 
 /// Build/install commands (modify project deps, not system).
 const BUILD_COMMANDS: &[&str] = &[
-    "make", "cmake", "ninja",
-    "cargo build", "cargo test", "cargo run", "cargo install", "cargo fmt",
-    "npm install", "npm ci", "npm run", "npm test", "npm start",
-    "yarn", "yarn install", "yarn add", "yarn run",
-    "pnpm install", "pnpm add", "pnpm run",
-    "bun install", "bun run", "bun test",
-    "pip install", "pip3 install", "pipenv install", "poetry install",
-    "go build", "go test", "go run", "go install", "go mod",
-    "mvn", "gradle", "ant",
-    "dotnet build", "dotnet test", "dotnet run",
-    "docker build", "docker compose",
-    "apt install", "apt-get install", "brew install",
+    "make",
+    "cmake",
+    "ninja",
+    "cargo build",
+    "cargo test",
+    "cargo run",
+    "cargo install",
+    "cargo fmt",
+    "npm install",
+    "npm ci",
+    "npm run",
+    "npm test",
+    "npm start",
+    "yarn",
+    "yarn install",
+    "yarn add",
+    "yarn run",
+    "pnpm install",
+    "pnpm add",
+    "pnpm run",
+    "bun install",
+    "bun run",
+    "bun test",
+    "pip install",
+    "pip3 install",
+    "pipenv install",
+    "poetry install",
+    "go build",
+    "go test",
+    "go run",
+    "go install",
+    "go mod",
+    "mvn",
+    "gradle",
+    "ant",
+    "dotnet build",
+    "dotnet test",
+    "dotnet run",
+    "docker build",
+    "docker compose",
+    "apt install",
+    "apt-get install",
+    "brew install",
 ];
 
 /// Network-accessing commands.
 const NETWORK_COMMANDS: &[&str] = &[
-    "curl", "wget", "http", "httpie",
-    "ssh", "scp", "sftp", "rsync",
-    "ping", "traceroute", "nslookup", "dig", "host",
-    "nc", "netcat", "ncat", "socat",
-    "gh", "gh api",
-    "docker pull", "docker push",
+    "curl",
+    "wget",
+    "http",
+    "httpie",
+    "ssh",
+    "scp",
+    "sftp",
+    "rsync",
+    "ping",
+    "traceroute",
+    "nslookup",
+    "dig",
+    "host",
+    "nc",
+    "netcat",
+    "ncat",
+    "socat",
+    "gh",
+    "gh api",
+    "docker pull",
+    "docker push",
     "git clone",
 ];
 
@@ -124,31 +252,45 @@ const NETWORK_COMMANDS: &[&str] = &[
 /// Mirrors JS `CROSS_PLATFORM_CODE_EXEC` from `dangerousPatterns.ts`.
 const CODE_EXEC_COMMANDS: &[&str] = &[
     // Interpreters
-    "python", "python3", "python2", "python3.",
-    "node", "deno", "bun", "tsx",
-    "ruby", "perl", "php", "lua", "elixir", "julia",
-    // Package runners (can execute arbitrary packages)
-    "npx", "bunx",
-    // Shell re-entry / eval
-    "bash", "sh", "zsh", "fish", "dash", "csh", "ksh",
-    "eval", "exec", "source",
-    "xargs", "env",
+    "python", "python3", "python2", "python3.", "node", "deno", "bun", "tsx", "ruby", "perl", "php",
+    "lua", "elixir", "julia", // Package runners (can execute arbitrary packages)
+    "npx", "bunx", // Shell re-entry / eval
+    "bash", "sh", "zsh", "fish", "dash", "csh", "ksh", "eval", "exec", "source", "xargs", "env",
     // Remote code execution
     "nohup",
 ];
 
 /// System-level mutation commands.
 const SYSTEM_COMMANDS: &[&str] = &[
-    "sudo", "su",
-    "chown", "chgrp",
-    "systemctl", "service", "launchctl",
-    "mount", "umount",
-    "iptables", "ufw", "firewall-cmd",
-    "useradd", "userdel", "usermod", "groupadd",
+    "sudo",
+    "su",
+    "chown",
+    "chgrp",
+    "systemctl",
+    "service",
+    "launchctl",
+    "mount",
+    "umount",
+    "iptables",
+    "ufw",
+    "firewall-cmd",
+    "useradd",
+    "userdel",
+    "usermod",
+    "groupadd",
     "crontab",
-    "reboot", "shutdown", "halt", "poweroff",
-    "kill", "killall", "pkill",
-    "kubectl", "aws", "gcloud", "gsutil", "az",
+    "reboot",
+    "shutdown",
+    "halt",
+    "poweroff",
+    "kill",
+    "killall",
+    "pkill",
+    "kubectl",
+    "aws",
+    "gcloud",
+    "gsutil",
+    "az",
 ];
 
 // ── Classification Logic ─────────────────────────────────────────────────────
@@ -171,7 +313,9 @@ fn extract_base(command: &str) -> String {
     let mut words = first.split_whitespace().peekable();
     loop {
         match words.peek() {
-            Some(&w) if w.contains('=') && !w.starts_with('-') => { words.next(); }
+            Some(&w) if w.contains('=') && !w.starts_with('-') => {
+                words.next();
+            }
             _ => break,
         }
     }
@@ -226,7 +370,6 @@ pub fn classify(command: &str) -> ClassifyResult {
 
 /// Classify a base command string (already lowercased, no sudo).
 fn classify_base(base: &str) -> ClassifyResult {
-
     // Check code exec first (highest priority after destructive)
     for &pat in CODE_EXEC_COMMANDS {
         if cmd_matches(base, pat) {
@@ -310,7 +453,10 @@ fn cmd_matches(base: &str, pattern: &str) -> bool {
         // Multi-word: match as prefix with word boundary
         base.starts_with(pattern)
             && (base.len() == pattern.len()
-                || base.as_bytes().get(pattern.len()).is_none_or(|b| b.is_ascii_whitespace()))
+                || base
+                    .as_bytes()
+                    .get(pattern.len())
+                    .is_none_or(|b| b.is_ascii_whitespace()))
     } else {
         // Single word: match first token exactly
         let first = base.split_whitespace().next().unwrap_or("");
@@ -324,28 +470,65 @@ fn cmd_matches(base: &str, pattern: &str) -> bool {
 /// Permission rules matching these patterns should be stripped in auto-approve modes.
 const DANGEROUS_BASH_PREFIXES: &[&str] = &[
     // Interpreters
-    "python", "python3", "python2", "node", "ruby", "perl", "php", "lua",
-    "bash", "sh", "zsh", "fish", "ksh", "csh", "dash",
+    "python",
+    "python3",
+    "python2",
+    "node",
+    "ruby",
+    "perl",
+    "php",
+    "lua",
+    "bash",
+    "sh",
+    "zsh",
+    "fish",
+    "ksh",
+    "csh",
+    "dash",
     // Package runners
-    "npm run", "yarn run", "npx", "bunx", "pnpm exec",
+    "npm run",
+    "yarn run",
+    "npx",
+    "bunx",
+    "pnpm exec",
     // Execution / escalation
-    "eval", "exec", "env", "xargs", "sudo", "su",
+    "eval",
+    "exec",
+    "env",
+    "xargs",
+    "sudo",
+    "su",
     // Remote
-    "ssh", "curl", "wget",
+    "ssh",
+    "curl",
+    "wget",
 ];
 
 /// Command prefixes that would allow arbitrary code execution in PowerShell.
 const DANGEROUS_POWERSHELL_PREFIXES: &[&str] = &[
     // Nested shells
-    "pwsh", "powershell", "cmd", "wsl",
+    "pwsh",
+    "powershell",
+    "cmd",
+    "wsl",
     // Evaluators
-    "iex", "invoke-expression", "icm", "invoke-command",
+    "iex",
+    "invoke-expression",
+    "icm",
+    "invoke-command",
     // Process spawners
-    "start-process", "start-job",
+    "start-process",
+    "start-job",
     // .NET escapes
-    "add-type", "new-object",
+    "add-type",
+    "new-object",
     // Scripting
-    "python", "python3", "node", "ruby", "perl", "php",
+    "python",
+    "python3",
+    "node",
+    "ruby",
+    "perl",
+    "php",
 ];
 
 /// Check if a permission rule pattern is dangerous (would bypass security).
@@ -446,10 +629,16 @@ mod tests {
     fn project_write_commands() {
         assert_eq!(classify("mkdir -p src/new").risk, RiskLevel::ProjectWrite);
         assert_eq!(classify("git add .").risk, RiskLevel::ProjectWrite);
-        assert_eq!(classify("git commit -m 'msg'").risk, RiskLevel::ProjectWrite);
+        assert_eq!(
+            classify("git commit -m 'msg'").risk,
+            RiskLevel::ProjectWrite
+        );
         assert_eq!(classify("rm old_file.txt").risk, RiskLevel::ProjectWrite);
         assert_eq!(classify("cp a.txt b.txt").risk, RiskLevel::ProjectWrite);
-        assert_eq!(classify("git push origin main").risk, RiskLevel::ProjectWrite);
+        assert_eq!(
+            classify("git push origin main").risk,
+            RiskLevel::ProjectWrite
+        );
     }
 
     #[test]
@@ -465,8 +654,14 @@ mod tests {
 
     #[test]
     fn network_commands() {
-        assert_eq!(classify("curl https://api.example.com").risk, RiskLevel::Network);
-        assert_eq!(classify("wget https://example.com/file").risk, RiskLevel::Network);
+        assert_eq!(
+            classify("curl https://api.example.com").risk,
+            RiskLevel::Network
+        );
+        assert_eq!(
+            classify("wget https://example.com/file").risk,
+            RiskLevel::Network
+        );
         assert_eq!(classify("ssh user@host").risk, RiskLevel::Network);
         assert_eq!(classify("gh api /repos").risk, RiskLevel::Network);
         assert_eq!(classify("ping 8.8.8.8").risk, RiskLevel::Network);
@@ -476,7 +671,10 @@ mod tests {
     fn code_exec_commands() {
         assert_eq!(classify("python3 script.py").risk, RiskLevel::CodeExec);
         assert_eq!(classify("node index.js").risk, RiskLevel::CodeExec);
-        assert_eq!(classify("npx create-react-app myapp").risk, RiskLevel::CodeExec);
+        assert_eq!(
+            classify("npx create-react-app myapp").risk,
+            RiskLevel::CodeExec
+        );
         assert_eq!(classify("eval 'echo hi'").risk, RiskLevel::CodeExec);
         assert_eq!(classify("bash -c 'rm -rf /'").risk, RiskLevel::CodeExec);
         assert_eq!(classify("ruby script.rb").risk, RiskLevel::CodeExec);
@@ -488,8 +686,14 @@ mod tests {
         assert_eq!(classify("sudo apt update").risk, RiskLevel::System);
         assert_eq!(classify("systemctl restart nginx").risk, RiskLevel::System);
         assert_eq!(classify("kill -9 1234").risk, RiskLevel::System);
-        assert_eq!(classify("kubectl apply -f pod.yaml").risk, RiskLevel::System);
-        assert_eq!(classify("aws s3 cp file s3://bucket/").risk, RiskLevel::System);
+        assert_eq!(
+            classify("kubectl apply -f pod.yaml").risk,
+            RiskLevel::System
+        );
+        assert_eq!(
+            classify("aws s3 cp file s3://bucket/").risk,
+            RiskLevel::System
+        );
     }
 
     #[test]
@@ -504,13 +708,19 @@ mod tests {
         assert_eq!(classify("FOO=bar ls").risk, RiskLevel::Safe);
         // sudo elevates to at least System
         assert_eq!(classify("sudo ls").risk, RiskLevel::System);
-        assert_eq!(classify("FOO=1 BAR=2 sudo grep -r x").risk, RiskLevel::System);
+        assert_eq!(
+            classify("FOO=1 BAR=2 sudo grep -r x").risk,
+            RiskLevel::System
+        );
     }
 
     #[test]
     fn pipeline_uses_first_command() {
         assert_eq!(classify("cat file.txt | grep foo").risk, RiskLevel::Safe);
-        assert_eq!(classify("python3 script.py | head").risk, RiskLevel::CodeExec);
+        assert_eq!(
+            classify("python3 script.py | head").risk,
+            RiskLevel::CodeExec
+        );
     }
 
     #[test]
@@ -580,7 +790,10 @@ mod tests {
         // "sudo ls" → inner is Safe, but elevated by sudo → System
         assert_eq!(classify("sudo ls -la").risk, RiskLevel::System);
         // "sudo systemctl" → inner is System, stays System
-        assert_eq!(classify("sudo systemctl restart nginx").risk, RiskLevel::System);
+        assert_eq!(
+            classify("sudo systemctl restart nginx").risk,
+            RiskLevel::System
+        );
         // "sudo" alone → System (bare sudo)
         assert_eq!(classify("sudo").risk, RiskLevel::System);
         // "sudo python3 script.py" → inner is CodeExec, elevated to System (sudo = root)

@@ -8,18 +8,15 @@ use clawed_core::message::{ContentBlock, Message};
 use clawed_core::tool::AbortSignal;
 use futures::Stream;
 
+use super::QueryEngine;
 use crate::cost::CostTracker;
 use crate::query::AgentEvent;
 use crate::task_runner::{TaskProgress, TaskResult};
 use crate::traits::AgentEngine;
-use super::QueryEngine;
 
 #[async_trait]
 impl AgentEngine for QueryEngine {
-    async fn submit(
-        &self,
-        prompt: &str,
-    ) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>> {
+    async fn submit(&self, prompt: &str) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>> {
         QueryEngine::submit(self, prompt.to_string()).await
     }
 

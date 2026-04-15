@@ -12,8 +12,8 @@
 //!
 //! This is a simplified local-only plugin system — no marketplace or remote install.
 
-mod manifest;
 mod loader;
+mod manifest;
 
-pub use manifest::{PluginManifest, PluginCommand, PluginSkill, PluginHook, HookEvent};
-pub use loader::{PluginLoader, LoadedPlugin};
+pub use loader::{LoadedPlugin, PluginLoader};
+pub use manifest::{HookEvent, PluginCommand, PluginHook, PluginManifest, PluginSkill};

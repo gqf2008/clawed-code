@@ -38,7 +38,9 @@ pub struct GatewayContext {
 impl GatewayContext {
     /// Route an inbound message from a platform adapter to the gateway.
     pub fn route_inbound(&self, msg: InboundMessage) -> Result<(), String> {
-        self.inbound_tx.send(msg).map_err(|_| "Gateway closed".to_string())
+        self.inbound_tx
+            .send(msg)
+            .map_err(|_| "Gateway closed".to_string())
     }
 }
 
@@ -83,7 +85,10 @@ impl ChannelGateway {
     pub async fn register_adapter(&self, adapter: Box<dyn ChannelAdapter>) -> AdapterResult<()> {
         let platform = adapter.platform().to_string();
         info!("Registered adapter: {platform}");
-        self.adapters.write().await.insert(platform, Arc::new(adapter));
+        self.adapters
+            .write()
+            .await
+            .insert(platform, Arc::new(adapter));
         Ok(())
     }
 
@@ -100,29 +105,33 @@ impl ChannelGateway {
             let mut adapters = self.adapters.write().await;
             for (platform, adapter) in adapters.iter_mut() {
                 info!("Starting adapter: {platform}");
-                let adapter_mut = Arc::get_mut(adapter)
-                    .ok_or_else(|| AdapterError::Internal(format!("adapter '{platform}' must not be shared yet")))?;
+                let adapter_mut = Arc::get_mut(adapter).ok_or_else(|| {
+                    AdapterError::Internal(format!("adapter '{platform}' must not be shared yet"))
+                })?;
                 adapter_mut.start(ctx.clone()).await?;
             }
         }
 
         // Process inbound messages
-        let mut inbound_rx = self.inbound_rx.take()
+        let mut inbound_rx = self
+            .inbound_rx
+            .take()
             .ok_or_else(|| AdapterError::Internal("Gateway can only be run once".into()))?;
 
         let router = Arc::clone(&self.router);
         let adapters = Arc::clone(&self.adapters);
         let consumer_tasks = Arc::clone(&self.consumer_tasks);
 
-        info!("Gateway running with {} adapters", self.adapters.read().await.len());
+        info!(
+            "Gateway running with {} adapters",
+            self.adapters.read().await.len()
+        );
 
         while let Some(msg) = inbound_rx.recv().await {
             let channel_id = msg.channel_id.clone();
 
             // Handle special commands
-            if msg.text.starts_with('/')
-                && Self::handle_command(&self.router, &msg).await
-            {
+            if msg.text.starts_with('/') && Self::handle_command(&self.router, &msg).await {
                 // If session was destroyed, cancel consumer task
                 if matches!(msg.text.trim(), "/new" | "/reset") {
                     let mut tasks = consumer_tasks.lock().await;
@@ -155,7 +164,9 @@ impl ChannelGateway {
                 tasks.remove(&channel_id);
             }
 
-            if let std::collections::hash_map::Entry::Vacant(entry) = tasks.entry(channel_id.clone()) {
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                tasks.entry(channel_id.clone())
+            {
                 let consumer_client = router_guard.get_client_subscriber(&channel_id);
                 drop(router_guard);
 
@@ -184,7 +195,8 @@ impl ChannelGateway {
                                         if !out.text.is_empty() {
                                             let adapters = adapters_ref.read().await;
                                             if let Some(adapter) = adapters.get(&ch.platform) {
-                                                if let Err(e) = adapter.send_message(&ch, out).await {
+                                                if let Err(e) = adapter.send_message(&ch, out).await
+                                                {
                                                     error!("[{}] Failed to send reply: {}", ch, e);
                                                 }
                                             }
@@ -198,7 +210,11 @@ impl ChannelGateway {
                                 }
                                 Ok(Err(broadcast::error::RecvError::Closed)) => break,
                                 Err(_) => {
-                                    warn!("[{}] Consumer idle timeout ({}s), stopping", ch, idle_timeout.as_secs());
+                                    warn!(
+                                        "[{}] Consumer idle timeout ({}s), stopping",
+                                        ch,
+                                        idle_timeout.as_secs()
+                                    );
                                     break;
                                 }
                             }
@@ -347,7 +363,7 @@ mod tests {
 
     #[tokio::test]
     async fn gateway_register_adapter_increments_count() {
-        use crate::adapter::{ChannelAdapter, AdapterResult};
+        use crate::adapter::{AdapterResult, ChannelAdapter};
         use crate::message::OutboundMessage;
         use async_trait::async_trait;
 
@@ -355,11 +371,25 @@ mod tests {
 
         #[async_trait]
         impl ChannelAdapter for DummyAdapter {
-            fn platform(&self) -> &str { "dummy" }
-            async fn start(&mut self, _ctx: GatewayContext) -> AdapterResult<()> { Ok(()) }
-            async fn stop(&self) -> AdapterResult<()> { Ok(()) }
-            async fn send_message(&self, _ch: &ChannelId, _msg: OutboundMessage) -> AdapterResult<()> { Ok(()) }
-            async fn send_typing(&self, _ch: &ChannelId) -> AdapterResult<()> { Ok(()) }
+            fn platform(&self) -> &str {
+                "dummy"
+            }
+            async fn start(&mut self, _ctx: GatewayContext) -> AdapterResult<()> {
+                Ok(())
+            }
+            async fn stop(&self) -> AdapterResult<()> {
+                Ok(())
+            }
+            async fn send_message(
+                &self,
+                _ch: &ChannelId,
+                _msg: OutboundMessage,
+            ) -> AdapterResult<()> {
+                Ok(())
+            }
+            async fn send_typing(&self, _ch: &ChannelId) -> AdapterResult<()> {
+                Ok(())
+            }
         }
 
         let (bus, _client) = EventBus::new(64);
@@ -367,7 +397,10 @@ mod tests {
         let gateway = ChannelGateway::new(bus, config);
         assert_eq!(gateway.adapter_count().await, 0);
 
-        gateway.register_adapter(Box::new(DummyAdapter)).await.unwrap();
+        gateway
+            .register_adapter(Box::new(DummyAdapter))
+            .await
+            .unwrap();
         assert_eq!(gateway.adapter_count().await, 1);
     }
 

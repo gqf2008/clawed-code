@@ -12,7 +12,7 @@ use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, Command};
 
-use crate::protocol::{JsonRpcRequest, JsonRpcMessage, JsonRpcNotification};
+use crate::protocol::{JsonRpcMessage, JsonRpcNotification, JsonRpcRequest};
 
 /// Manages a child process and communicates via newline-delimited JSON-RPC.
 pub struct StdioTransport {
@@ -39,9 +39,9 @@ impl StdioTransport {
             cmd.env(key, value);
         }
 
-        let mut child = cmd
-            .spawn()
-            .with_context(|| format!("Failed to spawn MCP server: {} {}", command, args.join(" ")))?;
+        let mut child = cmd.spawn().with_context(|| {
+            format!("Failed to spawn MCP server: {} {}", command, args.join(" "))
+        })?;
 
         let stdin = child
             .stdin
@@ -103,7 +103,11 @@ impl StdioTransport {
         match result {
             Ok(inner) => inner,
             Err(_elapsed) => {
-                anyhow::bail!("MCP request timed out after {}s: method={}", REQUEST_TIMEOUT.as_secs(), method)
+                anyhow::bail!(
+                    "MCP request timed out after {}s: method={}",
+                    REQUEST_TIMEOUT.as_secs(),
+                    method
+                )
             }
         }
     }
@@ -135,10 +139,16 @@ impl StdioTransport {
                 anyhow::bail!("MCP server exited with {status} before producing a response");
             }
 
-            let bytes_read = tokio::time::timeout(READ_LINE_TIMEOUT, self.stdout.read_line(&mut line))
-                .await
-                .map_err(|_| anyhow::anyhow!("MCP server read timed out after {}s (no output)", READ_LINE_TIMEOUT.as_secs()))?
-                .context("Failed to read from MCP server stdout")?;
+            let bytes_read =
+                tokio::time::timeout(READ_LINE_TIMEOUT, self.stdout.read_line(&mut line))
+                    .await
+                    .map_err(|_| {
+                        anyhow::anyhow!(
+                            "MCP server read timed out after {}s (no output)",
+                            READ_LINE_TIMEOUT.as_secs()
+                        )
+                    })?
+                    .context("Failed to read from MCP server stdout")?;
 
             if bytes_read == 0 {
                 anyhow::bail!("MCP server closed stdout (EOF)");

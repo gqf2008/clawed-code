@@ -39,7 +39,10 @@ impl ComputerUseMcpServer {
     pub fn new() -> anyhow::Result<Self> {
         let lock = SessionLock::acquire()?;
         let platform = detect_platform();
-        Ok(Self { _lock: lock, platform })
+        Ok(Self {
+            _lock: lock,
+            platform,
+        })
     }
 
     /// Get the detected platform info.
@@ -237,7 +240,8 @@ impl ComputerUseMcpServer {
     }
 
     fn handle_screenshot(&self, input: Value) -> McpToolResult {
-        let exclude_terminal = input.get("exclude_terminal")
+        let exclude_terminal = input
+            .get("exclude_terminal")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
@@ -402,8 +406,12 @@ impl ComputerUseMcpServer {
         let info = &self.platform;
         let text = format!(
             "OS: {} {}\nArch: {}\nDisplay: {}\nHas display: {}\nHostname: {}",
-            info.os, info.os_version, info.arch, info.display_server,
-            info.has_display, info.hostname,
+            info.os,
+            info.os_version,
+            info.arch,
+            info.display_server,
+            info.has_display,
+            info.hostname,
         );
         ok_result(text)
     }
@@ -568,7 +576,14 @@ fn detect_platform() -> PlatformInfo {
         .map(|h| h.to_string_lossy().to_string())
         .unwrap_or_else(|_| "unknown".into());
 
-    PlatformInfo { os, os_version, arch, display_server, has_display, hostname }
+    PlatformInfo {
+        os,
+        os_version,
+        arch,
+        display_server,
+        has_display,
+        hostname,
+    }
 }
 
 fn detect_os_version() -> String {
@@ -596,7 +611,10 @@ fn detect_os_version() -> String {
             .ok()
             .and_then(|o| {
                 if o.status.success() {
-                    Some(format!("macOS {}", String::from_utf8_lossy(&o.stdout).trim()))
+                    Some(format!(
+                        "macOS {}",
+                        String::from_utf8_lossy(&o.stdout).trim()
+                    ))
                 } else {
                     None
                 }
@@ -609,9 +627,14 @@ fn detect_os_version() -> String {
         std::fs::read_to_string("/etc/os-release")
             .ok()
             .and_then(|content| {
-                content.lines()
+                content
+                    .lines()
                     .find(|l| l.starts_with("PRETTY_NAME="))
-                    .map(|l| l.trim_start_matches("PRETTY_NAME=").trim_matches('"').to_string())
+                    .map(|l| {
+                        l.trim_start_matches("PRETTY_NAME=")
+                            .trim_matches('"')
+                            .to_string()
+                    })
             })
             .unwrap_or_else(|| "Linux".into())
     }
@@ -623,9 +646,13 @@ fn detect_os_version() -> String {
 
 fn detect_display_server() -> String {
     #[cfg(target_os = "windows")]
-    { "win32".into() }
+    {
+        "win32".into()
+    }
     #[cfg(target_os = "macos")]
-    { "quartz".into() }
+    {
+        "quartz".into()
+    }
     #[cfg(target_os = "linux")]
     {
         if std::env::var("WAYLAND_DISPLAY").is_ok() {
@@ -637,20 +664,28 @@ fn detect_display_server() -> String {
         }
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    { "unknown".into() }
+    {
+        "unknown".into()
+    }
 }
 
 fn detect_has_display() -> bool {
     #[cfg(target_os = "windows")]
-    { true } // Windows always has a display in desktop mode
+    {
+        true
+    } // Windows always has a display in desktop mode
     #[cfg(target_os = "macos")]
-    { true }
+    {
+        true
+    }
     #[cfg(target_os = "linux")]
     {
         std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok()
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    { false }
+    {
+        false
+    }
 }
 
 /// Minimize the current terminal/console window.

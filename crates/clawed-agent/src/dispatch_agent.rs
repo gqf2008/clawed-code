@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use clawed_api::client::ApiClient;
@@ -19,10 +19,16 @@ use crate::state::new_shared_state;
 use clawed_tools::ToolRegistry;
 
 /// Shared map of cancellation tokens, keyed by agent ID.
-pub type CancelTokenMap = Arc<tokio::sync::RwLock<std::collections::HashMap<String, tokio_util::sync::CancellationToken>>>;
+pub type CancelTokenMap = Arc<
+    tokio::sync::RwLock<std::collections::HashMap<String, tokio_util::sync::CancellationToken>>,
+>;
 
 /// Shared map of agent message channels, keyed by agent ID.
-pub type AgentChannelMap = Arc<tokio::sync::RwLock<std::collections::HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>;
+pub type AgentChannelMap = Arc<
+    tokio::sync::RwLock<
+        std::collections::HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>,
+    >,
+>;
 
 /// Configuration passed into the sub-agent.
 pub struct SubAgentConfig {
@@ -182,7 +188,9 @@ pub struct DispatchAgentTool {
 
 #[async_trait]
 impl Tool for DispatchAgentTool {
-    fn name(&self) -> &str { "Agent" }
+    fn name(&self) -> &str {
+        "Agent"
+    }
 
     fn description(&self) -> &str {
         "Launch a sub-agent to accomplish an independent task. The sub-agent runs a full \
@@ -258,7 +266,9 @@ impl Tool for DispatchAgentTool {
     }
 
     // Sub-agents are read-only from the permission perspective (they ask themselves)
-    fn is_read_only(&self) -> bool { false }
+    fn is_read_only(&self) -> bool {
+        false
+    }
 
     async fn call(&self, input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
         let prompt = input["prompt"]
@@ -271,30 +281,36 @@ impl Tool for DispatchAgentTool {
             .map(AgentType::from_str)
             .unwrap_or(AgentType::General);
 
-        let allowed_tools: Option<Vec<String>> = input["allowed_tools"]
-            .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+        let allowed_tools: Option<Vec<String>> = input["allowed_tools"].as_array().map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
 
         let system_prompt = input["system_prompt"]
             .as_str()
             .map(String::from)
             .unwrap_or_else(|| agent_type.system_prompt(&self.config.system_prompt));
 
-        let run_in_background = input["run_in_background"]
-            .as_bool()
-            .unwrap_or(false)
-            || self.agent_tracker.is_some(); // coordinator mode → always background
+        let run_in_background =
+            input["run_in_background"].as_bool().unwrap_or(false) || self.agent_tracker.is_some(); // coordinator mode → always background
 
         let agent_name = input["name"].as_str().map(String::from);
         let agent_description = input["description"].as_str().map(String::from);
 
         // Build tool definitions for the sub-agent (optionally filtered)
-        let all_tool_defs: Vec<ToolDefinition> = self.registry
+        let all_tool_defs: Vec<ToolDefinition> = self
+            .registry
             .all()
             .iter()
             .filter(|t| t.is_enabled())
             // Sub-agents cannot use interactive tools or spawn nested agents
-            .filter(|t| !matches!(t.name(), "AskUserQuestion" | "Agent" | "SendMessage" | "TaskStop"))
+            .filter(|t| {
+                !matches!(
+                    t.name(),
+                    "AskUserQuestion" | "Agent" | "SendMessage" | "TaskStop"
+                )
+            })
             // Agent-type based filtering
             .filter(|t| {
                 if let Some(ref allowed) = allowed_tools {
@@ -340,11 +356,13 @@ impl Tool for DispatchAgentTool {
         };
 
         // Bootstrap with the user prompt as the first message
-        use uuid::Uuid;
         use clawed_core::message::{ContentBlock, Message, UserMessage};
+        use uuid::Uuid;
         let init_messages = vec![Message::User(UserMessage {
             uuid: Uuid::new_v4().to_string(),
-            content: vec![ContentBlock::Text { text: prompt.clone() }],
+            content: vec![ContentBlock::Text {
+                text: prompt.clone(),
+            }],
         })];
 
         let query_config = QueryConfig {
@@ -366,17 +384,22 @@ impl Tool for DispatchAgentTool {
         if run_in_background {
             if let Some(ref tracker) = self.agent_tracker {
                 let agent_id = format!("agent-{}", &Uuid::new_v4().to_string()[..8]);
-                tracker.register(
-                    &agent_id,
-                    &prompt,
-                    agent_name.as_deref(),
-                    agent_description.as_deref(),
-                ).await;
+                tracker
+                    .register(
+                        &agent_id,
+                        &prompt,
+                        agent_name.as_deref(),
+                        agent_description.as_deref(),
+                    )
+                    .await;
 
                 // Create a CancellationToken so TaskStop can abort this agent
                 let cancel_token = tokio_util::sync::CancellationToken::new();
                 if let Some(ref tokens) = self.cancel_tokens {
-                    tokens.write().await.insert(agent_id.clone(), cancel_token.clone());
+                    tokens
+                        .write()
+                        .await
+                        .insert(agent_id.clone(), cancel_token.clone());
                 }
 
                 // Override the abort signal with one linked to the cancel token
@@ -425,7 +448,7 @@ impl Tool for DispatchAgentTool {
                     Ok(p) => p,
                     Err(_) => {
                         return Ok(ToolResult::error(
-                            "Failed to acquire agent concurrency permit (semaphore closed)"
+                            "Failed to acquire agent concurrency permit (semaphore closed)",
                         ));
                     }
                 };
@@ -611,8 +634,10 @@ impl Tool for DispatchAgentTool {
             return Ok(ToolResult::error(format!("Sub-agent error: {}", err)));
         }
 
-        eprintln!("\x1b[2m  ✓ [{}] done ({} turns, {} tools)\x1b[0m",
-            agent_label, turn, tool_count);
+        eprintln!(
+            "\x1b[2m  ✓ [{}] done ({} turns, {} tools)\x1b[0m",
+            agent_label, turn, tool_count
+        );
 
         if output.trim().is_empty() {
             Ok(ToolResult::text("Sub-agent completed with no text output."))
@@ -712,12 +737,18 @@ mod tests {
 
     #[test]
     fn resolve_model_none_uses_parent() {
-        assert_eq!(resolve_agent_model(None, "claude-sonnet-4-6"), "claude-sonnet-4-6");
+        assert_eq!(
+            resolve_agent_model(None, "claude-sonnet-4-6"),
+            "claude-sonnet-4-6"
+        );
     }
 
     #[test]
     fn resolve_model_inherit_uses_parent() {
-        assert_eq!(resolve_agent_model(Some("inherit"), "claude-opus-4"), "claude-opus-4");
+        assert_eq!(
+            resolve_agent_model(Some("inherit"), "claude-opus-4"),
+            "claude-opus-4"
+        );
     }
 
     #[test]
@@ -771,7 +802,16 @@ mod tests {
         let schema = tool.input_schema();
         assert_eq!(schema["type"], "object");
         let props = schema["properties"].as_object().unwrap();
-        for key in &["prompt", "description", "agent_type", "name", "allowed_tools", "system_prompt", "model", "run_in_background"] {
+        for key in &[
+            "prompt",
+            "description",
+            "agent_type",
+            "name",
+            "allowed_tools",
+            "system_prompt",
+            "model",
+            "run_in_background",
+        ] {
             assert!(props.contains_key(*key), "Missing property: {}", key);
         }
         let required = schema["required"].as_array().unwrap();

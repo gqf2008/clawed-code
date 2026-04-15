@@ -55,9 +55,17 @@ impl SwarmMcpServer {
     }
 
     /// Create a new swarm MCP server with bus integration.
-    pub fn with_notifier(default_model: String, default_cwd: String, notifier: SwarmNotifier) -> Self {
+    pub fn with_notifier(
+        default_model: String,
+        default_cwd: String,
+        notifier: SwarmNotifier,
+    ) -> Self {
         Self {
-            network: Arc::new(SwarmNetwork::with_notifier(default_model, default_cwd, notifier)),
+            network: Arc::new(SwarmNetwork::with_notifier(
+                default_model,
+                default_cwd,
+                notifier,
+            )),
         }
     }
 
@@ -130,7 +138,9 @@ impl SwarmMcpServer {
             },
             McpToolDef {
                 name: "swarm_send_message".into(),
-                description: Some("Send a message to a specific agent and get its response.".into()),
+                description: Some(
+                    "Send a message to a specific agent and get its response.".into(),
+                ),
                 input_schema: Some(json!({
                     "type": "object",
                     "properties": {
@@ -145,7 +155,9 @@ impl SwarmMcpServer {
             },
             McpToolDef {
                 name: "swarm_broadcast".into(),
-                description: Some("Broadcast a message to all agents in a team (except sender).".into()),
+                description: Some(
+                    "Broadcast a message to all agents in a team (except sender).".into(),
+                ),
                 input_schema: Some(json!({
                     "type": "object",
                     "properties": {
@@ -231,10 +243,15 @@ impl SwarmMcpServer {
             return err_result("Missing required fields: team_name, agent_name");
         }
 
-        match self.network.spawn_agent(team_name, agent_name, model, prompt, cwd).await {
-            Ok(result) if result.success => {
-                ok_result(format!("Agent '{}' spawned in team '{team_name}'", result.agent_id))
-            }
+        match self
+            .network
+            .spawn_agent(team_name, agent_name, model, prompt, cwd)
+            .await
+        {
+            Ok(result) if result.success => ok_result(format!(
+                "Agent '{}' spawned in team '{team_name}'",
+                result.agent_id
+            )),
             Ok(result) => err_result(result.message),
             Err(e) => err_result(format!("Spawn error: {e}")),
         }
@@ -259,9 +276,16 @@ impl SwarmMcpServer {
         let message = input["message"].as_str().unwrap_or("");
         let from = input["from"].as_str();
 
-        match self.network.send_message(team_name, target, message, from).await {
+        match self
+            .network
+            .send_message(team_name, target, message, from)
+            .await
+        {
             Ok(r) if r.success => {
-                let text = r.response.map(|r| r.text).unwrap_or_else(|| "No response".into());
+                let text = r
+                    .response
+                    .map(|r| r.text)
+                    .unwrap_or_else(|| "No response".into());
                 ok_result(text)
             }
             Ok(r) => err_result(r.error.unwrap_or_else(|| "Unknown error".into())),
@@ -324,7 +348,9 @@ mod tests {
     #[tokio::test]
     async fn mcp_server_create_team() {
         let server = SwarmMcpServer::new("claude-haiku".into(), "/tmp".into());
-        let r = server.call_tool("swarm_create_team", json!({"name": "test"})).await;
+        let r = server
+            .call_tool("swarm_create_team", json!({"name": "test"}))
+            .await;
         assert!(!r.is_error);
         assert!(r.text().contains("created"));
     }
@@ -334,41 +360,62 @@ mod tests {
         let server = SwarmMcpServer::new("claude-haiku".into(), "/tmp".into());
 
         // Create team
-        let r = server.call_tool("swarm_create_team", json!({"name": "mcp-test"})).await;
+        let r = server
+            .call_tool("swarm_create_team", json!({"name": "mcp-test"}))
+            .await;
         assert!(!r.is_error);
 
         // Spawn agent
-        let r = server.call_tool("swarm_spawn_agent", json!({
-            "team_name": "mcp-test",
-            "agent_name": "worker",
-            "prompt": "You are a worker"
-        })).await;
+        let r = server
+            .call_tool(
+                "swarm_spawn_agent",
+                json!({
+                    "team_name": "mcp-test",
+                    "agent_name": "worker",
+                    "prompt": "You are a worker"
+                }),
+            )
+            .await;
         assert!(!r.is_error);
 
         // Send message
-        let r = server.call_tool("swarm_send_message", json!({
-            "team_name": "mcp-test",
-            "target_agent_id": "worker@mcp-test",
-            "message": "Hello worker"
-        })).await;
+        let r = server
+            .call_tool(
+                "swarm_send_message",
+                json!({
+                    "team_name": "mcp-test",
+                    "target_agent_id": "worker@mcp-test",
+                    "message": "Hello worker"
+                }),
+            )
+            .await;
         assert!(!r.is_error);
         // response text is the agent reply (may be error message in CI without API key)
         assert!(!r.text().is_empty());
 
         // Team status
-        let r = server.call_tool("swarm_team_status", json!({"team_name": "mcp-test"})).await;
+        let r = server
+            .call_tool("swarm_team_status", json!({"team_name": "mcp-test"}))
+            .await;
         assert!(!r.is_error);
         assert!(r.text().contains("mcp-test"));
 
         // Terminate
-        let r = server.call_tool("swarm_terminate_agent", json!({
-            "team_name": "mcp-test",
-            "agent_id": "worker@mcp-test"
-        })).await;
+        let r = server
+            .call_tool(
+                "swarm_terminate_agent",
+                json!({
+                    "team_name": "mcp-test",
+                    "agent_id": "worker@mcp-test"
+                }),
+            )
+            .await;
         assert!(!r.is_error);
 
         // Delete team
-        let r = server.call_tool("swarm_delete_team", json!({"name": "mcp-test"})).await;
+        let r = server
+            .call_tool("swarm_delete_team", json!({"name": "mcp-test"}))
+            .await;
         assert!(!r.is_error);
     }
 
@@ -382,10 +429,15 @@ mod tests {
     #[tokio::test]
     async fn mcp_server_missing_team() {
         let server = SwarmMcpServer::new("claude-haiku".into(), "/tmp".into());
-        let r = server.call_tool("swarm_spawn_agent", json!({
-            "team_name": "nope",
-            "agent_name": "agent"
-        })).await;
+        let r = server
+            .call_tool(
+                "swarm_spawn_agent",
+                json!({
+                    "team_name": "nope",
+                    "agent_name": "agent"
+                }),
+            )
+            .await;
         assert!(r.is_error);
     }
 }

@@ -25,9 +25,7 @@ impl FileState {
         content.hash(&mut hasher);
         let content_hash = hasher.finish();
 
-        let size = std::fs::metadata(path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
 
         Self { content_hash, size }
     }
@@ -96,8 +94,12 @@ pub struct FileEditTool;
 
 #[async_trait]
 impl Tool for FileEditTool {
-    fn name(&self) -> &'static str { "Edit" }
-    fn category(&self) -> ToolCategory { ToolCategory::FileSystem }
+    fn name(&self) -> &'static str {
+        "Edit"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::FileSystem
+    }
 
     fn description(&self) -> &'static str {
         "Performs exact string replacements in files. You must use Read at least once before \
@@ -110,8 +112,16 @@ impl Tool for FileEditTool {
     fn to_auto_classifier_input(&self, input: &Value) -> Value {
         // Only pass path and content lengths; strip actual content to avoid leaking code
         let path = input.get("file_path").cloned().unwrap_or(Value::Null);
-        let old_len = input.get("old_string").and_then(|v| v.as_str()).map(|s| s.len()).unwrap_or(0);
-        let new_len = input.get("new_string").and_then(|v| v.as_str()).map(|s| s.len()).unwrap_or(0);
+        let old_len = input
+            .get("old_string")
+            .and_then(|v| v.as_str())
+            .map(|s| s.len())
+            .unwrap_or(0);
+        let new_len = input
+            .get("new_string")
+            .and_then(|v| v.as_str())
+            .map(|s| s.len())
+            .unwrap_or(0);
         json!({"FileEdit": {"path": path, "old_len": old_len, "new_len": new_len}})
     }
 
@@ -128,9 +138,15 @@ impl Tool for FileEditTool {
     }
 
     async fn call(&self, input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
-        let file_path = input["file_path"].as_str().ok_or_else(|| anyhow::anyhow!("Missing 'file_path'"))?;
-        let old_string = input["old_string"].as_str().ok_or_else(|| anyhow::anyhow!("Missing 'old_string'"))?;
-        let new_string = input["new_string"].as_str().ok_or_else(|| anyhow::anyhow!("Missing 'new_string'"))?;
+        let file_path = input["file_path"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'file_path'"))?;
+        let old_string = input["old_string"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'old_string'"))?;
+        let new_string = input["new_string"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'new_string'"))?;
 
         if old_string.is_empty() {
             return Ok(ToolResult::error("old_string must not be empty"));

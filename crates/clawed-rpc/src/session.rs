@@ -17,7 +17,9 @@ use tracing::{debug, error, info, warn};
 use clawed_bus::bus::ClientHandle;
 
 use crate::methods::{notification_to_jsonrpc, parse_request};
-use crate::protocol::{error_codes, Message, Notification, RawMessage, RequestId, Response, RpcError};
+use crate::protocol::{
+    error_codes, Message, Notification, RawMessage, RequestId, Response, RpcError,
+};
 use crate::transport::{Transport, TransportError};
 
 /// A single RPC session: one transport connection + one bus ClientHandle.
@@ -29,11 +31,7 @@ pub struct RpcSession {
 
 impl RpcSession {
     /// Create a new session binding a transport to a client handle.
-    pub fn new(
-        id: impl Into<String>,
-        transport: Box<dyn Transport>,
-        client: ClientHandle,
-    ) -> Self {
+    pub fn new(id: impl Into<String>, transport: Box<dyn Transport>, client: ClientHandle) -> Self {
         Self {
             id: id.into(),
             transport,
@@ -153,23 +151,29 @@ impl RpcSession {
                                 request_id,
                                 RpcError::new(error_codes::INTERNAL_ERROR, e.to_string()),
                             );
-                            if let Err(we) = self.transport.write_message(&RawMessage::from(resp)).await {
+                            if let Err(we) =
+                                self.transport.write_message(&RawMessage::from(resp)).await
+                            {
                                 debug!("[{}] Failed to write error response: {}", session_id, we);
                             }
                         } else {
-                            let resp = Response::success(
-                                request_id,
-                                serde_json::json!({"ok": true}),
-                            );
-                            if let Err(we) = self.transport.write_message(&RawMessage::from(resp)).await {
+                            let resp =
+                                Response::success(request_id, serde_json::json!({"ok": true}));
+                            if let Err(we) =
+                                self.transport.write_message(&RawMessage::from(resp)).await
+                            {
                                 debug!("[{}] Failed to write success response: {}", session_id, we);
                             }
                         }
                     }
                     Err(rpc_err) => {
                         let resp = Response::error(request_id, rpc_err);
-                        if let Err(we) = self.transport.write_message(&RawMessage::from(resp)).await {
-                            debug!("[{}] Failed to write method error response: {}", session_id, we);
+                        if let Err(we) = self.transport.write_message(&RawMessage::from(resp)).await
+                        {
+                            debug!(
+                                "[{}] Failed to write method error response: {}",
+                                session_id, we
+                            );
                         }
                     }
                 }
@@ -181,12 +185,12 @@ impl RpcSession {
                 warn!("[{}] Unexpected response from client", session_id);
             }
             Err(rpc_err) => {
-                let resp = Response::error(
-                    fallback_id.unwrap_or(RequestId::Null),
-                    rpc_err,
-                );
+                let resp = Response::error(fallback_id.unwrap_or(RequestId::Null), rpc_err);
                 if let Err(we) = self.transport.write_message(&RawMessage::from(resp)).await {
-                    debug!("[{}] Failed to write classify error response: {}", session_id, we);
+                    debug!(
+                        "[{}] Failed to write classify error response: {}",
+                        session_id, we
+                    );
                 }
             }
         }
@@ -198,7 +202,7 @@ impl RpcSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{Request, RawMessage, RequestId, error_codes};
+    use crate::protocol::{error_codes, RawMessage, Request, RequestId};
     use crate::transport::stdio::test_transport::ChannelTransport;
     use clawed_bus::bus::EventBus;
     use clawed_bus::events::AgentNotification;
@@ -220,7 +224,10 @@ mod tests {
 
         // Send a request from the "client" side
         let req = Request::new(1, "agent.clearHistory", None);
-        server_side.write_message(&RawMessage::from(req)).await.unwrap();
+        server_side
+            .write_message(&RawMessage::from(req))
+            .await
+            .unwrap();
 
         // Should get a success response
         let resp = server_side.read_message().await.unwrap().unwrap();
@@ -233,10 +240,7 @@ mod tests {
 
         // Close the server side to end the session
         drop(server_side);
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            session_task,
-        ).await;
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(100), session_task).await;
     }
 
     #[tokio::test]
@@ -249,7 +253,10 @@ mod tests {
 
         // Send unknown method
         let req = Request::new(1, "unknown.method", None);
-        server_side.write_message(&RawMessage::from(req)).await.unwrap();
+        server_side
+            .write_message(&RawMessage::from(req))
+            .await
+            .unwrap();
 
         // Should get error response
         let resp = server_side.read_message().await.unwrap().unwrap();
@@ -258,10 +265,7 @@ mod tests {
         assert_eq!(err.code, error_codes::METHOD_NOT_FOUND);
 
         drop(server_side);
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            session_task,
-        ).await;
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(100), session_task).await;
     }
 
     #[tokio::test]
@@ -275,10 +279,8 @@ mod tests {
         drop(server_side);
 
         // Session should complete quickly
-        let result = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            session.run(),
-        ).await;
+        let result =
+            tokio::time::timeout(std::time::Duration::from_millis(500), session.run()).await;
         assert!(result.is_ok());
     }
 
@@ -292,7 +294,10 @@ mod tests {
 
         // Send request with specific numeric ID
         let req = Request::new(42, "agent.clearHistory", None);
-        server_side.write_message(&RawMessage::from(req)).await.unwrap();
+        server_side
+            .write_message(&RawMessage::from(req))
+            .await
+            .unwrap();
 
         let resp = server_side.read_message().await.unwrap().unwrap();
         assert_eq!(resp.id, Some(RequestId::Number(42)));
@@ -308,7 +313,10 @@ mod tests {
 
         // agent.setModel requires "model" param
         let req = Request::new(1, "agent.setModel", None);
-        server_side.write_message(&RawMessage::from(req)).await.unwrap();
+        server_side
+            .write_message(&RawMessage::from(req))
+            .await
+            .unwrap();
 
         let resp = server_side.read_message().await.unwrap().unwrap();
         assert!(resp.error.is_some());
@@ -325,20 +333,33 @@ mod tests {
 
         // First, send a ping request to confirm the session is running and subscribed.
         let req = Request::new(1, "agent.clearHistory", None);
-        server_side.write_message(&RawMessage::from(req)).await.unwrap();
+        server_side
+            .write_message(&RawMessage::from(req))
+            .await
+            .unwrap();
         let _resp = tokio::time::timeout(
             std::time::Duration::from_millis(500),
             server_side.read_message(),
-        ).await.unwrap().unwrap().unwrap();
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 
         // Now the session is definitely running — send a notification via the bus
-        bus_handle.notify(AgentNotification::TextDelta { text: "hi there".into() });
+        bus_handle.notify(AgentNotification::TextDelta {
+            text: "hi there".into(),
+        });
 
         // Read the notification from the transport
         let msg = tokio::time::timeout(
             std::time::Duration::from_millis(500),
             server_side.read_message(),
-        ).await.unwrap().unwrap().unwrap();
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
         assert_eq!(msg.method.as_deref(), Some("agent.textDelta"));
         let params = msg.params.unwrap();
         assert_eq!(params["text"], "hi there");
@@ -355,7 +376,10 @@ mod tests {
         // Send 5 requests rapidly
         for i in 1..=5 {
             let req = Request::new(i, "agent.clearHistory", None);
-            server_side.write_message(&RawMessage::from(req)).await.unwrap();
+            server_side
+                .write_message(&RawMessage::from(req))
+                .await
+                .unwrap();
         }
 
         // Should get 5 responses
@@ -363,7 +387,11 @@ mod tests {
             let resp = tokio::time::timeout(
                 std::time::Duration::from_millis(200),
                 server_side.read_message(),
-            ).await.unwrap().unwrap().unwrap();
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
             assert_eq!(resp.id, Some(RequestId::Number(i)));
             assert!(resp.result.is_some());
         }
@@ -391,7 +419,11 @@ mod tests {
         let resp = tokio::time::timeout(
             std::time::Duration::from_millis(200),
             server_side.read_message(),
-        ).await.unwrap().unwrap().unwrap();
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
         // Should use fallback_id from raw message
         assert_eq!(resp.id, Some(RequestId::Number(99)));
         assert!(resp.error.is_some());

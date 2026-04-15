@@ -234,10 +234,7 @@ impl Drop for SessionGuard {
 /// Register the current session. Returns a guard that cleans up on drop.
 ///
 /// Creates `~/.claude/sessions/{pid}.json` with session metadata.
-pub fn register_session(
-    session_id: &str,
-    cwd: &str,
-) -> Option<SessionGuard> {
+pub fn register_session(session_id: &str, cwd: &str) -> Option<SessionGuard> {
     let dir = sessions_dir()?;
     if let Err(e) = ensure_sessions_dir(&dir) {
         debug!("Failed to create sessions dir: {}", e);
@@ -276,7 +273,10 @@ pub fn register_session(
         }
     }
 
-    debug!("Registered session {} (pid={}, kind={})", session_id, pid, kind);
+    debug!(
+        "Registered session {} (pid={}, kind={})",
+        session_id, pid, kind
+    );
 
     Some(SessionGuard {
         pid_file: pid_path,
@@ -418,8 +418,14 @@ mod tests {
     fn session_kind_from_env() {
         assert_eq!(SessionKind::from_env("bg"), Some(SessionKind::Bg));
         assert_eq!(SessionKind::from_env("daemon"), Some(SessionKind::Daemon));
-        assert_eq!(SessionKind::from_env("daemon-worker"), Some(SessionKind::DaemonWorker));
-        assert_eq!(SessionKind::from_env("interactive"), Some(SessionKind::Interactive));
+        assert_eq!(
+            SessionKind::from_env("daemon-worker"),
+            Some(SessionKind::DaemonWorker)
+        );
+        assert_eq!(
+            SessionKind::from_env("interactive"),
+            Some(SessionKind::Interactive)
+        );
         assert_eq!(SessionKind::from_env("unknown"), None);
     }
 

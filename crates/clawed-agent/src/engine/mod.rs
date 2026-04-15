@@ -11,20 +11,20 @@ mod session_ops;
 mod submit;
 pub use builder::QueryEngineBuilder;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use clawed_api::client::ApiClient;
 use clawed_api::types::{CacheControl, ThinkingConfig, ToolDefinition};
-use clawed_core::message::Message;
 use clawed_bus::AgentNotification;
+use clawed_core::message::Message;
 use clawed_core::tool::AbortSignal;
 use clawed_tools::ToolRegistry;
 
 use crate::compact::AutoCompactState;
 use crate::coordinator::TaskNotification;
-use crate::dispatch_agent::{AgentChannelMap, CancelTokenMap};
 use crate::cost::CostTracker;
+use crate::dispatch_agent::{AgentChannelMap, CancelTokenMap};
 use crate::executor::ToolExecutor;
 use crate::hooks::{HookDecision, HookEvent, HookRegistry};
 use crate::query::QueryConfig;
@@ -41,8 +41,8 @@ enum ThinkingOverride {
     Enabled(ThinkingConfig),
 }
 use crate::state::SharedState;
-use clawed_core::permissions::PermissionMode;
 use crate::task_runner::{run_task, TaskProgress, TaskResult};
+use clawed_core::permissions::PermissionMode;
 
 pub struct QueryEngine {
     client: Arc<ApiClient>,
@@ -59,7 +59,8 @@ pub struct QueryEngine {
     /// Shared abort signal — call `.abort()` to cancel the running task.
     abort_signal: AbortSignal,
     /// Coordinator mode: receives task notifications from background agents.
-    notification_rx: Option<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<TaskNotification>>>,
+    notification_rx:
+        Option<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<TaskNotification>>>,
     /// Whether coordinator mode is active.
     coordinator_mode: bool,
     /// If non-empty, only expose these tools to the model.
@@ -81,7 +82,8 @@ pub struct QueryEngine {
     thinking_override: std::sync::Mutex<ThinkingOverride>,
     /// Receives bus `AgentNotification`s emitted by background sub-agents.
     /// Drained by `drain_agent_notifications()` and forwarded to the bus adapter.
-    pub agent_notif_rx: Option<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<AgentNotification>>>,
+    pub agent_notif_rx:
+        Option<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<AgentNotification>>>,
 }
 
 impl QueryEngine {
@@ -93,13 +95,17 @@ impl QueryEngine {
     }
 
     fn tool_definitions(&self, permission_mode: PermissionMode) -> Vec<ToolDefinition> {
-        let mut defs: Vec<ToolDefinition> = self.registry
+        let mut defs: Vec<ToolDefinition> = self
+            .registry
             .all()
             .iter()
             .filter(|t| t.is_enabled())
             .filter(|t| {
                 self.allowed_tools.is_empty()
-                    || self.allowed_tools.iter().any(|a| a.eq_ignore_ascii_case(t.name()))
+                    || self
+                        .allowed_tools
+                        .iter()
+                        .any(|a| a.eq_ignore_ascii_case(t.name()))
             })
             // In plan mode, only expose read-only tools to the model
             .filter(|t| {
@@ -123,7 +129,6 @@ impl QueryEngine {
         }
         defs
     }
-
 
     pub fn state(&self) -> &SharedState {
         &self.state
@@ -179,8 +184,12 @@ impl QueryEngine {
     /// Drain any pending bus `AgentNotification`s emitted by background sub-agents.
     /// Called by the bus adapter to forward these notifications to all TUI clients.
     pub fn drain_agent_notifications(&self) -> Vec<AgentNotification> {
-        let Some(rx) = &self.agent_notif_rx else { return Vec::new() };
-        let Ok(mut guard) = rx.try_lock() else { return Vec::new() };
+        let Some(rx) = &self.agent_notif_rx else {
+            return Vec::new();
+        };
+        let Ok(mut guard) = rx.try_lock() else {
+            return Vec::new();
+        };
         let mut result = Vec::new();
         while let Ok(n) = guard.try_recv() {
             result.push(n);
@@ -204,10 +213,13 @@ impl QueryEngine {
     ///
     /// Returns an error if not in coordinator mode or if the agent is not found.
     pub async fn send_to_agent(&self, agent_id: &str, message: &str) -> anyhow::Result<()> {
-        let channels = self.agent_channels.as_ref()
+        let channels = self
+            .agent_channels
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Not in coordinator mode"))?;
         let channels = channels.read().await;
-        let tx = channels.get(agent_id)
+        let tx = channels
+            .get(agent_id)
             .ok_or_else(|| anyhow::anyhow!("Agent '{}' not found or not running", agent_id))?;
         tx.send(message.to_string())
             .map_err(|_| anyhow::anyhow!("Agent '{}' channel closed", agent_id))?;
@@ -218,10 +230,13 @@ impl QueryEngine {
     ///
     /// Returns an error if not in coordinator mode or if the agent is not found.
     pub async fn cancel_agent(&self, agent_id: &str) -> anyhow::Result<()> {
-        let tokens = self.cancel_tokens.as_ref()
+        let tokens = self
+            .cancel_tokens
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Not in coordinator mode"))?;
         let tokens = tokens.read().await;
-        let token = tokens.get(agent_id)
+        let token = tokens
+            .get(agent_id)
             .ok_or_else(|| anyhow::anyhow!("Agent '{}' not found or not running", agent_id))?;
         token.cancel();
         Ok(())
@@ -232,7 +247,13 @@ impl QueryEngine {
         self.registry
             .all()
             .iter()
-            .map(|t| (t.name().to_string(), t.description().to_string(), t.is_enabled()))
+            .map(|t| {
+                (
+                    t.name().to_string(),
+                    t.description().to_string(),
+                    t.is_enabled(),
+                )
+            })
             .collect()
     }
 
@@ -273,7 +294,10 @@ impl QueryEngine {
     /// Install a bus-based permission prompter so tool permission checks go
     /// through the event bus instead of directly to the terminal. Call this
     /// before running any queries when running in TUI or RPC mode.
-    pub fn set_permission_prompter(&self, prompter: Arc<dyn crate::permissions::PermissionPrompter>) {
+    pub fn set_permission_prompter(
+        &self,
+        prompter: Arc<dyn crate::permissions::PermissionPrompter>,
+    ) {
         self.executor.set_prompter(prompter);
     }
 
@@ -288,8 +312,6 @@ impl QueryEngine {
             _ => None,
         }
     }
-
-
 
     // ── Accessors and runtime config ─────────────────────────────────────────
 
@@ -339,9 +361,7 @@ impl QueryEngine {
     pub fn set_break_cache(&self) {
         self.break_cache_next.store(true, Ordering::SeqCst);
     }
-
 }
 
 #[cfg(test)]
 mod tests;
-

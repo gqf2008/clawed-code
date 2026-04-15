@@ -11,7 +11,9 @@ pub struct SkillTool;
 
 #[async_trait]
 impl Tool for SkillTool {
-    fn name(&self) -> &'static str { "Skill" }
+    fn name(&self) -> &'static str {
+        "Skill"
+    }
 
     fn description(&self) -> &'static str {
         "Execute a skill (a reusable prompt template loaded from .claude/skills/). \
@@ -35,7 +37,9 @@ impl Tool for SkillTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
         let skill_name = input["skill"]
@@ -49,7 +53,9 @@ impl Tool for SkillTool {
         let skills = clawed_core::skills::get_skills(&context.cwd);
 
         let skill = skills.iter().find(|s| s.name == skill_name);
-        let skill = if let Some(s) = skill { s } else {
+        let skill = if let Some(s) = skill {
+            s
+        } else {
             let available: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
             return Ok(ToolResult::error(format!(
                 "Skill '{skill_name}' not found. Available: {available:?}"
@@ -75,10 +81,11 @@ impl Tool for SkillTool {
                 if let Some(rest) = trimmed.strip_prefix("<!-- allowedTools:") {
                     if let Some(tools_str) = rest.strip_suffix("-->") {
                         inline_tools = Some(
-                            tools_str.split(',')
+                            tools_str
+                                .split(',')
                                 .map(|t| t.trim().to_string())
                                 .filter(|t| !t.is_empty())
-                                .collect()
+                                .collect(),
                         );
                     }
                 }

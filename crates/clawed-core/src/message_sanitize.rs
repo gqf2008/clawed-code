@@ -50,19 +50,31 @@ impl SanitizeReport {
         }
         let mut parts = Vec::new();
         if self.orphaned_thinking_removed > 0 {
-            parts.push(format!("{} orphaned thinking", self.orphaned_thinking_removed));
+            parts.push(format!(
+                "{} orphaned thinking",
+                self.orphaned_thinking_removed
+            ));
         }
         if self.whitespace_only_removed > 0 {
             parts.push(format!("{} whitespace-only", self.whitespace_only_removed));
         }
         if self.unresolved_tool_uses_removed > 0 {
-            parts.push(format!("{} unresolved tool_use", self.unresolved_tool_uses_removed));
+            parts.push(format!(
+                "{} unresolved tool_use",
+                self.unresolved_tool_uses_removed
+            ));
         }
         if self.unresolved_tool_results_removed > 0 {
-            parts.push(format!("{} unresolved tool_result", self.unresolved_tool_results_removed));
+            parts.push(format!(
+                "{} unresolved tool_result",
+                self.unresolved_tool_results_removed
+            ));
         }
         if self.synthetic_tool_results_injected > 0 {
-            parts.push(format!("{} synthetic tool_result", self.synthetic_tool_results_injected));
+            parts.push(format!(
+                "{} synthetic tool_result",
+                self.synthetic_tool_results_injected
+            ));
         }
         if self.empty_content_patched > 0 {
             parts.push(format!("{} empty patched", self.empty_content_patched));
@@ -122,7 +134,10 @@ fn filter_orphaned_thinking(messages: Vec<Message>, report: &mut SanitizeReport)
                 if a.content.is_empty() {
                     return true; // handled by Pass 3
                 }
-                let has_non_thinking = a.content.iter().any(|b| !matches!(b, ContentBlock::Thinking { .. }));
+                let has_non_thinking = a
+                    .content
+                    .iter()
+                    .any(|b| !matches!(b, ContentBlock::Thinking { .. }));
                 if !has_non_thinking {
                     report.orphaned_thinking_removed += 1;
                     return false;
@@ -138,7 +153,10 @@ fn filter_orphaned_thinking(messages: Vec<Message>, report: &mut SanitizeReport)
 /// Remove assistant messages where all text content is whitespace.
 ///
 /// The API rejects `[{type:"text", text:"  \n  "}]` as content.
-fn filter_whitespace_only_assistant(messages: Vec<Message>, report: &mut SanitizeReport) -> Vec<Message> {
+fn filter_whitespace_only_assistant(
+    messages: Vec<Message>,
+    report: &mut SanitizeReport,
+) -> Vec<Message> {
     messages
         .into_iter()
         .filter(|msg| {
@@ -147,7 +165,10 @@ fn filter_whitespace_only_assistant(messages: Vec<Message>, report: &mut Sanitiz
                     return true; // handled by Pass 3
                 }
                 // Check if all blocks are text-only AND all text is whitespace
-                let all_text = a.content.iter().all(|b| matches!(b, ContentBlock::Text { .. }));
+                let all_text = a
+                    .content
+                    .iter()
+                    .all(|b| matches!(b, ContentBlock::Text { .. }));
                 if all_text {
                     let all_whitespace = a.content.iter().all(|b| match b {
                         ContentBlock::Text { text } => text.trim().is_empty(),
@@ -170,7 +191,10 @@ fn filter_whitespace_only_assistant(messages: Vec<Message>, report: &mut Sanitiz
 ///
 /// An empty `content: []` is valid for prefill (the last message), but the API
 /// rejects it for earlier messages. Inject a placeholder text block.
-fn ensure_non_empty_assistant_content(mut messages: Vec<Message>, report: &mut SanitizeReport) -> Vec<Message> {
+fn ensure_non_empty_assistant_content(
+    mut messages: Vec<Message>,
+    report: &mut SanitizeReport,
+) -> Vec<Message> {
     let len = messages.len();
     for (i, msg) in messages.iter_mut().enumerate() {
         if i == len.saturating_sub(1) {
@@ -195,7 +219,10 @@ fn ensure_non_empty_assistant_content(mut messages: Vec<Message>, report: &mut S
 /// This fixes sessions interrupted mid-tool-execution where either the
 /// tool_use was emitted but the result never came back, or orphaned
 /// tool_results reference a tool_use that was dropped during compaction.
-fn filter_unresolved_tool_refs(messages: Vec<Message>, report: &mut SanitizeReport) -> Vec<Message> {
+fn filter_unresolved_tool_refs(
+    messages: Vec<Message>,
+    report: &mut SanitizeReport,
+) -> Vec<Message> {
     // Collect all tool_use IDs and tool_result references
     let mut tool_use_ids = HashSet::new();
     let mut tool_result_refs = HashSet::new();
@@ -220,8 +247,14 @@ fn filter_unresolved_tool_refs(messages: Vec<Message>, report: &mut SanitizeRepo
     }
 
     // Find unresolved: tool_use without result, and tool_result without use
-    let unresolved_uses: HashSet<_> = tool_use_ids.difference(&tool_result_refs).cloned().collect();
-    let unresolved_results: HashSet<_> = tool_result_refs.difference(&tool_use_ids).cloned().collect();
+    let unresolved_uses: HashSet<_> = tool_use_ids
+        .difference(&tool_result_refs)
+        .cloned()
+        .collect();
+    let unresolved_results: HashSet<_> = tool_result_refs
+        .difference(&tool_use_ids)
+        .cloned()
+        .collect();
 
     if unresolved_uses.is_empty() && unresolved_results.is_empty() {
         return messages;
@@ -243,7 +276,9 @@ fn filter_unresolved_tool_refs(messages: Vec<Message>, report: &mut SanitizeRepo
             }
             Message::User(mut u) => {
                 u.content.retain(|b| match b {
-                    ContentBlock::ToolResult { tool_use_id, .. } => !unresolved_results.contains(tool_use_id),
+                    ContentBlock::ToolResult { tool_use_id, .. } => {
+                        !unresolved_results.contains(tool_use_id)
+                    }
                     _ => true,
                 });
                 Message::User(u)
@@ -272,7 +307,10 @@ const SYNTHETIC_TOOL_RESULT_PLACEHOLDER: &str = "[Tool use interrupted]";
 /// tool_use blocks without matching tool_result in the next user message, inject
 /// a synthetic error tool_result. This is safer than removing the tool_use block
 /// (which would lose context about what the model tried to do).
-fn ensure_tool_result_pairing(mut messages: Vec<Message>, report: &mut SanitizeReport) -> Vec<Message> {
+fn ensure_tool_result_pairing(
+    mut messages: Vec<Message>,
+    report: &mut SanitizeReport,
+) -> Vec<Message> {
     if messages.is_empty() {
         return messages;
     }
@@ -282,13 +320,17 @@ fn ensure_tool_result_pairing(mut messages: Vec<Message>, report: &mut SanitizeR
 
     for i in 0..messages.len() {
         if let Message::Assistant(a) = &messages[i] {
-            let tool_use_ids: Vec<String> = a.content.iter().filter_map(|b| {
-                if let ContentBlock::ToolUse { id, .. } = b {
-                    Some(id.clone())
-                } else {
-                    None
-                }
-            }).collect();
+            let tool_use_ids: Vec<String> = a
+                .content
+                .iter()
+                .filter_map(|b| {
+                    if let ContentBlock::ToolUse { id, .. } = b {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
 
             if tool_use_ids.is_empty() {
                 continue;
@@ -344,10 +386,13 @@ fn ensure_tool_result_pairing(mut messages: Vec<Message>, report: &mut SanitizeR
             }
         }
         // No next user message — insert a synthetic one
-        messages.insert(next_idx, Message::User(crate::message::UserMessage {
-            uuid: format!("synthetic-{}", assistant_idx),
-            content: synthetic_blocks,
-        }));
+        messages.insert(
+            next_idx,
+            Message::User(crate::message::UserMessage {
+                uuid: format!("synthetic-{}", assistant_idx),
+                content: synthetic_blocks,
+            }),
+        );
     }
 
     messages
@@ -381,7 +426,8 @@ fn merge_adjacent_users(messages: Vec<Message>, report: &mut SanitizeReport) -> 
 pub fn strip_thinking_blocks(messages: &mut [Message]) {
     for msg in messages.iter_mut() {
         if let Message::Assistant(a) = msg {
-            a.content.retain(|b| !matches!(b, ContentBlock::Thinking { .. }));
+            a.content
+                .retain(|b| !matches!(b, ContentBlock::Thinking { .. }));
         }
     }
 }
@@ -427,7 +473,9 @@ mod tests {
     fn thinking_only_msg() -> Message {
         Message::Assistant(AssistantMessage {
             uuid: "a-think".into(),
-            content: vec![ContentBlock::Thinking { thinking: "let me think...".into() }],
+            content: vec![ContentBlock::Thinking {
+                thinking: "let me think...".into(),
+            }],
             stop_reason: None,
             usage: None,
         })
@@ -478,8 +526,12 @@ mod tests {
             Message::Assistant(AssistantMessage {
                 uuid: "a-mixed".into(),
                 content: vec![
-                    ContentBlock::Thinking { thinking: "hmm".into() },
-                    ContentBlock::Text { text: "answer".into() },
+                    ContentBlock::Thinking {
+                        thinking: "hmm".into(),
+                    },
+                    ContentBlock::Text {
+                        text: "answer".into(),
+                    },
                 ],
                 stop_reason: Some(StopReason::EndTurn),
                 usage: None,
@@ -498,7 +550,9 @@ mod tests {
             user_msg("hello"),
             Message::Assistant(AssistantMessage {
                 uuid: "a-ws".into(),
-                content: vec![ContentBlock::Text { text: "  \n  ".into() }],
+                content: vec![ContentBlock::Text {
+                    text: "  \n  ".into(),
+                }],
                 stop_reason: Some(StopReason::EndTurn),
                 usage: None,
             }),
@@ -551,7 +605,9 @@ mod tests {
         assert_eq!(report.empty_content_patched, 1);
         if let Message::Assistant(a) = &result[1] {
             assert_eq!(a.content.len(), 1);
-            assert!(matches!(&a.content[0], ContentBlock::Text { text } if text == "(empty response)"));
+            assert!(
+                matches!(&a.content[0], ContentBlock::Text { text } if text == "(empty response)")
+            );
         } else {
             panic!("expected assistant");
         }
@@ -656,8 +712,12 @@ mod tests {
             Message::Assistant(AssistantMessage {
                 uuid: "a1".into(),
                 content: vec![
-                    ContentBlock::Thinking { thinking: "hmm".into() },
-                    ContentBlock::Text { text: "answer".into() },
+                    ContentBlock::Thinking {
+                        thinking: "hmm".into(),
+                    },
+                    ContentBlock::Text {
+                        text: "answer".into(),
+                    },
                 ],
                 stop_reason: Some(StopReason::EndTurn),
                 usage: None,
@@ -677,19 +737,21 @@ mod tests {
         // Simulate a messy session: orphaned thinking, unresolved tool, adjacent users
         let msgs = vec![
             user_msg("hello"),
-            thinking_only_msg(),              // should be removed
-            user_msg("continue"),             // now adjacent to first user
+            thinking_only_msg(),  // should be removed
+            user_msg("continue"), // now adjacent to first user
             tool_use_msg("t1", "echo"),
             tool_result_msg("t1", "echoed"),
-            tool_use_msg("t2", "read"),       // no result → unresolved
+            tool_use_msg("t2", "read"), // no result → unresolved
             assistant_msg("done"),
         ];
         let (result, report) = sanitize_messages(msgs);
         assert!(report.orphaned_thinking_removed >= 1);
         assert!(report.unresolved_tool_uses_removed >= 1);
         // After filtering: user(merged), tool_use(t1), tool_result(t1), assistant
-        assert!(validate_alternation(&result).is_none() || result.len() <= 4,
-            "pipeline should produce valid or near-valid alternation");
+        assert!(
+            validate_alternation(&result).is_none() || result.len() <= 4,
+            "pipeline should produce valid or near-valid alternation"
+        );
     }
 
     #[test]
@@ -723,17 +785,17 @@ mod tests {
     #[test]
     fn pairing_injects_synthetic_for_missing_result() {
         // assistant has tool_use(t1), but no following user message
-        let msgs = vec![
-            user_msg("hello"),
-            tool_use_msg("t1", "read"),
-        ];
+        let msgs = vec![user_msg("hello"), tool_use_msg("t1", "read")];
         let mut report = SanitizeReport::default();
         let result = ensure_tool_result_pairing(msgs, &mut report);
         assert_eq!(report.synthetic_tool_results_injected, 1);
         // Should have 3 messages: user, assistant(tool_use), user(synthetic result)
         assert_eq!(result.len(), 3);
         if let Message::User(u) = &result[2] {
-            assert!(matches!(&u.content[0], ContentBlock::ToolResult { is_error: true, .. }));
+            assert!(matches!(
+                &u.content[0],
+                ContentBlock::ToolResult { is_error: true, .. }
+            ));
         } else {
             panic!("Expected synthetic user message");
         }
@@ -769,7 +831,11 @@ mod tests {
         // Still 3 messages, but the user msg now has 2 tool_results
         assert_eq!(result.len(), 3);
         if let Message::User(u) = &result[2] {
-            let result_count = u.content.iter().filter(|b| matches!(b, ContentBlock::ToolResult { .. })).count();
+            let result_count = u
+                .content
+                .iter()
+                .filter(|b| matches!(b, ContentBlock::ToolResult { .. }))
+                .count();
             assert_eq!(result_count, 2); // 1 synthetic + 1 original
         }
     }
@@ -844,7 +910,10 @@ mod tests {
                 _ => {}
             }
         }
-        assert!(use_ids.is_subset(&result_ids), "all tool_use should have matching result");
+        assert!(
+            use_ids.is_subset(&result_ids),
+            "all tool_use should have matching result"
+        );
     }
 
     #[test]
@@ -855,9 +924,21 @@ mod tests {
             Message::Assistant(AssistantMessage {
                 uuid: "a-multi".into(),
                 content: vec![
-                    ContentBlock::ToolUse { id: "t1".into(), name: "a".into(), input: serde_json::json!({}) },
-                    ContentBlock::ToolUse { id: "t2".into(), name: "b".into(), input: serde_json::json!({}) },
-                    ContentBlock::ToolUse { id: "t3".into(), name: "c".into(), input: serde_json::json!({}) },
+                    ContentBlock::ToolUse {
+                        id: "t1".into(),
+                        name: "a".into(),
+                        input: serde_json::json!({}),
+                    },
+                    ContentBlock::ToolUse {
+                        id: "t2".into(),
+                        name: "b".into(),
+                        input: serde_json::json!({}),
+                    },
+                    ContentBlock::ToolUse {
+                        id: "t3".into(),
+                        name: "c".into(),
+                        input: serde_json::json!({}),
+                    },
                 ],
                 stop_reason: Some(StopReason::ToolUse),
                 usage: None,
@@ -869,7 +950,11 @@ mod tests {
         // Should have: user, assistant(3 tool_use), user(3 synthetic tool_result)
         assert_eq!(result.len(), 3);
         if let Message::User(u) = &result[2] {
-            let tr_count = u.content.iter().filter(|b| matches!(b, ContentBlock::ToolResult { .. })).count();
+            let tr_count = u
+                .content
+                .iter()
+                .filter(|b| matches!(b, ContentBlock::ToolResult { .. }))
+                .count();
             assert_eq!(tr_count, 3);
         } else {
             panic!("Expected synthetic user message with 3 tool_results");

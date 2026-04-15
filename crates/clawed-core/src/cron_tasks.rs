@@ -169,12 +169,19 @@ pub async fn remove_cron_tasks(ids: &[String], dir: &Path) -> std::io::Result<()
     }
     let id_set: std::collections::HashSet<&str> = ids.iter().map(|s| s.as_str()).collect();
     let tasks = read_cron_tasks(dir).await;
-    let remaining: Vec<CronTask> = tasks.into_iter().filter(|t| !id_set.contains(t.id.as_str())).collect();
+    let remaining: Vec<CronTask> = tasks
+        .into_iter()
+        .filter(|t| !id_set.contains(t.id.as_str()))
+        .collect();
     write_cron_tasks(&remaining, dir).await
 }
 
 /// Stamp `lastFiredAt` on the given recurring tasks and write back.
-pub async fn mark_cron_tasks_fired(ids: &[String], fired_at: i64, dir: &Path) -> std::io::Result<()> {
+pub async fn mark_cron_tasks_fired(
+    ids: &[String],
+    fired_at: i64,
+    dir: &Path,
+) -> std::io::Result<()> {
     if ids.is_empty() {
         return Ok(());
     }
@@ -237,7 +244,10 @@ pub fn one_shot_jittered_next_cron_run_ms(
         return Some(t1);
     }
     let lead = jitter_frac(task_id)
-        .mul_add((cfg.one_shot_max_ms - cfg.one_shot_floor_ms) as f64, cfg.one_shot_floor_ms as f64)
+        .mul_add(
+            (cfg.one_shot_max_ms - cfg.one_shot_floor_ms) as f64,
+            cfg.one_shot_floor_ms as f64,
+        )
         .clamp(0.0, cfg.one_shot_max_ms as f64);
     Some(t1.saturating_sub(lead as i64).max(from_ms))
 }
@@ -275,7 +285,11 @@ pub fn build_missed_task_notification(missed: &[&CronTask]) -> String {
          Only execute if the user confirms.",
         if plural { "s were" } else { " was" },
         if plural { "They have" } else { "It has" },
-        if plural { "these prompts" } else { "this prompt" },
+        if plural {
+            "these prompts"
+        } else {
+            "this prompt"
+        },
         if plural { "each one" } else { "it" },
     );
 
@@ -440,7 +454,9 @@ mod tests {
     async fn test_invalid_cron_filtered() {
         let dir = TempDir::new().unwrap();
         let path = get_cron_file_path(dir.path());
-        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
         let json = r#"{"tasks":[{"id":"a","cron":"bad","prompt":"p","createdAt":0}]}"#;
         tokio::fs::write(&path, json).await.unwrap();
 

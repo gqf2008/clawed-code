@@ -80,8 +80,12 @@ struct WorkflowDef {
 
 #[async_trait]
 impl Tool for WorkflowTool {
-    fn name(&self) -> &'static str { "Workflow" }
-    fn category(&self) -> ToolCategory { ToolCategory::Session }
+    fn name(&self) -> &'static str {
+        "Workflow"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Session
+    }
 
     fn description(&self) -> &'static str {
         "Execute a reusable workflow script from a YAML or JSON file. \
@@ -112,12 +116,15 @@ impl Tool for WorkflowTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { false }
+    fn is_read_only(&self) -> bool {
+        false
+    }
 
     async fn call(&self, input: Value, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let cwd = &ctx.cwd;
 
-        let workflow_path = input["workflowPath"].as_str()
+        let workflow_path = input["workflowPath"]
+            .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'workflowPath'"))?;
         let dry_run = input["dryRun"].as_bool().unwrap_or(false);
 
@@ -134,36 +141,55 @@ impl Tool for WorkflowTool {
         let abs_path = resolve_path(cwd, workflow_path);
         if !abs_path.exists() {
             return Ok(ToolResult::error(format!(
-                "Workflow file not found: {}", abs_path.display()
+                "Workflow file not found: {}",
+                abs_path.display()
             )));
         }
 
-        let content = tokio::fs::read_to_string(&abs_path).await
+        let content = tokio::fs::read_to_string(&abs_path)
+            .await
             .map_err(|e| anyhow::anyhow!("Cannot read workflow file: {e}"))?;
 
         let workflow = parse_workflow(&content, &abs_path)?;
 
         let header = format!(
             "# Workflow: {}\n{}\n({} steps)",
-            if workflow.name.is_empty() { workflow_path } else { &workflow.name },
-            if workflow.description.is_empty() { String::new() } else { format!("{}\n", workflow.description) },
+            if workflow.name.is_empty() {
+                workflow_path
+            } else {
+                &workflow.name
+            },
+            if workflow.description.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", workflow.description)
+            },
             workflow.steps.len()
         );
 
         if dry_run {
-            let steps: Vec<String> = workflow.steps.iter().enumerate().map(|(i, s)| {
-                let kind = &s.step_type;
-                let detail = match kind.as_str() {
-                    "bash" => format!("$ {}", s.command),
-                    "read" => format!("read {}", s.path),
-                    "write" => format!("write {} ({} bytes)", s.path, s.content.len()),
-                    "message" => format!("message: {}", truncate(&s.content, 80)),
-                    "glob" => format!("glob {}", s.pattern),
-                    _ => format!("unknown step type '{kind}'"),
-                };
-                format!("  {}. [{}] {} — {}", i + 1, kind, s.name, detail)
-            }).collect();
-            return Ok(ToolResult::text(format!("{}\n\nDry run — steps:\n{}", header, steps.join("\n"))));
+            let steps: Vec<String> = workflow
+                .steps
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    let kind = &s.step_type;
+                    let detail = match kind.as_str() {
+                        "bash" => format!("$ {}", s.command),
+                        "read" => format!("read {}", s.path),
+                        "write" => format!("write {} ({} bytes)", s.path, s.content.len()),
+                        "message" => format!("message: {}", truncate(&s.content, 80)),
+                        "glob" => format!("glob {}", s.pattern),
+                        _ => format!("unknown step type '{kind}'"),
+                    };
+                    format!("  {}. [{}] {} — {}", i + 1, kind, s.name, detail)
+                })
+                .collect();
+            return Ok(ToolResult::text(format!(
+                "{}\n\nDry run — steps:\n{}",
+                header,
+                steps.join("\n")
+            )));
         }
 
         // Execute steps
@@ -199,7 +225,10 @@ impl Tool for WorkflowTool {
             }
         }
 
-        results.push(format!("\n✓ Workflow complete ({} steps).", workflow.steps.len()));
+        results.push(format!(
+            "\n✓ Workflow complete ({} steps).",
+            workflow.steps.len()
+        ));
         Ok(ToolResult::text(results.join("\n")))
     }
 }
@@ -209,12 +238,10 @@ fn parse_workflow(content: &str, path: &Path) -> anyhow::Result<WorkflowDef> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("yaml");
     match ext {
         "json" => {
-            serde_json::from_str(content)
-                .map_err(|e| anyhow::anyhow!("Invalid JSON workflow: {e}"))
+            serde_json::from_str(content).map_err(|e| anyhow::anyhow!("Invalid JSON workflow: {e}"))
         }
         _ => {
-            serde_yaml::from_str(content)
-                .map_err(|e| anyhow::anyhow!("Invalid YAML workflow: {e}"))
+            serde_yaml::from_str(content).map_err(|e| anyhow::anyhow!("Invalid YAML workflow: {e}"))
         }
     }
 }
@@ -242,7 +269,8 @@ async fn execute_step(
                 anyhow::bail!("'read' step requires 'path'");
             }
             let abs = resolve_path(workflow_dir, &p);
-            let content = tokio::fs::read_to_string(&abs).await
+            let content = tokio::fs::read_to_string(&abs)
+                .await
                 .map_err(|e| anyhow::anyhow!("Cannot read {}: {e}", abs.display()))?;
             Ok(format!("**{}**\n```\n{}\n```", p, content.trim()))
         }
@@ -257,7 +285,8 @@ async fn execute_step(
             if let Some(parent) = abs.parent() {
                 tokio::fs::create_dir_all(parent).await.ok();
             }
-            tokio::fs::write(&abs, body.as_bytes()).await
+            tokio::fs::write(&abs, body.as_bytes())
+                .await
                 .map_err(|e| anyhow::anyhow!("Cannot write {}: {e}", abs.display()))?;
             Ok(format!("Wrote {} ({} bytes)", p, body.len()))
         }
@@ -295,8 +324,8 @@ fn interpolate(template: &str, vars: &HashMap<String, String>) -> String {
 
 /// Run a bash command and capture combined stdout+stderr.
 async fn execute_bash(cmd: &str, cwd: &Path) -> anyhow::Result<String> {
-    use tokio::process::Command;
     use std::time::Duration;
+    use tokio::process::Command;
 
     #[cfg(windows)]
     let child = {
@@ -317,16 +346,21 @@ async fn execute_bash(cmd: &str, cwd: &Path) -> anyhow::Result<String> {
             .spawn()?
     };
 
-    let result = tokio::time::timeout(Duration::from_secs(60), child.wait_with_output()).await
+    let result = tokio::time::timeout(Duration::from_secs(60), child.wait_with_output())
+        .await
         .map_err(|_| anyhow::anyhow!("Command timed out after 60s"))??;
 
     let stdout = String::from_utf8_lossy(&result.stdout).to_string();
     let stderr = String::from_utf8_lossy(&result.stderr).to_string();
 
     let mut out = String::new();
-    if !stdout.trim().is_empty() { out.push_str(stdout.trim()); }
+    if !stdout.trim().is_empty() {
+        out.push_str(stdout.trim());
+    }
     if !stderr.trim().is_empty() {
-        if !out.is_empty() { out.push('\n'); }
+        if !out.is_empty() {
+            out.push('\n');
+        }
         out.push_str(stderr.trim());
     }
 
@@ -359,10 +393,14 @@ fn glob_files(cwd: &Path, pattern: &str) -> anyhow::Result<Vec<String>> {
     match glob::glob(&glob_pattern) {
         Ok(paths) => {
             for entry in paths.flatten() {
-                if Instant::now() > deadline { break; }
+                if Instant::now() > deadline {
+                    break;
+                }
                 let rel = entry.strip_prefix(cwd).unwrap_or(&entry);
                 files.push(rel.to_string_lossy().to_string());
-                if files.len() >= 100 { break; }
+                if files.len() >= 100 {
+                    break;
+                }
             }
         }
         Err(e) => anyhow::bail!("Invalid glob pattern: {e}"),
@@ -374,11 +412,19 @@ fn glob_files(cwd: &Path, pattern: &str) -> anyhow::Result<Vec<String>> {
 
 fn resolve_path(cwd: &Path, p: &str) -> PathBuf {
     let path = Path::new(p);
-    if path.is_absolute() { path.to_path_buf() } else { cwd.join(path) }
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    }
 }
 
 fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max { s } else { &s[..max] }
+    if s.len() <= max {
+        s
+    } else {
+        &s[..max]
+    }
 }
 
 #[cfg(test)]
@@ -439,13 +485,20 @@ mod tests {
     #[test]
     fn test_resolve_path_absolute() {
         let cwd = Path::new("/home/user");
-        let abs = if cfg!(windows) { "C:\\tmp\\file" } else { "/tmp/file" };
+        let abs = if cfg!(windows) {
+            "C:\\tmp\\file"
+        } else {
+            "/tmp/file"
+        };
         assert_eq!(resolve_path(cwd, abs), PathBuf::from(abs));
     }
 
     #[test]
     fn test_resolve_path_relative() {
         let cwd = Path::new("/home/user");
-        assert_eq!(resolve_path(cwd, "src/main.rs"), PathBuf::from("/home/user/src/main.rs"));
+        assert_eq!(
+            resolve_path(cwd, "src/main.rs"),
+            PathBuf::from("/home/user/src/main.rs")
+        );
     }
 }

@@ -69,7 +69,9 @@ impl FeishuAdapter {
         }
 
         let url = format!("{}/auth/v3/tenant_access_token/internal", FEISHU_API_BASE);
-        let resp = self.http.post(&url)
+        let resp = self
+            .http
+            .post(&url)
             .json(&serde_json::json!({
                 "app_id": self.config.app_id,
                 "app_secret": self.config.app_secret,
@@ -78,7 +80,8 @@ impl FeishuAdapter {
             .await?;
 
         let body: serde_json::Value = resp.json().await?;
-        let token = body.get("tenant_access_token")
+        let token = body
+            .get("tenant_access_token")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AdapterError::Auth("No token in response".into()))?
             .to_string();
@@ -104,7 +107,9 @@ impl FeishuAdapter {
             "text": text,
         });
 
-        let resp = self.http.post(&url)
+        let resp = self
+            .http
+            .post(&url)
             .header("Authorization", format!("Bearer {}", token))
             .json(&serde_json::json!({
                 "receive_id": chat_id,
@@ -118,8 +123,14 @@ impl FeishuAdapter {
 
         if let Some(code) = body.get("code").and_then(|v| v.as_i64()) {
             if code != 0 {
-                let msg = body.get("msg").and_then(|v| v.as_str()).unwrap_or("unknown error");
-                return Err(AdapterError::PlatformApi(format!("Feishu API error {}: {}", code, msg)));
+                let msg = body
+                    .get("msg")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown error");
+                return Err(AdapterError::PlatformApi(format!(
+                    "Feishu API error {}: {}",
+                    code, msg
+                )));
             }
         }
 
@@ -145,15 +156,18 @@ impl FeishuAdapter {
         let content: serde_json::Value = serde_json::from_str(content_str).ok()?;
         let text = content.get("text").and_then(|v| v.as_str()).unwrap_or("");
 
-        let sender_id = sender.pointer("/sender_id/open_id")
+        let sender_id = sender
+            .pointer("/sender_id/open_id")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let sender_name = sender.get("sender_name")
+        let sender_name = sender
+            .get("sender_name")
             .or_else(|| sender.get("name"))
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown");
 
-        let message_id = message.get("message_id")
+        let message_id = message
+            .get("message_id")
             .and_then(|v| v.as_str())
             .map(String::from);
 

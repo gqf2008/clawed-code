@@ -1,17 +1,17 @@
 mod auth;
+mod commands;
 mod config;
+mod diff_display;
 mod init;
 mod input;
+mod markdown;
+mod output;
 mod repl;
 mod repl_commands;
-mod commands;
-mod output;
-mod markdown;
-mod diff_display;
 mod session;
 pub mod theme;
-mod ui;
 mod tui;
+mod ui;
 
 use std::sync::Arc;
 
@@ -19,7 +19,11 @@ use clap::{CommandFactory, Parser};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
-#[command(name = "clawed", version, about = "Clawed Code — AI coding assistant (Rust)")]
+#[command(
+    name = "clawed",
+    version,
+    about = "Clawed Code — AI coding assistant (Rust)"
+)]
 struct Cli {
     /// Initial prompt — run non-interactively and exit.
     /// If omitted, starts an interactive TUI session by default
@@ -261,10 +265,16 @@ async fn run() -> anyhow::Result<()> {
             for s in &sessions {
                 let age = clawed_core::session::format_age(&s.updated_at);
                 let title = s.custom_title.as_deref().unwrap_or(&s.title);
-                let prompt_preview = s.last_prompt.as_deref()
+                let prompt_preview = s
+                    .last_prompt
+                    .as_deref()
                     .map(|p| {
                         let trimmed = p.trim().replace('\n', " ");
-                        if trimmed.len() > 60 { format!("{}…", &trimmed[..60]) } else { trimmed }
+                        if trimmed.len() > 60 {
+                            format!("{}…", &trimmed[..60])
+                        } else {
+                            trimmed
+                        }
                     })
                     .unwrap_or_default();
                 println!(
@@ -284,21 +294,28 @@ async fn run() -> anyhow::Result<()> {
     } else {
         EnvFilter::new("warn")
     };
-    tracing_subscriber::fmt().with_writer(std::io::stderr).with_env_filter(filter).init();
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(filter)
+        .init();
 
     let settings = config::load_settings()?;
 
     // Initialize terminal theme from settings
     {
-        let theme_setting = settings.theme.as_deref()
-            .and_then(|s| s.parse::<theme::ThemeName>().ok().map(|n| match n {
-                theme::ThemeName::Dark => theme::ThemeSetting::Dark,
-                theme::ThemeName::Light => theme::ThemeSetting::Light,
-                theme::ThemeName::DarkDaltonized => theme::ThemeSetting::DarkDaltonized,
-                theme::ThemeName::LightDaltonized => theme::ThemeSetting::LightDaltonized,
-                theme::ThemeName::DarkAnsi => theme::ThemeSetting::DarkAnsi,
-                theme::ThemeName::LightAnsi => theme::ThemeSetting::LightAnsi,
-            }))
+        let theme_setting = settings
+            .theme
+            .as_deref()
+            .and_then(|s| {
+                s.parse::<theme::ThemeName>().ok().map(|n| match n {
+                    theme::ThemeName::Dark => theme::ThemeSetting::Dark,
+                    theme::ThemeName::Light => theme::ThemeSetting::Light,
+                    theme::ThemeName::DarkDaltonized => theme::ThemeSetting::DarkDaltonized,
+                    theme::ThemeName::LightDaltonized => theme::ThemeSetting::LightDaltonized,
+                    theme::ThemeName::DarkAnsi => theme::ThemeSetting::DarkAnsi,
+                    theme::ThemeName::LightAnsi => theme::ThemeSetting::LightAnsi,
+                })
+            })
             .unwrap_or(theme::ThemeSetting::Auto);
         theme::init_theme(theme_setting);
     }
@@ -316,7 +333,11 @@ async fn run() -> anyhow::Result<()> {
         return init::run_init(&cwd);
     }
 
-    let api_key = auth::resolve_api_key(&cli.provider, cli.api_key.as_deref(), settings.api_key.as_deref())?;
+    let api_key = auth::resolve_api_key(
+        &cli.provider,
+        cli.api_key.as_deref(),
+        settings.api_key.as_deref(),
+    )?;
 
     // For non-Anthropic providers, use provider-specific default model if user didn't override
     let model_input = if cli.model == "claude-sonnet-4-20250514" && cli.provider != "anthropic" {
@@ -341,7 +362,8 @@ async fn run() -> anyhow::Result<()> {
 
     // Build system prompt: if user specified --system-prompt, use that.
     // Otherwise the engine will build the full modular prompt via system_prompt.rs.
-    let system_prompt = cli.system_prompt
+    let system_prompt = cli
+        .system_prompt
         .or(settings.custom_system_prompt)
         .unwrap_or_default();
 
@@ -389,7 +411,11 @@ async fn run() -> anyhow::Result<()> {
         engine.base_url(url)
     } else if let Ok(url) = std::env::var("ANTHROPIC_BASE_URL") {
         let u = url.trim().to_string();
-        if !u.is_empty() { engine.base_url(&u) } else { engine }
+        if !u.is_empty() {
+            engine.base_url(&u)
+        } else {
+            engine
+        }
     } else {
         engine
     };
@@ -503,7 +529,11 @@ async fn run() -> anyhow::Result<()> {
                             if p.is_file() {
                                 if let Ok(content) = std::fs::read_to_string(&p) {
                                     let name = p.file_name().unwrap_or_default().to_string_lossy();
-                                    ctx.push_str(&format!("--- {} ---\n{}\n\n", name, content.trim()));
+                                    ctx.push_str(&format!(
+                                        "--- {} ---\n{}\n\n",
+                                        name,
+                                        content.trim()
+                                    ));
                                 }
                             }
                         }
@@ -640,14 +670,22 @@ mod tests {
 
     #[test]
     fn test_cli_thinking_flags() {
-        let cli = Cli::try_parse_from(["claude", "--thinking", "--thinking-budget", "20000"]).unwrap();
+        let cli =
+            Cli::try_parse_from(["claude", "--thinking", "--thinking-budget", "20000"]).unwrap();
         assert!(cli.thinking);
         assert_eq!(cli.thinking_budget, 20000);
     }
 
     #[test]
     fn test_cli_allowed_tools() {
-        let cli = Cli::try_parse_from(["claude", "--allowed-tools", "Read", "--allowed-tools", "Bash"]).unwrap();
+        let cli = Cli::try_parse_from([
+            "claude",
+            "--allowed-tools",
+            "Read",
+            "--allowed-tools",
+            "Bash",
+        ])
+        .unwrap();
         assert_eq!(cli.allowed_tools, vec!["Read", "Bash"]);
     }
 
@@ -671,7 +709,8 @@ mod tests {
 
     #[test]
     fn test_cli_provider_flag() {
-        let cli = Cli::try_parse_from(["claude", "--provider", "openai", "--api-key", "sk-test"]).unwrap();
+        let cli = Cli::try_parse_from(["claude", "--provider", "openai", "--api-key", "sk-test"])
+            .unwrap();
         assert_eq!(cli.provider, "openai");
     }
 

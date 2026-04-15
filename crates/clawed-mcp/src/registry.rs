@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::client::McpClient;
-use crate::types::{McpServerConfig, McpToolDef, McpToolResult, McpResource, McpContent};
+use crate::types::{McpContent, McpResource, McpServerConfig, McpToolDef, McpToolResult};
 
 /// Prefix for MCP tool proxy names: `mcp__<server>__<tool>`.
 pub const MCP_TOOL_PREFIX: &str = "mcp__";
@@ -49,7 +49,7 @@ impl Default for McpManager {
 }
 
 impl McpManager {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             servers: Arc::new(RwLock::new(HashMap::new())),
@@ -140,7 +140,10 @@ impl McpManager {
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to list tools from MCP server '{}': {}", server_name, e);
+                    warn!(
+                        "Failed to list tools from MCP server '{}': {}",
+                        server_name, e
+                    );
                 }
             }
         }
@@ -221,7 +224,10 @@ impl McpManager {
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to list resources from MCP server '{}': {}", server_name, e);
+                    warn!(
+                        "Failed to list resources from MCP server '{}': {}",
+                        server_name, e
+                    );
                 }
             }
         }
@@ -270,9 +276,8 @@ impl McpManager {
                 drop(builtins);
                 // Run sync call_tool on blocking thread to avoid blocking the runtime
                 let tool = tool_name.to_string();
-                let result = tokio::task::spawn_blocking(move || {
-                    server.call_tool(&tool, arguments)
-                }).await?;
+                let result =
+                    tokio::task::spawn_blocking(move || server.call_tool(&tool, arguments)).await?;
                 return Ok(result);
             }
         }
@@ -383,8 +388,15 @@ impl McpManager {
             warn!("MCP server '{}' is dead, removing", name);
             if let Some(mut client) = servers.remove(name) {
                 let close_timeout = std::time::Duration::from_secs(5);
-                if tokio::time::timeout(close_timeout, client.close()).await.is_err() {
-                    warn!("MCP server '{}' close timed out after {}s", name, close_timeout.as_secs());
+                if tokio::time::timeout(close_timeout, client.close())
+                    .await
+                    .is_err()
+                {
+                    warn!(
+                        "MCP server '{}' close timed out after {}s",
+                        name,
+                        close_timeout.as_secs()
+                    );
                 }
             }
         }
@@ -406,10 +418,8 @@ impl McpManager {
             // Remove dead clients
             for name in &dead {
                 if let Some(mut client) = servers.remove(name) {
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_secs(3),
-                        client.close(),
-                    ).await;
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), client.close())
+                        .await;
                 }
             }
             dead
@@ -438,7 +448,10 @@ impl McpManager {
                     }
                 }
             } else {
-                warn!("No config found for dead MCP server '{}', cannot reconnect", name);
+                warn!(
+                    "No config found for dead MCP server '{}', cannot reconnect",
+                    name
+                );
             }
         }
 
@@ -462,7 +475,11 @@ impl McpManager {
                 ticker.tick().await;
                 let reconnected = manager.reconnect_dead_servers().await;
                 if !reconnected.is_empty() {
-                    info!("Health monitor reconnected {} servers: {:?}", reconnected.len(), reconnected);
+                    info!(
+                        "Health monitor reconnected {} servers: {:?}",
+                        reconnected.len(),
+                        reconnected
+                    );
                 }
             }
         })
@@ -514,13 +531,13 @@ impl McpManager {
 // ── Tool name utilities ──────────────────────────────────────────────────────
 
 /// Format an MCP tool name: `mcp__<server>__<tool>`.
-#[must_use] 
+#[must_use]
 pub fn format_mcp_tool_name(server_name: &str, tool_name: &str) -> String {
     format!("{MCP_TOOL_PREFIX}{server_name}__{tool_name}")
 }
 
 /// Parse an MCP tool name: `mcp__<server>__<tool>` → (server, tool).
-#[must_use] 
+#[must_use]
 pub fn parse_mcp_tool_name(prefixed: &str) -> Option<(String, String)> {
     let rest = prefixed.strip_prefix(MCP_TOOL_PREFIX)?;
     let sep_pos = rest.find("__")?;
@@ -533,7 +550,7 @@ pub fn parse_mcp_tool_name(prefixed: &str) -> Option<(String, String)> {
 }
 
 /// Check if a tool name is an MCP proxy tool.
-#[must_use] 
+#[must_use]
 pub fn is_mcp_tool(name: &str) -> bool {
     name.starts_with(MCP_TOOL_PREFIX)
 }
@@ -588,12 +605,16 @@ pub fn load_mcp_configs(path: &std::path::Path) -> Result<Vec<McpServerConfig>> 
         });
     }
 
-    info!("Loaded {} MCP server configs from {}", configs.len(), path.display());
+    info!(
+        "Loaded {} MCP server configs from {}",
+        configs.len(),
+        path.display()
+    );
     Ok(configs)
 }
 
 /// Discover `.mcp.json` files in standard locations.
-#[must_use] 
+#[must_use]
 pub fn discover_mcp_configs(cwd: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut paths = Vec::new();
 
@@ -667,7 +688,10 @@ mod tests {
     #[test]
     fn parse_tool_name_with_double_underscore_in_name() {
         let result = parse_mcp_tool_name("mcp__my_server__read__file");
-        assert_eq!(result, Some(("my_server".to_string(), "read__file".to_string())));
+        assert_eq!(
+            result,
+            Some(("my_server".to_string(), "read__file".to_string()))
+        );
     }
 
     #[tokio::test]
@@ -728,7 +752,9 @@ mod tests {
     #[tokio::test]
     async fn manager_call_tool_unknown_server() {
         let mgr = McpManager::new();
-        let err = mgr.call_tool("mcp__unknown__readFile", serde_json::json!({})).await;
+        let err = mgr
+            .call_tool("mcp__unknown__readFile", serde_json::json!({}))
+            .await;
         assert!(err.is_err());
         assert!(err.unwrap_err().to_string().contains("not found"));
     }
@@ -752,7 +778,9 @@ mod tests {
     fn load_mcp_configs_valid_json() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join(".mcp.json");
-        std::fs::write(&config_path, r#"{
+        std::fs::write(
+            &config_path,
+            r#"{
             "mcpServers": {
                 "fs": {
                     "command": "npx",
@@ -763,7 +791,9 @@ mod tests {
                     "command": "mcp-git"
                 }
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let configs = load_mcp_configs(&config_path).unwrap();
         assert_eq!(configs.len(), 2);
@@ -781,11 +811,15 @@ mod tests {
     fn load_mcp_configs_missing_command() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("mcp.json");
-        std::fs::write(&config_path, r#"{
+        std::fs::write(
+            &config_path,
+            r#"{
             "mcpServers": {
                 "bad": {}
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let err = load_mcp_configs(&config_path);
         assert!(err.is_err());
@@ -837,9 +871,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let found = discover_mcp_configs(dir.path());
         // Should not find any project-level configs (home-level may exist)
-        let project_configs: Vec<_> = found.iter()
-            .filter(|p| p.starts_with(dir.path()))
-            .collect();
+        let project_configs: Vec<_> = found.iter().filter(|p| p.starts_with(dir.path())).collect();
         assert!(project_configs.is_empty());
     }
 
@@ -876,7 +908,9 @@ mod tests {
     #[tokio::test]
     async fn create_elicitation_unknown_server() {
         let mgr = McpManager::new();
-        let err = mgr.create_elicitation("missing", "hi", serde_json::json!({})).await;
+        let err = mgr
+            .create_elicitation("missing", "hi", serde_json::json!({}))
+            .await;
         assert!(err.is_err());
         assert!(err.unwrap_err().to_string().contains("not found"));
     }

@@ -8,8 +8,12 @@ pub struct GlobTool;
 
 #[async_trait]
 impl Tool for GlobTool {
-    fn name(&self) -> &'static str { "Glob" }
-    fn category(&self) -> ToolCategory { ToolCategory::FileSystem }
+    fn name(&self) -> &'static str {
+        "Glob"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::FileSystem
+    }
 
     fn description(&self) -> &'static str {
         "Fast file pattern matching tool that works with any codebase size. Supports glob \
@@ -29,14 +33,20 @@ impl Tool for GlobTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
-        let pattern = input["pattern"].as_str().ok_or_else(|| anyhow::anyhow!("Missing 'pattern'"))?;
+        let pattern = input["pattern"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'pattern'"))?;
 
         // Prevent directory traversal via pattern
         if pattern.contains("..") || std::path::Path::new(pattern).is_absolute() {
-            return Ok(ToolResult::error("Pattern cannot contain '..' or be an absolute path"));
+            return Ok(ToolResult::error(
+                "Pattern cannot contain '..' or be an absolute path",
+            ));
         }
 
         let search_dir = match input["path"].as_str() {
@@ -53,8 +63,12 @@ impl Tool for GlobTool {
                 Ok(path) => {
                     // Both paths must canonicalize successfully — reject on failure
                     // to prevent symlink-based boundary escape
-                    let Ok(resolved) = path.canonicalize() else { continue };
-                    let Ok(search_canonical) = search_dir.canonicalize() else { continue };
+                    let Ok(resolved) = path.canonicalize() else {
+                        continue;
+                    };
+                    let Ok(search_canonical) = search_dir.canonicalize() else {
+                        continue;
+                    };
                     if resolved.starts_with(&search_canonical) {
                         matches.push(resolved.display().to_string());
                     }
@@ -74,8 +88,8 @@ impl Tool for GlobTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clawed_core::tool::AbortSignal;
     use clawed_core::permissions::PermissionMode;
+    use clawed_core::tool::AbortSignal;
 
     fn ctx(dir: &std::path::Path) -> ToolContext {
         ToolContext {

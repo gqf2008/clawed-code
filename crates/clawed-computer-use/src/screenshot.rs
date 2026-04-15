@@ -14,7 +14,9 @@ pub fn capture_screen() -> anyhow::Result<ScreenshotResult> {
     let screens = screenshots::Screen::all()
         .map_err(|e| anyhow::anyhow!("Failed to enumerate screens: {e}"))?;
 
-    let screen = screens.into_iter().next()
+    let screen = screens
+        .into_iter()
+        .next()
         .ok_or_else(|| anyhow::anyhow!("No displays found"))?;
 
     debug!(
@@ -24,7 +26,8 @@ pub fn capture_screen() -> anyhow::Result<ScreenshotResult> {
         "Capturing screenshot"
     );
 
-    let image = screen.capture()
+    let image = screen
+        .capture()
         .map_err(|e| anyhow::anyhow!("Screenshot capture failed: {e}"))?;
 
     let width = image.width();
@@ -44,12 +47,15 @@ pub fn capture_region(x: i32, y: i32, width: u32, height: u32) -> anyhow::Result
     let screens = screenshots::Screen::all()
         .map_err(|e| anyhow::anyhow!("Failed to enumerate screens: {e}"))?;
 
-    let screen = screens.into_iter().next()
+    let screen = screens
+        .into_iter()
+        .next()
         .ok_or_else(|| anyhow::anyhow!("No displays found"))?;
 
     debug!(x, y, width, height, "Capturing screen region");
 
-    let image = screen.capture_area(x, y, width, height)
+    let image = screen
+        .capture_area(x, y, width, height)
         .map_err(|e| anyhow::anyhow!("Region capture failed: {e}"))?;
 
     let actual_w = image.width();
@@ -68,12 +74,14 @@ pub fn capture_region(x: i32, y: i32, width: u32, height: u32) -> anyhow::Result
 fn encode_png(image: &image::RgbaImage) -> anyhow::Result<Vec<u8>> {
     let mut buf = Vec::new();
     let encoder = image::codecs::png::PngEncoder::new(&mut buf);
-    encoder.write_image(
-        image.as_raw(),
-        image.width(),
-        image.height(),
-        image::ColorType::Rgba8,
-    ).map_err(|e| anyhow::anyhow!("PNG encoding failed: {e}"))?;
+    encoder
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ColorType::Rgba8,
+        )
+        .map_err(|e| anyhow::anyhow!("PNG encoding failed: {e}"))?;
     Ok(buf)
 }
 
@@ -82,15 +90,18 @@ pub fn list_displays() -> anyhow::Result<Vec<DisplayInfo>> {
     let screens = screenshots::Screen::all()
         .map_err(|e| anyhow::anyhow!("Failed to enumerate screens: {e}"))?;
 
-    Ok(screens.iter().map(|s| DisplayInfo {
-        id: s.display_info.id,
-        x: s.display_info.x,
-        y: s.display_info.y,
-        width: s.display_info.width,
-        height: s.display_info.height,
-        is_primary: s.display_info.is_primary,
-        scale_factor: s.display_info.scale_factor,
-    }).collect())
+    Ok(screens
+        .iter()
+        .map(|s| DisplayInfo {
+            id: s.display_info.id,
+            x: s.display_info.x,
+            y: s.display_info.y,
+            width: s.display_info.width,
+            height: s.display_info.height,
+            is_primary: s.display_info.is_primary,
+            scale_factor: s.display_info.scale_factor,
+        })
+        .collect())
 }
 
 /// Result of a screenshot capture.

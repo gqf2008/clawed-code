@@ -3,7 +3,7 @@
 use clawed_core::message::{ContentBlock, Message, UserMessage};
 use uuid::Uuid;
 
-use crate::compact::{compact_conversation, compact_context_message};
+use crate::compact::{compact_context_message, compact_conversation};
 use crate::hooks::{HookDecision, HookEvent};
 
 use super::QueryEngine;
@@ -17,7 +17,11 @@ impl QueryEngine {
     ///
     /// Returns `Ok(summary)` on success, `Err` if the conversation is empty or
     /// the PreCompact hook blocked the operation.
-    pub async fn compact(&self, trigger: &str, custom_instructions: Option<&str>) -> anyhow::Result<String> {
+    pub async fn compact(
+        &self,
+        trigger: &str,
+        custom_instructions: Option<&str>,
+    ) -> anyhow::Result<String> {
         let messages = {
             let s = self.state.read().await;
             s.messages.clone()
@@ -69,11 +73,9 @@ impl QueryEngine {
 
         // ── PostCompact hook ─────────────────────────────────────────────────
         if self.hooks.has_hooks(HookEvent::PostCompact) {
-            let ctx = self.hooks.compact_ctx(
-                HookEvent::PostCompact,
-                trigger,
-                Some(summary.clone()),
-            );
+            let ctx =
+                self.hooks
+                    .compact_ctx(HookEvent::PostCompact, trigger, Some(summary.clone()));
             // Fire-and-forget
             let _ = self.hooks.run(HookEvent::PostCompact, ctx).await;
         }
@@ -91,8 +93,9 @@ impl QueryEngine {
             return false;
         }
         let s = self.state.read().await;
-        let current_tokens = clawed_core::token_estimation::token_count_with_estimation(&s.messages)
-            + clawed_core::token_estimation::estimate_system_tokens(&self.config.system_prompt);
+        let current_tokens =
+            clawed_core::token_estimation::token_count_with_estimation(&s.messages)
+                + clawed_core::token_estimation::estimate_system_tokens(&self.config.system_prompt);
         drop(s);
 
         let ac = self.auto_compact.lock().await;

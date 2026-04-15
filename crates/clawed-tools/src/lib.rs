@@ -4,13 +4,13 @@
 //! proxy tools. Use [`ToolRegistry::with_defaults`] for a battery-included setup.
 
 // ── File I/O tools (always included) ─────────────────────────────────────────
-pub mod file_read;
 pub mod file_edit;
+pub mod file_read;
 pub mod file_write;
-pub mod multi_edit;
 pub mod glob_tool;
 pub mod grep;
 pub mod ls;
+pub mod multi_edit;
 
 // ── Shell / execution tools ─────────────────────────────────────────────────
 #[cfg(feature = "shell")]
@@ -27,11 +27,11 @@ pub mod web_fetch;
 pub mod web_search;
 
 // ── Code intelligence tools ─────────────────────────────────────────────────
+pub mod diff_ui;
 #[cfg(feature = "code")]
 pub mod lsp;
 #[cfg(feature = "code")]
 pub mod notebook;
-pub mod diff_ui;
 
 // ── Git tools ───────────────────────────────────────────────────────────────
 #[cfg(feature = "git")]
@@ -41,25 +41,25 @@ pub mod worktree;
 
 // ── Interaction tools ───────────────────────────────────────────────────────
 pub mod ask_user;
-pub mod send_message;
 pub mod brief;
+pub mod send_message;
 
 // ── Agent / orchestration tools ─────────────────────────────────────────────
-pub mod task;
-pub mod skill_tool;
 pub mod plan_mode;
+pub mod skill_tool;
+pub mod task;
 // ── Management tools ────────────────────────────────────────────────────────
-pub mod todo;
 pub mod config_tool;
 pub mod context;
 pub mod sleep;
-pub mod tool_search;
 pub mod synthetic_output;
+pub mod todo;
+pub mod tool_search;
 
 // ── Cron scheduling tools ───────────────────────────────────────────────────
 pub mod cron_create;
-pub mod cron_list;
 pub mod cron_delete;
+pub mod cron_list;
 
 // ── Workflow scripting ───────────────────────────────────────────────────────
 pub mod workflow;
@@ -76,9 +76,9 @@ pub mod attribution;
 // ── Internal utilities (not tools) ──────────────────────────────────────────
 pub mod path_util;
 
+use clawed_core::tool::{DynTool, Tool};
 use std::collections::HashMap;
 use std::sync::Arc;
-use clawed_core::tool::{DynTool, Tool};
 
 /// Tool category for grouping and filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -95,7 +95,7 @@ pub enum ToolCategory {
 }
 
 impl ToolCategory {
-    #[must_use] 
+    #[must_use]
     pub const fn label(&self) -> &'static str {
         match self {
             Self::File => "File I/O",
@@ -112,11 +112,11 @@ impl ToolCategory {
 }
 
 /// Map a tool name to its category.
-#[must_use] 
+#[must_use]
 pub fn tool_category(name: &str) -> ToolCategory {
     match name {
-        "Read" | "FileRead" | "Edit" | "FileEdit" | "Write" | "FileWrite"
-        | "MultiEdit" | "Glob" | "Grep" | "LS" | "ListDir" => ToolCategory::File,
+        "Read" | "FileRead" | "Edit" | "FileEdit" | "Write" | "FileWrite" | "MultiEdit"
+        | "Glob" | "Grep" | "LS" | "ListDir" => ToolCategory::File,
 
         "Bash" | "PowerShell" | "REPL" => ToolCategory::Shell,
 
@@ -128,15 +128,12 @@ pub fn tool_category(name: &str) -> ToolCategory {
 
         "AskUser" | "SendUserMessage" => ToolCategory::Interaction,
 
-        "TaskCreate" | "TaskUpdate" | "TaskGet" | "TaskList"
-        | "TaskOutput" | "TaskStop" | "Skill" | "Agent"
-        | "task_create" | "task_update" | "task_get" | "task_list"
-        | "task_output" | "task_stop"
-        | "EnterPlanMode" | "ExitPlanMode" => ToolCategory::Agent,
+        "TaskCreate" | "TaskUpdate" | "TaskGet" | "TaskList" | "TaskOutput" | "TaskStop"
+        | "Skill" | "Agent" | "task_create" | "task_update" | "task_get" | "task_list"
+        | "task_output" | "task_stop" | "EnterPlanMode" | "ExitPlanMode" => ToolCategory::Agent,
 
-        "TodoWrite" | "TodoRead" | "Config" | "ContextInspect"
-        | "Verify" | "Sleep" | "Workflow"
-        | "CronCreate" | "CronList" | "CronDelete" => ToolCategory::Management,
+        "TodoWrite" | "TodoRead" | "Config" | "ContextInspect" | "Verify" | "Sleep"
+        | "Workflow" | "CronCreate" | "CronList" | "CronDelete" => ToolCategory::Management,
 
         _ => ToolCategory::Mcp, // MCP proxy tools and unknown
     }
@@ -149,9 +146,11 @@ pub struct ToolRegistry {
 
 impl ToolRegistry {
     /// Create an empty registry.
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
-        Self { tools: HashMap::new() }
+        Self {
+            tools: HashMap::new(),
+        }
     }
 
     /// Register a tool. If a tool with the same name exists it is replaced.
@@ -166,17 +165,17 @@ impl ToolRegistry {
         match name {
             // TypeScript SDK names (FooTool suffix) and FileXxx variants
             "FileWriteTool" | "FileWrite" => "Write",
-            "FileReadTool"  | "FileRead"  => "Read",
-            "FileEditTool"  | "FileEdit"  => "Edit",
-            "BashTool"      | "RunBash"   => "Bash",
-            "GlobTool"      | "FileFinder"=> "Glob",
-            "GrepTool"      | "FileSearch"=> "Grep",
-            "LsTool"        | "ListFiles" => "LS",
-            "MultiEditTool"               => "MultiEdit",
-            "WebFetchTool"                => "WebFetch",
-            "WebSearchTool"               => "WebSearch",
-            "TodoWriteTool"               => "TodoWrite",
-            "TodoReadTool"                => "TodoRead",
+            "FileReadTool" | "FileRead" => "Read",
+            "FileEditTool" | "FileEdit" => "Edit",
+            "BashTool" | "RunBash" => "Bash",
+            "GlobTool" | "FileFinder" => "Glob",
+            "GrepTool" | "FileSearch" => "Grep",
+            "LsTool" | "ListFiles" => "LS",
+            "MultiEditTool" => "MultiEdit",
+            "WebFetchTool" => "WebFetch",
+            "WebSearchTool" => "WebSearch",
+            "TodoWriteTool" => "TodoWrite",
+            "TodoReadTool" => "TodoRead",
             other => other,
         }
     }
@@ -195,31 +194,31 @@ impl ToolRegistry {
     }
 
     /// Return all registered tools (unordered).
-    #[must_use] 
+    #[must_use]
     pub fn all(&self) -> Vec<&DynTool> {
         self.tools.values().collect()
     }
 
     /// Return the names of all registered tools.
-    #[must_use] 
+    #[must_use]
     pub fn names(&self) -> Vec<&str> {
         self.tools.keys().map(std::string::String::as_str).collect()
     }
 
     /// Number of registered tools.
-    #[must_use] 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.tools.len()
     }
 
     /// Returns `true` if no tools are registered.
-    #[must_use] 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }
 
     /// Create a registry pre-loaded with all built-in tools
-    #[must_use] 
+    #[must_use]
     pub fn with_defaults() -> Self {
         let mut registry = Self::new();
 
@@ -305,7 +304,7 @@ impl ToolRegistry {
     }
 
     /// Return tools filtered by category.
-    #[must_use] 
+    #[must_use]
     pub fn by_category(&self, category: ToolCategory) -> Vec<(&str, &DynTool)> {
         self.tools
             .iter()
@@ -315,7 +314,7 @@ impl ToolRegistry {
     }
 
     /// Return a summary of tool counts by category.
-    #[must_use] 
+    #[must_use]
     pub fn category_summary(&self) -> Vec<(ToolCategory, usize)> {
         let mut counts: HashMap<ToolCategory, usize> = HashMap::new();
         for name in self.tools.keys() {
@@ -329,10 +328,15 @@ impl ToolRegistry {
     /// Register MCP tools with a shared manager.
     /// Call this after connecting to MCP servers.
     #[cfg(feature = "mcp")]
-    pub fn register_mcp(&mut self, manager: std::sync::Arc<tokio::sync::RwLock<clawed_mcp::McpManager>>) {
+    pub fn register_mcp(
+        &mut self,
+        manager: std::sync::Arc<tokio::sync::RwLock<clawed_mcp::McpManager>>,
+    ) {
         self.tools.remove("mcp_list_resources");
         self.tools.remove("mcp_read_resource");
-        self.register(mcp::ListMcpResourcesTool { manager: manager.clone() });
+        self.register(mcp::ListMcpResourcesTool {
+            manager: manager.clone(),
+        });
         self.register(mcp::ReadMcpResourceTool { manager });
     }
 
@@ -355,19 +359,33 @@ impl Default for ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clawed_core::tool::{Tool, ToolContext, ToolResult, ToolCategory as CoreCategory};
     use async_trait::async_trait;
+    use clawed_core::tool::{Tool, ToolCategory as CoreCategory, ToolContext, ToolResult};
 
-    struct DummyTool { nm: &'static str }
+    struct DummyTool {
+        nm: &'static str,
+    }
     #[async_trait]
     impl Tool for DummyTool {
-        fn name(&self) -> &str { self.nm }
-        fn description(&self) -> &'static str { "dummy" }
-        fn input_schema(&self) -> serde_json::Value { serde_json::json!({}) }
-        async fn call(&self, _input: serde_json::Value, _ctx: &ToolContext) -> anyhow::Result<ToolResult> {
+        fn name(&self) -> &str {
+            self.nm
+        }
+        fn description(&self) -> &'static str {
+            "dummy"
+        }
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        async fn call(
+            &self,
+            _input: serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> anyhow::Result<ToolResult> {
             Ok(ToolResult::text("ok"))
         }
-        fn category(&self) -> CoreCategory { CoreCategory::Session }
+        fn category(&self) -> CoreCategory {
+            CoreCategory::Session
+        }
     }
 
     #[test]
@@ -467,7 +485,11 @@ mod tests {
         let r = ToolRegistry::with_defaults();
         // Shell tools: Bash, PowerShell, REPL (feature-gated but default-enabled)
         let shell_tools = r.by_category(ToolCategory::Shell);
-        assert!(shell_tools.len() >= 2, "Expected 2+ shell tools, got {}", shell_tools.len());
+        assert!(
+            shell_tools.len() >= 2,
+            "Expected 2+ shell tools, got {}",
+            shell_tools.len()
+        );
         for (name, _) in &shell_tools {
             assert_eq!(tool_category(name), ToolCategory::Shell);
         }

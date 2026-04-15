@@ -27,10 +27,7 @@ pub trait AgentEngine: Send + Sync {
     // ── Submission ───────────────────────────────────────────────────────────
 
     /// Submit a text prompt and receive a stream of agent events.
-    async fn submit(
-        &self,
-        prompt: &str,
-    ) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>>;
+    async fn submit(&self, prompt: &str) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>>;
 
     /// Submit a mixed-content prompt (text + images).
     async fn submit_with_content(

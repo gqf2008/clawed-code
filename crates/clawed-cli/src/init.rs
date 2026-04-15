@@ -56,7 +56,7 @@ pub(crate) fn generate_claude_md_template(cwd: &std::path::Path) -> String {
     let has_makefile = cwd.join("Makefile").exists();
 
     // Header
-  sections.push("# CLAUDE.md\n\nThis file provides guidance to Clawed Code when working with this repository.".to_string());
+    sections.push("# CLAUDE.md\n\nThis file provides guidance to Clawed Code when working with this repository.".to_string());
 
     // Build & Test section based on detected project type
     let mut build_cmds = Vec::new();
@@ -92,20 +92,31 @@ pub(crate) fn generate_claude_md_template(cwd: &std::path::Path) -> String {
     }
 
     if build_cmds.is_empty() {
-        sections.push("## Build & Test\n\n```bash\n# Add your build, test, and lint commands here\n```".to_string());
+        sections.push(
+            "## Build & Test\n\n```bash\n# Add your build, test, and lint commands here\n```"
+                .to_string(),
+        );
     } else {
         let cmds = build_cmds.join("\n");
         sections.push(format!("## Build & Test\n\n```bash\n{}\n```", cmds));
     }
 
     // Code style section
-    sections.push("## Code Style\n\n<!-- Add coding conventions that differ from language defaults -->".to_string());
+    sections.push(
+        "## Code Style\n\n<!-- Add coding conventions that differ from language defaults -->"
+            .to_string(),
+    );
 
     // Architecture section
-    sections.push("## Architecture\n\n<!-- Brief description of key directories and patterns -->".to_string());
+    sections.push(
+        "## Architecture\n\n<!-- Brief description of key directories and patterns -->".to_string(),
+    );
 
     // Important notes
-    sections.push("## Important Notes\n\n<!-- Add gotchas, required env vars, or non-obvious setup steps -->".to_string());
+    sections.push(
+        "## Important Notes\n\n<!-- Add gotchas, required env vars, or non-obvious setup steps -->"
+            .to_string(),
+    );
 
     sections.join("\n\n")
 }

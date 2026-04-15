@@ -22,23 +22,47 @@ pub fn default_model_for_provider(provider: &str) -> &'static str {
 pub fn third_party_context_window(model: &str) -> u64 {
     let m = model.to_lowercase();
     // OpenAI models
-    if m.contains("gpt-4o") || m.contains("gpt-4-turbo") { return 128_000; }
-    if m.contains("gpt-4.1") { return 1_047_576; }
-    if m.contains("gpt-5") { return 256_000; }
-    if m.starts_with("o1") || m.starts_with("o3") || m.starts_with("o4") { return 200_000; }
-    if m.contains("gpt-3.5") { return 16_385; }
+    if m.contains("gpt-4o") || m.contains("gpt-4-turbo") {
+        return 128_000;
+    }
+    if m.contains("gpt-4.1") {
+        return 1_047_576;
+    }
+    if m.contains("gpt-5") {
+        return 256_000;
+    }
+    if m.starts_with("o1") || m.starts_with("o3") || m.starts_with("o4") {
+        return 200_000;
+    }
+    if m.contains("gpt-3.5") {
+        return 16_385;
+    }
     // DeepSeek
-    if m.contains("deepseek") { return 64_000; }
+    if m.contains("deepseek") {
+        return 64_000;
+    }
     // Meta Llama
-    if m.contains("llama-3.1") || m.contains("llama-3.2") || m.contains("llama3.1") { return 128_000; }
-    if m.contains("llama") { return 8_192; }
+    if m.contains("llama-3.1") || m.contains("llama-3.2") || m.contains("llama3.1") {
+        return 128_000;
+    }
+    if m.contains("llama") {
+        return 8_192;
+    }
     // Mistral
-    if m.contains("mixtral") { return 32_768; }
-    if m.contains("mistral") { return 32_768; }
+    if m.contains("mixtral") {
+        return 32_768;
+    }
+    if m.contains("mistral") {
+        return 32_768;
+    }
     // Qwen
-    if m.contains("qwen") { return 32_768; }
+    if m.contains("qwen") {
+        return 32_768;
+    }
     // Google Gemini (if used via openai-compatible)
-    if m.contains("gemini") { return 1_048_576; }
+    if m.contains("gemini") {
+        return 1_048_576;
+    }
     // Default for unknown models
     128_000
 }
@@ -67,19 +91,45 @@ pub fn display_name_any(model: &str) -> String {
     }
     // Third-party: capitalize and clean up
     let m = model.to_lowercase();
-    if m.contains("gpt-4o-mini") { return "GPT-4o Mini".into(); }
-    if m.contains("gpt-4o") { return "GPT-4o".into(); }
-    if m.contains("gpt-4-turbo") { return "GPT-4 Turbo".into(); }
-    if m.contains("gpt-4.1") { return "GPT-4.1".into(); }
-    if m.contains("gpt-5") { return "GPT-5".into(); }
-    if m.starts_with("o1") { return "OpenAI o1".into(); }
-    if m.starts_with("o3") { return "OpenAI o3".into(); }
-    if m.contains("deepseek-chat") { return "DeepSeek Chat".into(); }
-    if m.contains("deepseek-coder") { return "DeepSeek Coder".into(); }
-    if m.contains("llama-3.1") || m.contains("llama3.1") { return "Llama 3.1".into(); }
-    if m.contains("mixtral") { return "Mixtral".into(); }
-    if m.contains("qwen") { return "Qwen".into(); }
-    if m.contains("gemini") { return "Gemini".into(); }
+    if m.contains("gpt-4o-mini") {
+        return "GPT-4o Mini".into();
+    }
+    if m.contains("gpt-4o") {
+        return "GPT-4o".into();
+    }
+    if m.contains("gpt-4-turbo") {
+        return "GPT-4 Turbo".into();
+    }
+    if m.contains("gpt-4.1") {
+        return "GPT-4.1".into();
+    }
+    if m.contains("gpt-5") {
+        return "GPT-5".into();
+    }
+    if m.starts_with("o1") {
+        return "OpenAI o1".into();
+    }
+    if m.starts_with("o3") {
+        return "OpenAI o3".into();
+    }
+    if m.contains("deepseek-chat") {
+        return "DeepSeek Chat".into();
+    }
+    if m.contains("deepseek-coder") {
+        return "DeepSeek Coder".into();
+    }
+    if m.contains("llama-3.1") || m.contains("llama3.1") {
+        return "Llama 3.1".into();
+    }
+    if m.contains("mixtral") {
+        return "Mixtral".into();
+    }
+    if m.contains("qwen") {
+        return "Qwen".into();
+    }
+    if m.contains("gemini") {
+        return "Gemini".into();
+    }
     // Fallback: return as-is
     model.to_string()
 }

@@ -22,7 +22,7 @@ pub struct Attribution {
 
 impl Attribution {
     /// Create attribution from a model ID.
-    #[must_use] 
+    #[must_use]
     pub fn from_model(model_id: &str) -> Self {
         let model_name = clawed_core::model::display_name_any(model_id);
         Self {
@@ -33,7 +33,7 @@ impl Attribution {
     }
 
     /// Generate a Co-Authored-By line for git commits.
-    #[must_use] 
+    #[must_use]
     pub fn co_authored_by(&self) -> String {
         format!(
             "Co-Authored-By: {} <noreply@anthropic.com>",
@@ -42,7 +42,7 @@ impl Attribution {
     }
 
     /// Generate an attribution block for PR descriptions.
-    #[must_use] 
+    #[must_use]
     pub fn pr_attribution_block(&self) -> String {
         let mut block = format!("---\n_Generated with {}._", self.model_name);
         if let Some(ref url) = self.session_url {
@@ -89,7 +89,7 @@ impl GitDiffResult {
     const MAX_LINES_PER_FILE: usize = 400;
 
     /// Parse output of `git diff --numstat` into structured stats.
-    #[must_use] 
+    #[must_use]
     pub fn parse_numstat(numstat_output: &str) -> Self {
         let mut result = Self::default();
 
@@ -108,8 +108,7 @@ impl GitDiffResult {
 
             if result.file_stats.len() >= Self::MAX_FILES {
                 result.truncated = true;
-                result.truncation_reason =
-                    Some(format!("Exceeded {} file limit", Self::MAX_FILES));
+                result.truncation_reason = Some(format!("Exceeded {} file limit", Self::MAX_FILES));
                 break;
             }
 
@@ -158,7 +157,7 @@ impl GitDiffResult {
     }
 
     /// Format as a compact summary string.
-    #[must_use] 
+    #[must_use]
     pub fn summary(&self) -> String {
         let mut out = format!(
             "{} file(s) changed, {} insertion(s)(+), {} deletion(s)(-)",

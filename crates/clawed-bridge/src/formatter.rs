@@ -134,7 +134,8 @@ fn truncate(s: &str, max_len: usize) -> String {
     }
     let limit = max_len.saturating_sub(3);
     // Find the last char boundary at or before `limit`
-    let boundary = s.char_indices()
+    let boundary = s
+        .char_indices()
         .take_while(|&(i, _)| i <= limit)
         .last()
         .map(|(i, _)| i)
@@ -151,15 +152,21 @@ mod tests {
     #[test]
     fn text_delta_accumulation() {
         let mut fmt = MessageFormatter::new();
-        assert!(!fmt.push(&AgentNotification::TextDelta { text: "Hello ".into() }));
-        assert!(!fmt.push(&AgentNotification::TextDelta { text: "world!".into() }));
+        assert!(!fmt.push(&AgentNotification::TextDelta {
+            text: "Hello ".into()
+        }));
+        assert!(!fmt.push(&AgentNotification::TextDelta {
+            text: "world!".into()
+        }));
         assert_eq!(fmt.text(), "Hello world!");
     }
 
     #[test]
     fn turn_complete_signals_done() {
         let mut fmt = MessageFormatter::new();
-        fmt.push(&AgentNotification::TextDelta { text: "Done.".into() });
+        fmt.push(&AgentNotification::TextDelta {
+            text: "Done.".into(),
+        });
         let done = fmt.push(&AgentNotification::TurnComplete {
             turn: 1,
             stop_reason: "end_turn".into(),
@@ -205,7 +212,9 @@ mod tests {
     #[test]
     fn snapshot_while_streaming() {
         let mut fmt = MessageFormatter::new();
-        fmt.push(&AgentNotification::TextDelta { text: "In progress...".into() });
+        fmt.push(&AgentNotification::TextDelta {
+            text: "In progress...".into(),
+        });
         let snap = fmt.snapshot();
         assert!(snap.is_streaming);
         assert_eq!(snap.text, "In progress...");
@@ -232,7 +241,7 @@ mod tests {
         let result = truncate(cjk, 10);
         assert!(result.ends_with("..."));
         assert!(result.len() <= 13); // safe even if boundary shifts
-        // Emoji: "🦀🐍" = 8 bytes (4 bytes each)
+                                     // Emoji: "🦀🐍" = 8 bytes (4 bytes each)
         let emoji = "🦀🐍hello";
         let result = truncate(emoji, 6);
         assert!(result.ends_with("..."));
@@ -242,7 +251,9 @@ mod tests {
     #[test]
     fn thinking_delta_accumulated_separately() {
         let mut fmt = MessageFormatter::new();
-        fmt.push(&AgentNotification::ThinkingDelta { text: "Let me think...".into() });
+        fmt.push(&AgentNotification::ThinkingDelta {
+            text: "Let me think...".into(),
+        });
         // Thinking is not included in the main text
         assert!(fmt.text().is_empty());
         // But formatter is not considered empty since we have thinking content

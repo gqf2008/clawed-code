@@ -10,7 +10,9 @@ fn blank_line_regex() -> &'static regex::Regex {
 
 /// Collapse runs of 3+ consecutive newlines into exactly 2 (`\n\n`).
 pub fn collapse_blank_lines(text: &str) -> String {
-    blank_line_regex().replace_all(text.trim(), "\n\n").to_string()
+    blank_line_regex()
+        .replace_all(text.trim(), "\n\n")
+        .to_string()
 }
 
 /// UTF-8 safe truncation: truncate to at most `max_chars` bytes on a valid

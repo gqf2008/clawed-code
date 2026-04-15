@@ -37,7 +37,10 @@ pub fn parse_sse_line(line: &str) -> Option<Result<StreamEvent>> {
                 // skip it gracefully rather than killing the stream.
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
                     if v.get("type").is_some() {
-                        tracing::debug!("Skipping unknown SSE event type: {}", &data[..data.len().min(120)]);
+                        tracing::debug!(
+                            "Skipping unknown SSE event type: {}",
+                            &data[..data.len().min(120)]
+                        );
                         return None;
                     }
                 }
@@ -69,7 +72,7 @@ impl Default for StreamWatchdogConfig {
 
 impl StreamWatchdogConfig {
     /// Create from environment variable `CLAUDE_STREAM_IDLE_TIMEOUT_MS`.
-    #[must_use] 
+    #[must_use]
     pub fn from_env() -> Self {
         let mut config = Self::default();
         if let Ok(ms) = std::env::var("CLAUDE_STREAM_IDLE_TIMEOUT_MS") {
@@ -90,7 +93,7 @@ impl StreamWatchdogConfig {
 /// - 90s default idle timeout
 /// - 30s stall detection warning
 /// - Stream terminates on timeout (caller can fallback to non-streaming)
-#[must_use] 
+#[must_use]
 pub fn with_idle_watchdog(
     inner: Pin<Box<dyn futures::Stream<Item = Result<StreamEvent>> + Send>>,
     config: StreamWatchdogConfig,
@@ -139,7 +142,7 @@ pub fn with_idle_watchdog(
 }
 
 /// Whether a stream error indicates an idle timeout (and should trigger fallback).
-#[must_use] 
+#[must_use]
 pub fn is_idle_timeout_error(err: &anyhow::Error) -> bool {
     err.to_string().contains("Stream idle timeout")
 }
@@ -156,7 +159,7 @@ pub fn is_idle_timeout_error(err: &anyhow::Error) -> bool {
 /// - Buffers bytes until a `\n` is found
 /// - Passes each complete line to [`parse_sse_line`]
 /// - Flushes any trailing buffer on stream end
-#[must_use] 
+#[must_use]
 pub fn sse_byte_stream_to_events(
     response: reqwest::Response,
 ) -> Pin<Box<dyn futures::Stream<Item = Result<StreamEvent>> + Send>> {
@@ -203,7 +206,7 @@ pub fn sse_byte_stream_to_events(
 ///
 /// Returns `(data_string, is_done)` tuples. Callers handle their own JSON parsing
 /// (e.g. `OpenAI` format → Anthropic format translation).
-#[must_use] 
+#[must_use]
 pub fn sse_byte_stream_to_lines(
     response: reqwest::Response,
 ) -> Pin<Box<dyn futures::Stream<Item = Result<String>> + Send>> {
@@ -326,10 +329,7 @@ mod tests {
     async fn watchdog_passes_through_events() {
         use futures::StreamExt;
 
-        let events = vec![
-            Ok(StreamEvent::Ping),
-            Ok(StreamEvent::Ping),
-        ];
+        let events = vec![Ok(StreamEvent::Ping), Ok(StreamEvent::Ping)];
         let inner: Pin<Box<dyn futures::Stream<Item = Result<StreamEvent>> + Send>> =
             Box::pin(futures::stream::iter(events));
 
@@ -371,9 +371,7 @@ mod tests {
     async fn watchdog_propagates_errors() {
         use futures::StreamExt;
 
-        let events: Vec<Result<StreamEvent>> = vec![
-            Err(anyhow::anyhow!("upstream error")),
-        ];
+        let events: Vec<Result<StreamEvent>> = vec![Err(anyhow::anyhow!("upstream error"))];
         let inner: Pin<Box<dyn futures::Stream<Item = Result<StreamEvent>> + Send>> =
             Box::pin(futures::stream::iter(events));
 

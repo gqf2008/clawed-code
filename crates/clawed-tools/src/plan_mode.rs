@@ -65,7 +65,9 @@ Focus on understanding before acting. A well-researched plan leads to better imp
 
 #[async_trait]
 impl Tool for EnterPlanModeTool {
-    fn name(&self) -> &'static str { "EnterPlanMode" }
+    fn name(&self) -> &'static str {
+        "EnterPlanMode"
+    }
 
     fn description(&self) -> &'static str {
         "Enter plan mode for complex tasks requiring exploration and design. \
@@ -85,7 +87,9 @@ impl Tool for EnterPlanModeTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { false }
+    fn is_read_only(&self) -> bool {
+        false
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         let description = input["description"].as_str().unwrap_or("");
@@ -105,7 +109,9 @@ pub struct ExitPlanModeTool;
 
 #[async_trait]
 impl Tool for ExitPlanModeTool {
-    fn name(&self) -> &'static str { "ExitPlanMode" }
+    fn name(&self) -> &'static str {
+        "ExitPlanMode"
+    }
 
     fn description(&self) -> &'static str {
         "Exit plan mode and begin implementation. Call this after you have explored \
@@ -126,18 +132,18 @@ impl Tool for ExitPlanModeTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { false }
+    fn is_read_only(&self) -> bool {
+        false
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
-        let plan = input["plan"]
-            .as_str()
-            .unwrap_or("(no plan provided)");
+        let plan = input["plan"].as_str().unwrap_or("(no plan provided)");
 
         // Save plan to disk if we have a plan directory
         let saved_path = save_plan_content(plan);
 
         let mut text = String::from(
-            "Plan mode deactivated. All tools are now available for implementation.\n\n"
+            "Plan mode deactivated. All tools are now available for implementation.\n\n",
         );
         text.push_str("## Plan\n\n");
         text.push_str(plan);
@@ -170,8 +176,8 @@ fn save_plan_content(plan: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clawed_core::tool::AbortSignal;
     use clawed_core::permissions::PermissionMode;
+    use clawed_core::tool::AbortSignal;
 
     fn ctx() -> ToolContext {
         ToolContext {
@@ -203,7 +209,10 @@ mod tests {
     #[tokio::test]
     async fn enter_plan_mode_with_description() {
         let tool = EnterPlanModeTool;
-        let result = tool.call(json!({"description": "Refactor auth module"}), &ctx()).await.unwrap();
+        let result = tool
+            .call(json!({"description": "Refactor auth module"}), &ctx())
+            .await
+            .unwrap();
         let text = result_text(&result);
         assert!(text.contains("Refactor auth module"));
         assert!(text.contains("## Goal"));
@@ -212,7 +221,10 @@ mod tests {
     #[tokio::test]
     async fn exit_plan_mode_with_plan() {
         let tool = ExitPlanModeTool;
-        let result = tool.call(json!({"plan": "1. Add tests\n2. Refactor"}), &ctx()).await.unwrap();
+        let result = tool
+            .call(json!({"plan": "1. Add tests\n2. Refactor"}), &ctx())
+            .await
+            .unwrap();
         assert!(!result.is_error);
         let text = result_text(&result);
         assert!(text.contains("deactivated"));

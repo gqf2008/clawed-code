@@ -16,10 +16,10 @@
 //! | `stop_reason: "tool_use"` | `finish_reason: "tool_calls"` |
 //! | SSE `message_start` / `content_block_delta` | SSE `chat.completion.chunk` |
 
-mod types;
-mod translate;
 #[cfg(test)]
 mod tests;
+mod translate;
+mod types;
 
 use std::pin::Pin;
 
@@ -30,7 +30,7 @@ use tracing::{debug, warn};
 
 use crate::provider::ApiBackend;
 use crate::types::{MessagesRequest, MessagesResponse, StreamEvent};
-use translate::{to_openai_request, from_openai_response, OpenAIStreamState};
+use translate::{from_openai_response, to_openai_request, OpenAIStreamState};
 use types::{ChatCompletionChunk, ChatCompletionResponse};
 // ── OpenAI-Compatible Backend ────────────────────────────────────────────────
 
@@ -87,7 +87,7 @@ impl OpenAIBackend {
     }
 
     /// Detect provider from base URL and set appropriate name.
-    #[must_use] 
+    #[must_use]
     pub fn auto_detect_provider(mut self) -> Self {
         let url = self.base_url.to_lowercase();
         self.provider = if url.contains("openai.com") {
@@ -122,10 +122,7 @@ impl ApiBackend for OpenAIBackend {
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         // Skip auth header for local providers (Ollama doesn't need it)
-        if !self.api_key.is_empty()
-            && self.api_key != "ollama"
-            && self.api_key != "local"
-        {
+        if !self.api_key.is_empty() && self.api_key != "ollama" && self.api_key != "local" {
             let auth_value = format!("Bearer {}", self.api_key);
             headers.insert(
                 AUTHORIZATION,
@@ -156,7 +153,10 @@ impl ApiBackend for OpenAIBackend {
         http: &reqwest::Client,
         request: &MessagesRequest,
     ) -> Result<MessagesResponse> {
-        let url = format!("{}/v1/chat/completions", self.base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/v1/chat/completions",
+            self.base_url.trim_end_matches('/')
+        );
         let headers = self.headers()?;
 
         let openai_req = to_openai_request(request);
@@ -193,7 +193,10 @@ impl ApiBackend for OpenAIBackend {
         http: &reqwest::Client,
         request: &MessagesRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
-        let url = format!("{}/v1/chat/completions", self.base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/v1/chat/completions",
+            self.base_url.trim_end_matches('/')
+        );
         let headers = self.headers()?;
 
         let mut openai_req = to_openai_request(request);

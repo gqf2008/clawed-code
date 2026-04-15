@@ -19,22 +19,71 @@ use rustyline::hint::{Hint, Hinter};
 use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{
-    Cmd, CompletionType, ConditionalEventHandler, Config, Context, EditMode, Editor,
-    Event, EventContext, EventHandler, Helper, KeyCode, KeyEvent, Modifiers, RepeatCount,
+    Cmd, CompletionType, ConditionalEventHandler, Config, Context, EditMode, Editor, Event,
+    EventContext, EventHandler, Helper, KeyCode, KeyEvent, Modifiers, RepeatCount,
 };
 
 /// Slash commands for tab completion.
 pub const SLASH_COMMANDS: &[&str] = &[
-    "/help", "/clear", "/model", "/compact", "/cost", "/skills", "/memory",
-    "/session", "/sessions", "/resume", "/diff", "/status", "/permissions",
-    "/config", "/undo", "/review", "/doctor", "/init", "/commit",
-    "/commit-push-pr", "/pr", "/bug", "/search", "/history", "/retry",
-    "/version", "/login", "/logout", "/context", "/export", "/reload-context",
-    "/mcp", "/plugin", "/exit", "/fast", "/add-dir", "/summary", "/rename",
-    "/copy", "/share", "/files", "/env", "/agents", "/theme", "/plan",
-    "/think", "/break-cache", "/rewind", "/vim", "/stickers", "/effort",
-    "/tag", "/release-notes", "/feedback", "/stats", "/usage", "/image",
-    "/pr-comments", "/branch",
+    "/help",
+    "/clear",
+    "/model",
+    "/compact",
+    "/cost",
+    "/skills",
+    "/memory",
+    "/session",
+    "/sessions",
+    "/resume",
+    "/diff",
+    "/status",
+    "/permissions",
+    "/config",
+    "/undo",
+    "/review",
+    "/doctor",
+    "/init",
+    "/commit",
+    "/commit-push-pr",
+    "/pr",
+    "/bug",
+    "/search",
+    "/history",
+    "/retry",
+    "/version",
+    "/login",
+    "/logout",
+    "/context",
+    "/export",
+    "/reload-context",
+    "/mcp",
+    "/plugin",
+    "/exit",
+    "/fast",
+    "/add-dir",
+    "/summary",
+    "/rename",
+    "/copy",
+    "/share",
+    "/files",
+    "/env",
+    "/agents",
+    "/theme",
+    "/plan",
+    "/think",
+    "/break-cache",
+    "/rewind",
+    "/vim",
+    "/stickers",
+    "/effort",
+    "/tag",
+    "/release-notes",
+    "/feedback",
+    "/stats",
+    "/usage",
+    "/image",
+    "/pr-comments",
+    "/branch",
 ];
 
 /// Short description for each slash command (displayed in completion list).
@@ -131,7 +180,11 @@ impl Hint for SlashHint {
     }
     /// Only expose right-arrow completion for real command suffixes, not informational hints.
     fn completion(&self) -> Option<&str> {
-        if self.is_completion { Some(&self.text) } else { None }
+        if self.is_completion {
+            Some(&self.text)
+        } else {
+            None
+        }
     }
 }
 
@@ -214,7 +267,10 @@ impl Hinter for InputHelper {
             if cmd.starts_with(line) && *cmd != line {
                 if found.is_some() {
                     // Ambiguous: informational count hint (right-arrow must NOT accept this)
-                    let count = SLASH_COMMANDS.iter().filter(|c| c.starts_with(line)).count();
+                    let count = SLASH_COMMANDS
+                        .iter()
+                        .filter(|c| c.starts_with(line))
+                        .count();
                     return Some(SlashHint {
                         text: format!("  (Tab: {count} matches)"),
                         is_completion: false,
@@ -249,7 +305,11 @@ impl Highlighter for InputHelper {
         }
     }
 
-    fn highlight_prompt<'b, 's: 'b, 'p: 'b>(&'s self, prompt: &'p str, _default: bool) -> Cow<'b, str> {
+    fn highlight_prompt<'b, 's: 'b, 'p: 'b>(
+        &'s self,
+        prompt: &'p str,
+        _default: bool,
+    ) -> Cow<'b, str> {
         Cow::Owned(format!("\x1b[1;32m{prompt}\x1b[0m"))
     }
 
@@ -275,7 +335,10 @@ fn slash_command_pairs(cmds: &[&str]) -> Vec<Pair> {
             } else {
                 format!("{cmd}  \x1b[2m{desc}\x1b[0m")
             };
-            Pair { display, replacement: cmd.to_string() }
+            Pair {
+                display,
+                replacement: cmd.to_string(),
+            }
         })
         .collect()
 }
@@ -431,7 +494,11 @@ impl InputReader {
     /// buffer with `initial` text (e.g. typeahead captured during streaming).
     ///
     /// The cursor is placed at the end of the pre-filled text.
-    pub fn readline_with_initial(&mut self, prompt: &str, initial: &str) -> io::Result<InputResult> {
+    pub fn readline_with_initial(
+        &mut self,
+        prompt: &str,
+        initial: &str,
+    ) -> io::Result<InputResult> {
         if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
             return read_pipe_fallback(prompt);
         }
@@ -515,7 +582,8 @@ fn complete_file_path(partial: &str) -> Option<Vec<String>> {
     let (dir, prefix) = if partial.contains('/') || partial.contains('\\') {
         let p = Path::new(partial);
         let parent = p.parent().unwrap_or(Path::new("."));
-        let file_prefix = p.file_name()
+        let file_prefix = p
+            .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
         (parent.to_path_buf(), file_prefix)
@@ -579,8 +647,7 @@ pub fn paste_clipboard_image() -> anyhow::Result<std::path::PathBuf> {
     let mut clip = arboard::Clipboard::new()
         .context("Cannot open clipboard (is a display server available?)")?;
 
-    let img = clip.get_image()
-        .context("No image in clipboard")?;
+    let img = clip.get_image().context("No image in clipboard")?;
 
     let mut png_bytes: Vec<u8> = Vec::new();
     {
@@ -640,8 +707,12 @@ mod tests {
         let ctx = Context::new(&history);
         let (start, matches) = helper.complete("", 0, &ctx).unwrap();
         assert_eq!(start, 0);
-        assert_eq!(matches.len(), SLASH_COMMANDS.len(),
-            "empty-buffer completion should return all {} commands", SLASH_COMMANDS.len());
+        assert_eq!(
+            matches.len(),
+            SLASH_COMMANDS.len(),
+            "empty-buffer completion should return all {} commands",
+            SLASH_COMMANDS.len()
+        );
         assert!(matches.iter().any(|p| p.replacement == "/help"));
         assert!(matches.iter().any(|p| p.replacement == "/exit"));
     }
@@ -707,7 +778,10 @@ mod tests {
         let h = hint.unwrap();
         assert_eq!(h.display(), "sion");
         // Unique match: right-arrow should accept the completion
-        assert!(h.completion().is_some(), "unique hint must be a real completion");
+        assert!(
+            h.completion().is_some(),
+            "unique hint must be a real completion"
+        );
     }
 
     #[test]
@@ -720,9 +794,16 @@ mod tests {
         let hint = helper.hint("/co", 3, &ctx);
         assert!(hint.is_some());
         let h = hint.unwrap();
-        assert!(h.text.contains("Tab:"), "ambiguous hint should contain 'Tab:': {}", h.text);
+        assert!(
+            h.text.contains("Tab:"),
+            "ambiguous hint should contain 'Tab:': {}",
+            h.text
+        );
         // Informational hint: right-arrow must NOT accept it (would insert literal text)
-        assert!(h.completion().is_none(), "informational hint must not be a completion");
+        assert!(
+            h.completion().is_none(),
+            "informational hint must not be a completion"
+        );
     }
 
     #[test]
@@ -734,9 +815,16 @@ mod tests {
         let hint = helper.hint("/", 1, &ctx);
         assert!(hint.is_some());
         let h = hint.unwrap();
-        assert!(h.text.contains("Tab:"), "/ hint should show Tab prompt: {}", h.text);
+        assert!(
+            h.text.contains("Tab:"),
+            "/ hint should show Tab prompt: {}",
+            h.text
+        );
         // Informational hint: right-arrow must NOT accept it
-        assert!(h.completion().is_none(), "/ informational hint must not be a completion");
+        assert!(
+            h.completion().is_none(),
+            "/ informational hint must not be a completion"
+        );
     }
 
     #[test]
@@ -771,8 +859,14 @@ mod tests {
     #[test]
     fn test_slash_commands_sorted_format() {
         for cmd in SLASH_COMMANDS {
-            assert!(cmd.starts_with('/'), "SLASH_COMMAND must start with /: {cmd}");
-            assert!(!cmd.contains(' '), "SLASH_COMMAND must not contain spaces: {cmd}");
+            assert!(
+                cmd.starts_with('/'),
+                "SLASH_COMMAND must start with /: {cmd}"
+            );
+            assert!(
+                !cmd.contains(' '),
+                "SLASH_COMMAND must not contain spaces: {cmd}"
+            );
         }
     }
 
@@ -789,10 +883,7 @@ mod tests {
         use std::io::Cursor;
 
         let pixels: Vec<u8> = vec![
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
+            255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
         ];
 
         let mut buf: Vec<u8> = Vec::new();
@@ -804,7 +895,10 @@ mod tests {
             writer.write_image_data(&pixels).unwrap();
         }
 
-        assert!(buf.starts_with(&[0x89, 0x50, 0x4E, 0x47]), "Should start with PNG magic bytes");
+        assert!(
+            buf.starts_with(&[0x89, 0x50, 0x4E, 0x47]),
+            "Should start with PNG magic bytes"
+        );
         assert!(buf.len() > 8, "PNG should have content beyond header");
     }
 }

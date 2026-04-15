@@ -2,9 +2,9 @@ pub(crate) mod helpers;
 mod renderer;
 mod stream;
 
+pub(crate) use helpers::spawn_stream_input;
 pub use renderer::OutputRenderer;
 pub use stream::print_stream;
-pub(crate) use helpers::spawn_stream_input;
 
 use clawed_agent::engine::QueryEngine;
 use clawed_agent::task_runner::{run_task, CompletionReason, TaskProgress};
@@ -13,7 +13,9 @@ use helpers::format_tool_result_inline;
 pub async fn run_single(engine: &QueryEngine, prompt: &str) -> anyhow::Result<()> {
     let model = { engine.state().read().await.model.clone() };
     let stream = engine.submit(prompt).await;
-    print_stream(stream, &model, Some(engine.cost_tracker()), None).await.map(|_| ())
+    print_stream(stream, &model, Some(engine.cost_tracker()), None)
+        .await
+        .map(|_| ())
 }
 
 /// Run a single prompt and output structured JSON result.
@@ -73,7 +75,11 @@ pub async fn run_stream_json(engine: &QueryEngine, prompt: &str) -> anyhow::Resu
             TaskProgress::ToolUse { name, turn } => {
                 serde_json::json!({"type": "tool_use", "name": name, "turn": turn})
             }
-            TaskProgress::ToolDone { name, is_error, text } => {
+            TaskProgress::ToolDone {
+                name,
+                is_error,
+                text,
+            } => {
                 serde_json::json!({
                     "type": "tool_done",
                     "name": name,
@@ -86,9 +92,14 @@ pub async fn run_stream_json(engine: &QueryEngine, prompt: &str) -> anyhow::Resu
             }
             TaskProgress::Done(_) => return, // handled after run_task completes
         };
-        let _ = writeln!(std::io::stdout(), "{}", serde_json::to_string(&json).unwrap_or_default());
+        let _ = writeln!(
+            std::io::stdout(),
+            "{}",
+            serde_json::to_string(&json).unwrap_or_default()
+        );
         std::io::stdout().flush().ok();
-    }).await;
+    })
+    .await;
 
     // Emit final summary event
     let cost = engine.cost_tracker().total_usd();
@@ -127,36 +138,33 @@ pub async fn run_task_interactive(engine: &QueryEngine, task: &str) -> anyhow::R
 
     let mut last_tool = String::new();
 
-    let result = run_task(engine, task, |event| {
-        match event {
-            TaskProgress::TurnStart { turn } if turn > 0 => {
-                eprintln!("\x1b[2m── turn {} ──\x1b[0m", turn);
-            }
-            TaskProgress::Text(t) => {
-                print!("{}", t);
-                std::io::stdout().flush().ok();
-            }
-            TaskProgress::ToolUse { name, .. } => {
-                last_tool = name.clone();
-                eprintln!("\n\x1b[36m⚙ {}\x1b[0m", name);
-            }
-            TaskProgress::ToolDone { is_error, text, .. } => {
-                if is_error {
-                    eprintln!("\x1b[31m  ✗\x1b[0m");
-                } else {
-                    eprintln!("\x1b[32m  ✓\x1b[0m");
-                }
-                if let Some(ref result_text) = text {
-                    if let Some(inline) = format_tool_result_inline(&last_tool, result_text) {
-                        eprintln!("{}", inline);
-                    }
-                }
-            }
-            TaskProgress::TurnStart { .. }
-            | TaskProgress::Tokens { .. }
-            | TaskProgress::Done(_) => {}
+    let result = run_task(engine, task, |event| match event {
+        TaskProgress::TurnStart { turn } if turn > 0 => {
+            eprintln!("\x1b[2m── turn {} ──\x1b[0m", turn);
         }
-    }).await;
+        TaskProgress::Text(t) => {
+            print!("{}", t);
+            std::io::stdout().flush().ok();
+        }
+        TaskProgress::ToolUse { name, .. } => {
+            last_tool = name.clone();
+            eprintln!("\n\x1b[36m⚙ {}\x1b[0m", name);
+        }
+        TaskProgress::ToolDone { is_error, text, .. } => {
+            if is_error {
+                eprintln!("\x1b[31m  ✗\x1b[0m");
+            } else {
+                eprintln!("\x1b[32m  ✓\x1b[0m");
+            }
+            if let Some(ref result_text) = text {
+                if let Some(inline) = format_tool_result_inline(&last_tool, result_text) {
+                    eprintln!("{}", inline);
+                }
+            }
+        }
+        TaskProgress::TurnStart { .. } | TaskProgress::Tokens { .. } | TaskProgress::Done(_) => {}
+    })
+    .await;
 
     // Final newline + summary to stderr
     println!();

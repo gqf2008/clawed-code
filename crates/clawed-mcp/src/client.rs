@@ -7,7 +7,10 @@ use serde_json::{json, Value};
 use tracing::{debug, info, warn};
 
 use crate::transport::StdioTransport;
-use crate::types::{ServerInfo, ServerCapabilities, McpToolDef, McpServerConfig, McpToolResult, McpResource, McpContent, McpPrompt, McpPromptMessage};
+use crate::types::{
+    McpContent, McpPrompt, McpPromptMessage, McpResource, McpServerConfig, McpToolDef,
+    McpToolResult, ServerCapabilities, ServerInfo,
+};
 
 /// MCP client wrapping a transport with protocol-level operations.
 pub struct McpClient {
@@ -21,7 +24,12 @@ pub struct McpClient {
 impl McpClient {
     /// Connect to an MCP server and perform initialization handshake.
     pub async fn connect(config: &McpServerConfig) -> Result<Self> {
-        info!("Connecting to MCP server '{}': {} {}", config.name, config.command, config.args.join(" "));
+        info!(
+            "Connecting to MCP server '{}': {} {}",
+            config.name,
+            config.command,
+            config.args.join(" ")
+        );
 
         let mut transport = StdioTransport::spawn(&config.command, &config.args, &config.env)
             .await
@@ -65,7 +73,8 @@ impl McpClient {
 
         debug!(
             "MCP server '{}' initialized: {:?}, capabilities: tools={}, resources={}",
-            config.name, server_info,
+            config.name,
+            server_info,
             capabilities.tools.is_some(),
             capabilities.resources.is_some(),
         );
@@ -93,12 +102,15 @@ impl McpClient {
             .await
             .context("MCP tools/list failed")?;
 
-        let tools: Vec<McpToolDef> = serde_json::from_value(
-            result.get("tools").cloned().unwrap_or(Value::Array(vec![])),
-        )
-        .context("Failed to parse MCP tools list")?;
+        let tools: Vec<McpToolDef> =
+            serde_json::from_value(result.get("tools").cloned().unwrap_or(Value::Array(vec![])))
+                .context("Failed to parse MCP tools list")?;
 
-        info!("MCP server '{}': {} tools available", self.server_name, tools.len());
+        info!(
+            "MCP server '{}': {} tools available",
+            self.server_name,
+            tools.len()
+        );
         self.tools_cache = Some(tools.clone());
         Ok(tools)
     }
@@ -119,11 +131,15 @@ impl McpClient {
             .await
             .with_context(|| format!("MCP tools/call '{tool_name}' failed"))?;
 
-        let tool_result: McpToolResult = serde_json::from_value(result)
-            .context("Failed to parse MCP tool result")?;
+        let tool_result: McpToolResult =
+            serde_json::from_value(result).context("Failed to parse MCP tool result")?;
 
         if tool_result.is_error {
-            warn!("MCP tool '{}' returned error: {}", tool_name, tool_result.text());
+            warn!(
+                "MCP tool '{}' returned error: {}",
+                tool_name,
+                tool_result.text()
+            );
         }
 
         Ok(tool_result)
@@ -142,7 +158,10 @@ impl McpClient {
             .context("MCP resources/list failed")?;
 
         let resources: Vec<McpResource> = serde_json::from_value(
-            result.get("resources").cloned().unwrap_or(Value::Array(vec![])),
+            result
+                .get("resources")
+                .cloned()
+                .unwrap_or(Value::Array(vec![])),
         )
         .context("Failed to parse MCP resources list")?;
 
@@ -158,7 +177,10 @@ impl McpClient {
             .with_context(|| format!("MCP resources/read '{uri}' failed"))?;
 
         let contents: Vec<McpContent> = serde_json::from_value(
-            result.get("contents").cloned().unwrap_or(Value::Array(vec![])),
+            result
+                .get("contents")
+                .cloned()
+                .unwrap_or(Value::Array(vec![])),
         )
         .context("Failed to parse MCP resource contents")?;
 
@@ -178,11 +200,18 @@ impl McpClient {
             .context("MCP prompts/list failed")?;
 
         let prompts: Vec<McpPrompt> = serde_json::from_value(
-            result.get("prompts").cloned().unwrap_or(Value::Array(vec![])),
+            result
+                .get("prompts")
+                .cloned()
+                .unwrap_or(Value::Array(vec![])),
         )
         .context("Failed to parse MCP prompts list")?;
 
-        info!("MCP server '{}': {} prompts available", self.server_name, prompts.len());
+        info!(
+            "MCP server '{}': {} prompts available",
+            self.server_name,
+            prompts.len()
+        );
         Ok(prompts)
     }
 
@@ -204,7 +233,10 @@ impl McpClient {
             .with_context(|| format!("MCP prompts/get '{name}' failed"))?;
 
         let messages: Vec<McpPromptMessage> = serde_json::from_value(
-            result.get("messages").cloned().unwrap_or(Value::Array(vec![])),
+            result
+                .get("messages")
+                .cloned()
+                .unwrap_or(Value::Array(vec![])),
         )
         .context("Failed to parse MCP prompt messages")?;
 
@@ -229,7 +261,10 @@ impl McpClient {
 
     /// Handle a `notifications/tools/list_changed` notification.
     pub async fn handle_tool_list_changed(&mut self) -> Result<Vec<McpToolDef>> {
-        info!("MCP server '{}': tool list changed notification received", self.server_name);
+        info!(
+            "MCP server '{}': tool list changed notification received",
+            self.server_name
+        );
         self.tools_cache = None;
         self.list_tools().await
     }

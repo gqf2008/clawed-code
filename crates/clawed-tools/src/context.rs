@@ -10,7 +10,9 @@ pub struct ContextInspectTool;
 
 #[async_trait]
 impl Tool for ContextInspectTool {
-    fn name(&self) -> &'static str { "ContextInspect" }
+    fn name(&self) -> &'static str {
+        "ContextInspect"
+    }
 
     fn description(&self) -> &'static str {
         "Inspect the current conversation context: message count, estimated tokens, \
@@ -26,8 +28,12 @@ impl Tool for ContextInspectTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
-    fn is_concurrency_safe(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
+    fn is_concurrency_safe(&self) -> bool {
+        true
+    }
 
     async fn call(&self, _input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
         let msg_count = context.messages.len();
@@ -35,9 +41,8 @@ impl Tool for ContextInspectTool {
         let permission_mode = format!("{:?}", context.permission_mode);
 
         // Use hybrid counting: real API usage + rough estimation for tail
-        let estimated_tokens = clawed_core::token_estimation::token_count_with_estimation(
-            &context.messages,
-        );
+        let estimated_tokens =
+            clawed_core::token_estimation::token_count_with_estimation(&context.messages);
 
         let result = json!({
             "messages": msg_count,
@@ -59,7 +64,9 @@ pub struct VerifyTool;
 
 #[async_trait]
 impl Tool for VerifyTool {
-    fn name(&self) -> &'static str { "Verify" }
+    fn name(&self) -> &'static str {
+        "Verify"
+    }
 
     fn description(&self) -> &'static str {
         "Verify that a file contains expected content after an edit. \
@@ -90,8 +97,12 @@ impl Tool for VerifyTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
-    fn is_concurrency_safe(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
+    fn is_concurrency_safe(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
         let path = input["path"]
@@ -134,7 +145,8 @@ impl Tool for VerifyTool {
         if issues.is_empty() {
             Ok(ToolResult::text(format!(
                 "✓ Verified: all {} expected snippets found, {} unexpected snippets absent.",
-                expected.len(), unexpected.len()
+                expected.len(),
+                unexpected.len()
             )))
         } else {
             Ok(ToolResult::error(format!(
@@ -148,8 +160,8 @@ impl Tool for VerifyTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clawed_core::tool::AbortSignal;
     use clawed_core::permissions::PermissionMode;
+    use clawed_core::tool::AbortSignal;
 
     fn ctx(dir: &std::path::Path) -> ToolContext {
         ToolContext {

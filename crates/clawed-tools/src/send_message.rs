@@ -14,8 +14,12 @@ pub struct SendUserMessageTool;
 
 #[async_trait]
 impl Tool for SendUserMessageTool {
-    fn name(&self) -> &'static str { "SendUserMessage" }
-    fn category(&self) -> ToolCategory { ToolCategory::Agent }
+    fn name(&self) -> &'static str {
+        "SendUserMessage"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Agent
+    }
 
     fn description(&self) -> &'static str {
         "Send a message to the user. Use for proactive status updates, completion notices, \
@@ -40,8 +44,12 @@ impl Tool for SendUserMessageTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
-    fn is_concurrency_safe(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
+    fn is_concurrency_safe(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         let message = input["message"]
@@ -53,7 +61,11 @@ impl Tool for SendUserMessageTool {
         let timestamp = chrono::Utc::now().to_rfc3339();
 
         // In CLI mode, print the message to stderr (separate from the response stream)
-        let prefix = if status == "proactive" { "📢 " } else { "💬 " };
+        let prefix = if status == "proactive" {
+            "📢 "
+        } else {
+            "💬 "
+        };
         eprintln!("\n\x1b[36m{prefix}{message}\x1b[0m");
 
         let result = json!({

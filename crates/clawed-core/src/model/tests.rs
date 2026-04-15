@@ -4,7 +4,10 @@ use super::*;
 
 #[test]
 fn test_canonical_name() {
-    assert_eq!(canonical_name("claude-sonnet-4-20250514"), "claude-sonnet-4");
+    assert_eq!(
+        canonical_name("claude-sonnet-4-20250514"),
+        "claude-sonnet-4"
+    );
     assert_eq!(canonical_name("claude-opus-4-6"), "claude-opus-4-6");
     assert_eq!(
         canonical_name("us.anthropic.claude-opus-4-5-20251101-v1:0"),
@@ -14,8 +17,14 @@ fn test_canonical_name() {
         canonical_name("claude-haiku-4-5@20251001"),
         "claude-haiku-4-5"
     );
-    assert_eq!(canonical_name("claude-3-5-sonnet-20241022"), "claude-3-5-sonnet");
-    assert_eq!(canonical_name("claude-3-7-sonnet-20250219"), "claude-3-7-sonnet");
+    assert_eq!(
+        canonical_name("claude-3-5-sonnet-20241022"),
+        "claude-3-5-sonnet"
+    );
+    assert_eq!(
+        canonical_name("claude-3-7-sonnet-20250219"),
+        "claude-3-7-sonnet"
+    );
     assert_eq!(canonical_name("unknown-model"), "unknown");
 }
 
@@ -88,7 +97,10 @@ fn test_resolve_model_priority() {
 fn test_display_name() {
     assert_eq!(display_name("claude-sonnet-4-20250514"), "Claude Sonnet 4");
     assert_eq!(display_name("claude-opus-4-6"), "Claude Opus 4.6");
-    assert_eq!(display_name("claude-haiku-4-5-20251001"), "Claude Haiku 4.5");
+    assert_eq!(
+        display_name("claude-haiku-4-5-20251001"),
+        "Claude Haiku 4.5"
+    );
 }
 
 #[test]
@@ -101,9 +113,18 @@ fn test_knowledge_cutoff() {
 #[test]
 fn test_agent_model_routing() {
     let parent = "claude-opus-4-6";
-    assert_eq!(resolve_agent_model(AgentType::Explore, parent), defaults::HAIKU);
-    assert_eq!(resolve_agent_model(AgentType::GeneralPurpose, parent), parent);
-    assert_eq!(resolve_agent_model(AgentType::CodeReview, parent), defaults::SONNET);
+    assert_eq!(
+        resolve_agent_model(AgentType::Explore, parent),
+        defaults::HAIKU
+    );
+    assert_eq!(
+        resolve_agent_model(AgentType::GeneralPurpose, parent),
+        parent
+    );
+    assert_eq!(
+        resolve_agent_model(AgentType::CodeReview, parent),
+        defaults::SONNET
+    );
 }
 
 #[test]
@@ -152,15 +173,12 @@ fn test_model_pricing_unknown_returns_none() {
 
 #[test]
 fn test_estimate_cost_sonnet() {
-    let cost = estimate_cost(
-        "claude-sonnet-4",
-        10_000,
-        2_000,
-        5_000,
-        1_000,
-    );
+    let cost = estimate_cost("claude-sonnet-4", 10_000, 2_000, 5_000, 1_000);
     let expected = 0.030 + 0.030 + 0.0015 + 0.00375;
-    assert!((cost - expected).abs() < 1e-6, "expected {expected}, got {cost}");
+    assert!(
+        (cost - expected).abs() < 1e-6,
+        "expected {expected}, got {cost}"
+    );
 }
 
 #[test]

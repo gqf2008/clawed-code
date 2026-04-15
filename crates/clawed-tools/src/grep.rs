@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use clawed_core::tool::{Tool, ToolCategory, ToolContext, ToolResult};
-use serde_json::{json, Value};
 use ignore::WalkBuilder;
 use regex::Regex;
+use serde_json::{json, Value};
 use std::path::PathBuf;
 
 /// Map short type names to glob patterns (aligned with ripgrep --type).
@@ -37,20 +37,22 @@ fn type_to_globs(ty: &str) -> Option<Vec<&'static str>> {
 
 /// Check if a path matches any of the given glob patterns.
 fn matches_type_globs(path: &std::path::Path, globs: &[&str]) -> bool {
-    let filename = path.file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
-    globs.iter().any(|g| {
-        glob::Pattern::new(g).is_ok_and(|p| p.matches(filename))
-    })
+    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    globs
+        .iter()
+        .any(|g| glob::Pattern::new(g).is_ok_and(|p| p.matches(filename)))
 }
 
 pub struct GrepTool;
 
 #[async_trait]
 impl Tool for GrepTool {
-    fn name(&self) -> &'static str { "Grep" }
-    fn category(&self) -> ToolCategory { ToolCategory::FileSystem }
+    fn name(&self) -> &'static str {
+        "Grep"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::FileSystem
+    }
 
     fn description(&self) -> &'static str {
         "A powerful search tool built on ripgrep. ALWAYS use Grep for search tasks — NEVER \
@@ -84,11 +86,15 @@ impl Tool for GrepTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
-        let pattern = input["pattern"].as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing 'pattern'"))?.to_string();
+        let pattern = input["pattern"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'pattern'"))?
+            .to_string();
 
         let search_path: PathBuf = match input["path"].as_str() {
             Some(p) => {
@@ -97,9 +103,14 @@ impl Tool for GrepTool {
             }
             None => context.cwd.clone(),
         };
-        let include_glob = input["include"].as_str().map(std::string::ToString::to_string);
+        let include_glob = input["include"]
+            .as_str()
+            .map(std::string::ToString::to_string);
         let type_filter = input["type"].as_str().map(std::string::ToString::to_string);
-        let output_mode = input["output_mode"].as_str().unwrap_or("files_with_matches").to_string();
+        let output_mode = input["output_mode"]
+            .as_str()
+            .unwrap_or("files_with_matches")
+            .to_string();
         let multiline = input["multiline"].as_bool().unwrap_or(false);
         let case_insensitive = input["case_insensitive"].as_bool().unwrap_or(false);
         let context_lines = input["context_lines"].as_u64().map(|n| n as usize);
@@ -119,16 +130,16 @@ impl Tool for GrepTool {
         if final_pattern.len() > MAX_PATTERN_LEN {
             return Ok(ToolResult::error(format!(
                 "Pattern too long ({} chars, limit is {}). Use a simpler pattern.",
-                final_pattern.len(), MAX_PATTERN_LEN
+                final_pattern.len(),
+                MAX_PATTERN_LEN
             )));
         }
 
         let output = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
-            let regex = Regex::new(&final_pattern)
-                .map_err(|e| anyhow::anyhow!("Bad regex: {e}"))?;
+            let regex =
+                Regex::new(&final_pattern).map_err(|e| anyhow::anyhow!("Bad regex: {e}"))?;
 
-            let type_globs: Option<Vec<&str>> = type_filter.as_deref()
-                .and_then(type_to_globs);
+            let type_globs: Option<Vec<&str>> = type_filter.as_deref().and_then(type_to_globs);
 
             // Compute context window
             let ctx_before = before_context.or(context_lines).unwrap_or(0);
@@ -138,14 +149,21 @@ impl Tool for GrepTool {
             let mut file_count = 0usize;
             let mut total_matches = 0usize;
 
-            let walker = WalkBuilder::new(&search_path).hidden(true).git_ignore(true).build();
+            let walker = WalkBuilder::new(&search_path)
+                .hidden(true)
+                .git_ignore(true)
+                .build();
             'outer: for entry in walker.flatten() {
-                if !entry.file_type().is_some_and(|ft| ft.is_file()) { continue; }
+                if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                    continue;
+                }
                 let path = entry.path().to_owned();
 
                 // Type filter
                 if let Some(ref globs) = type_globs {
-                    if !matches_type_globs(&path, globs) { continue; }
+                    if !matches_type_globs(&path, globs) {
+                        continue;
+                    }
                 }
 
                 // Glob filter
@@ -164,7 +182,10 @@ impl Tool for GrepTool {
                     }
                 }
 
-                let content = match std::fs::read_to_string(&path) { Ok(c) => c, Err(_) => continue };
+                let content = match std::fs::read_to_string(&path) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
 
                 if multiline {
                     // Multiline: search across entire content
@@ -176,11 +197,15 @@ impl Tool for GrepTool {
                         match output_mode.as_str() {
                             "files_with_matches" => {
                                 results.push(path.display().to_string());
-                                if results.len() >= max_results { break 'outer; }
+                                if results.len() >= max_results {
+                                    break 'outer;
+                                }
                             }
                             "count" => {
                                 results.push(format!("{}:{}", path.display(), match_count));
-                                if results.len() >= max_results { break 'outer; }
+                                if results.len() >= max_results {
+                                    break 'outer;
+                                }
                             }
                             _ => {
                                 // content mode: show matched regions with line numbers
@@ -188,8 +213,15 @@ impl Tool for GrepTool {
                                     let line_num = content[..m.start()].matches('\n').count() + 1;
                                     let matched = m.as_str();
                                     let preview: String = matched.chars().take(200).collect();
-                                    results.push(format!("  {}:{}: {}", path.display(), line_num, preview));
-                                    if results.len() >= max_results { break 'outer; }
+                                    results.push(format!(
+                                        "  {}:{}: {}",
+                                        path.display(),
+                                        line_num,
+                                        preview
+                                    ));
+                                    if results.len() >= max_results {
+                                        break 'outer;
+                                    }
                                 }
                             }
                         }
@@ -222,7 +254,11 @@ impl Tool for GrepTool {
                                             let i = start + idx;
                                             let prefix = if i == num { ">" } else { " " };
                                             file_hits.push(format!(
-                                                "  {}{}:{}: {}", prefix, path.display(), i + 1, line
+                                                "  {}{}:{}: {}",
+                                                prefix,
+                                                path.display(),
+                                                i + 1,
+                                                line
                                             ));
                                         }
                                         if end < lines.len() {
@@ -230,7 +266,10 @@ impl Tool for GrepTool {
                                         }
                                     } else {
                                         file_hits.push(format!(
-                                            "  {}:{}: {}", path.display(), num + 1, line.trim()
+                                            "  {}:{}: {}",
+                                            path.display(),
+                                            num + 1,
+                                            line.trim()
                                         ));
                                     }
                                 }
@@ -246,7 +285,9 @@ impl Tool for GrepTool {
                     if output_mode == "count" && file_match_count > 0 {
                         file_count += 1;
                         results.push(format!("{}:{}", path.display(), file_match_count));
-                        if results.len() >= max_results { break 'outer; }
+                        if results.len() >= max_results {
+                            break 'outer;
+                        }
                     } else if !file_hits.is_empty() {
                         file_count += 1;
                         results.extend(file_hits);
@@ -258,18 +299,27 @@ impl Tool for GrepTool {
                 Ok("No matches found.".to_string())
             } else {
                 match output_mode.as_str() {
-                    "count" => {
-                        Ok(format!("{} match(es) in {} file(s):\n{}", total_matches, file_count, results.join("\n")))
-                    }
-                    "files_with_matches" => {
-                        Ok(format!("{} file(s) matched:\n{}", file_count, results.join("\n")))
-                    }
-                    _ => {
-                        Ok(format!("Found {} match(es) in {} file(s):\n{}", total_matches, file_count, results.join("\n")))
-                    }
+                    "count" => Ok(format!(
+                        "{} match(es) in {} file(s):\n{}",
+                        total_matches,
+                        file_count,
+                        results.join("\n")
+                    )),
+                    "files_with_matches" => Ok(format!(
+                        "{} file(s) matched:\n{}",
+                        file_count,
+                        results.join("\n")
+                    )),
+                    _ => Ok(format!(
+                        "Found {} match(es) in {} file(s):\n{}",
+                        total_matches,
+                        file_count,
+                        results.join("\n")
+                    )),
                 }
             }
-        }).await??;
+        })
+        .await??;
 
         Ok(ToolResult::text(output))
     }
@@ -365,8 +415,8 @@ mod tests {
 
     #[tokio::test]
     async fn grep_rejects_long_pattern() {
-        use clawed_core::tool::{Tool, ToolContext};
         use clawed_core::permissions::PermissionMode;
+        use clawed_core::tool::{Tool, ToolContext};
 
         let ctx = ToolContext {
             cwd: std::env::temp_dir(),
@@ -418,12 +468,19 @@ mod tests {
         let input = serde_json::json!({ "pattern": "hello", "case_insensitive": true, "output_mode": "content" });
         let result = GrepTool.call(input, &grep_ctx(tmp.path())).await.unwrap();
         assert!(!result.is_error, "case insensitive search should work");
-        let text = result.content.iter().map(|c| match c {
-            clawed_core::message::ToolResultContent::Text { text } => text.clone(),
-            _ => String::new(),
-        }).collect::<String>();
+        let text = result
+            .content
+            .iter()
+            .map(|c| match c {
+                clawed_core::message::ToolResultContent::Text { text } => text.clone(),
+                _ => String::new(),
+            })
+            .collect::<String>();
         // Should find the line containing "Hello" via case-insensitive match
-        assert!(text.contains("Hello"), "should match Hello case-insensitively: {text}");
+        assert!(
+            text.contains("Hello"),
+            "should match Hello case-insensitively: {text}"
+        );
     }
 
     #[tokio::test]
@@ -443,10 +500,14 @@ mod tests {
         let input = serde_json::json!({ "pattern": "hello", "type": "rs" });
         let result = GrepTool.call(input, &grep_ctx(tmp.path())).await.unwrap();
         assert!(!result.is_error);
-        let text = result.content.iter().map(|c| match c {
-            clawed_core::message::ToolResultContent::Text { text } => text.clone(),
-            _ => String::new(),
-        }).collect::<String>();
+        let text = result
+            .content
+            .iter()
+            .map(|c| match c {
+                clawed_core::message::ToolResultContent::Text { text } => text.clone(),
+                _ => String::new(),
+            })
+            .collect::<String>();
         assert!(text.contains("a.rs"));
         assert!(!text.contains("b.py"));
     }

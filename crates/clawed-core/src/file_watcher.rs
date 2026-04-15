@@ -121,12 +121,7 @@ impl ConfigWatcher {
         let path_map: Arc<Vec<(PathBuf, WatchedFileKind)>> = Arc::new(
             watch_paths
                 .iter()
-                .map(|(p, k)| {
-                    (
-                        p.canonicalize().unwrap_or_else(|_| p.clone()),
-                        k.clone(),
-                    )
-                })
+                .map(|(p, k)| (p.canonicalize().unwrap_or_else(|_| p.clone()), k.clone()))
                 .collect(),
         );
 
@@ -142,10 +137,8 @@ impl ConfigWatcher {
                             if evt.kind != DebouncedEventKind::Any {
                                 continue;
                             }
-                            let canonical = evt
-                                .path
-                                .canonicalize()
-                                .unwrap_or_else(|_| evt.path.clone());
+                            let canonical =
+                                evt.path.canonicalize().unwrap_or_else(|_| evt.path.clone());
 
                             for (watched, kind) in pm.iter() {
                                 if canonical == *watched {
@@ -183,10 +176,7 @@ impl ConfigWatcher {
                         .watcher()
                         .watch(dir, notify::RecursiveMode::NonRecursive)
                     {
-                        warn!(
-                            "ConfigWatcher: failed to watch {}: {e}",
-                            dir.display()
-                        );
+                        warn!("ConfigWatcher: failed to watch {}: {e}", dir.display());
                     }
                 }
             }
@@ -224,7 +214,9 @@ mod tests {
         fs::write(&md, "# Test").unwrap();
 
         let paths = ConfigWatcher::collect_watch_paths(dir.path());
-        assert!(paths.iter().any(|(p, k)| p == &md && *k == WatchedFileKind::ClaudeMd));
+        assert!(paths
+            .iter()
+            .any(|(p, k)| p == &md && *k == WatchedFileKind::ClaudeMd));
     }
 
     #[test]
@@ -236,7 +228,9 @@ mod tests {
         fs::write(&md, "# Test").unwrap();
 
         let paths = ConfigWatcher::collect_watch_paths(dir.path());
-        assert!(paths.iter().any(|(p, k)| p == &md && *k == WatchedFileKind::ClaudeMd));
+        assert!(paths
+            .iter()
+            .any(|(p, k)| p == &md && *k == WatchedFileKind::ClaudeMd));
     }
 
     #[tokio::test]
@@ -258,7 +252,9 @@ mod tests {
 
         let events = handle.drain();
         assert!(
-            events.iter().any(|e| matches!(e, ConfigChangeEvent::ClaudeMd(_))),
+            events
+                .iter()
+                .any(|e| matches!(e, ConfigChangeEvent::ClaudeMd(_))),
             "Expected ClaudeMd event, got: {events:?}"
         );
     }
@@ -275,12 +271,17 @@ mod tests {
         let (tx, rx) = mpsc::channel(32);
         let path = PathBuf::from("/test/CLAUDE.md");
         // Send duplicate events
-        tx.try_send(ConfigChangeEvent::ClaudeMd(path.clone())).unwrap();
+        tx.try_send(ConfigChangeEvent::ClaudeMd(path.clone()))
+            .unwrap();
         tx.try_send(ConfigChangeEvent::ClaudeMd(path)).unwrap();
 
         let debouncer = {
             // Create a minimal debouncer just for the test struct
-            new_debouncer(Duration::from_secs(60), |_: Result<Vec<notify_debouncer_mini::DebouncedEvent>, notify::Error>| {}).unwrap()
+            new_debouncer(
+                Duration::from_secs(60),
+                |_: Result<Vec<notify_debouncer_mini::DebouncedEvent>, notify::Error>| {},
+            )
+            .unwrap()
         };
 
         let mut handle = ConfigWatchHandle {

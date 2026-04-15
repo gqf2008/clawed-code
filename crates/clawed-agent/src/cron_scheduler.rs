@@ -10,9 +10,9 @@ use tokio::sync::Mutex;
 
 use clawed_core::cron_lock::{release_scheduler_lock, try_acquire_scheduler_lock};
 use clawed_core::cron_tasks::{
-    has_cron_tasks_sync, is_recurring_task_aged, jittered_next_cron_run_ms,
-    mark_cron_tasks_fired, next_cron_run_ms, one_shot_jittered_next_cron_run_ms,
-    read_cron_tasks, remove_cron_tasks, CronJitterConfig, CronTask,
+    has_cron_tasks_sync, is_recurring_task_aged, jittered_next_cron_run_ms, mark_cron_tasks_fired,
+    next_cron_run_ms, one_shot_jittered_next_cron_run_ms, read_cron_tasks, remove_cron_tasks,
+    CronJitterConfig, CronTask,
 };
 
 const CHECK_INTERVAL_MS: u64 = 1000;
@@ -137,8 +137,7 @@ async fn scheduler_loop(
     let mut lock_probe_interval =
         tokio::time::interval(tokio::time::Duration::from_millis(LOCK_PROBE_INTERVAL_MS));
     // Reload tasks periodically (poor man's file watcher)
-    let mut reload_interval =
-        tokio::time::interval(tokio::time::Duration::from_secs(5));
+    let mut reload_interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
 
     loop {
         tokio::select! {

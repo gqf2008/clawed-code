@@ -1,11 +1,11 @@
+pub mod cache_detect;
 pub mod client;
+pub mod files;
+pub mod model;
+pub mod oauth;
 pub mod openai;
 pub mod provider;
-pub mod types;
-pub mod stream;
 pub mod retry;
-pub mod oauth;
-pub mod model;
+pub mod stream;
+pub mod types;
 pub mod usage;
-pub mod files;
-pub mod cache_detect;

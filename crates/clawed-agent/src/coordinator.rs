@@ -131,7 +131,9 @@ impl AgentTracker {
         Self::with_concurrency(DEFAULT_MAX_CONCURRENT_AGENTS)
     }
 
-    pub fn with_concurrency(max_concurrent: usize) -> (Self, mpsc::UnboundedReceiver<TaskNotification>) {
+    pub fn with_concurrency(
+        max_concurrent: usize,
+    ) -> (Self, mpsc::UnboundedReceiver<TaskNotification>) {
         let (tx, rx) = mpsc::unbounded_channel();
         (
             Self {
@@ -146,7 +148,9 @@ impl AgentTracker {
 
     /// Acquire a concurrency permit. Returns a guard that releases
     /// the permit on drop — call this before spawning a background agent.
-    pub async fn acquire_permit(&self) -> Result<tokio::sync::OwnedSemaphorePermit, tokio::sync::AcquireError> {
+    pub async fn acquire_permit(
+        &self,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit, tokio::sync::AcquireError> {
         self.concurrency.clone().acquire_owned().await
     }
 
@@ -336,7 +340,9 @@ pub struct SendMessageTool {
 
 #[async_trait::async_trait]
 impl Tool for SendMessageTool {
-    fn name(&self) -> &str { "SendMessage" }
+    fn name(&self) -> &str {
+        "SendMessage"
+    }
 
     fn description(&self) -> &str {
         "Send a follow-up message to a running background agent. The message is queued \
@@ -361,7 +367,9 @@ impl Tool for SendMessageTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { false }
+    fn is_read_only(&self) -> bool {
+        false
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         let to = input["to"]
@@ -377,12 +385,18 @@ impl Tool for SendMessageTool {
         } else if let Some(id) = self.tracker.lookup_by_name(to).await {
             id
         } else {
-            return Ok(ToolResult::error(format!("No agent found with id or name '{}'", to)));
+            return Ok(ToolResult::error(format!(
+                "No agent found with id or name '{}'",
+                to
+            )));
         };
 
         // Check the agent is running
         let Some(task) = self.tracker.get(&agent_id).await else {
-            return Ok(ToolResult::error(format!("Agent '{}' no longer exists", agent_id)));
+            return Ok(ToolResult::error(format!(
+                "Agent '{}' no longer exists",
+                agent_id
+            )));
         };
         if !matches!(task.status, AgentStatus::Running) {
             return Ok(ToolResult::error(format!(
@@ -422,7 +436,9 @@ pub struct TaskStopTool {
 
 #[async_trait::async_trait]
 impl Tool for TaskStopTool {
-    fn name(&self) -> &str { "TaskStop" }
+    fn name(&self) -> &str {
+        "TaskStop"
+    }
 
     fn description(&self) -> &str {
         "Stop a running background agent. The agent will be killed and a task-notification \
@@ -442,7 +458,9 @@ impl Tool for TaskStopTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { false }
+    fn is_read_only(&self) -> bool {
+        false
+    }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         let agent_id = input["agent_id"]
@@ -451,13 +469,14 @@ impl Tool for TaskStopTool {
 
         let task = self.tracker.get(agent_id).await;
         match task {
-            None => Ok(ToolResult::error(format!("No agent found with id '{}'", agent_id))),
-            Some(t) if !matches!(t.status, AgentStatus::Running) => {
-                Ok(ToolResult::error(format!(
-                    "Agent '{}' is already {} — cannot stop",
-                    agent_id, t.status
-                )))
-            }
+            None => Ok(ToolResult::error(format!(
+                "No agent found with id '{}'",
+                agent_id
+            ))),
+            Some(t) if !matches!(t.status, AgentStatus::Running) => Ok(ToolResult::error(format!(
+                "Agent '{}' is already {} — cannot stop",
+                agent_id, t.status
+            ))),
             Some(_) => {
                 // Cancel via CancellationToken — the background loop will detect
                 // cancellation and call tracker.kill() itself, so we only cancel the
@@ -466,7 +485,10 @@ impl Tool for TaskStopTool {
                 if let Some(token) = tokens.get(agent_id) {
                     token.cancel();
                 }
-                Ok(ToolResult::text(format!("Agent '{}' stop requested", agent_id)))
+                Ok(ToolResult::text(format!(
+                    "Agent '{}' stop requested",
+                    agent_id
+                )))
             }
         }
     }
@@ -484,12 +506,7 @@ fn xml_escape(s: &str) -> String {
 
 /// Build the list of tool names available to workers (excludes coordinator-only tools).
 pub fn worker_tool_names(all_tools: &[&str]) -> Vec<String> {
-    let excluded = [
-        "Agent",
-        "SendMessage",
-        "TaskStop",
-        "AskUserQuestion",
-    ];
+    let excluded = ["Agent", "SendMessage", "TaskStop", "AskUserQuestion"];
     all_tools
         .iter()
         .filter(|t| !excluded.contains(t))
@@ -511,13 +528,18 @@ mod tests {
     }
 
     fn result_text(result: &ToolResult) -> String {
-        result.content.iter().filter_map(|c| {
-            if let clawed_core::message::ToolResultContent::Text { text } = c {
-                Some(text.as_str())
-            } else {
-                None
-            }
-        }).collect::<Vec<_>>().join("")
+        result
+            .content
+            .iter()
+            .filter_map(|c| {
+                if let clawed_core::message::ToolResultContent::Text { text } = c {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("")
     }
 
     #[test]
@@ -540,7 +562,14 @@ mod tests {
 
     #[test]
     fn test_worker_tool_names() {
-        let all = vec!["Bash", "Read", "Edit", "Agent", "SendMessage", "AskUserQuestion"];
+        let all = vec![
+            "Bash",
+            "Read",
+            "Edit",
+            "Agent",
+            "SendMessage",
+            "AskUserQuestion",
+        ];
         let worker = worker_tool_names(&all);
         assert_eq!(worker, vec!["Bash", "Read", "Edit"]);
     }
@@ -670,9 +699,14 @@ mod tests {
     #[tokio::test]
     async fn tracker_lookup_by_name() {
         let (tracker, _rx) = AgentTracker::new();
-        tracker.register("id-1", "task", Some("my-worker"), None).await;
+        tracker
+            .register("id-1", "task", Some("my-worker"), None)
+            .await;
 
-        assert_eq!(tracker.lookup_by_name("my-worker").await, Some("id-1".into()));
+        assert_eq!(
+            tracker.lookup_by_name("my-worker").await,
+            Some("id-1".into())
+        );
         assert_eq!(tracker.lookup_by_name("other").await, None);
     }
 
@@ -681,7 +715,9 @@ mod tests {
         let (tracker, _rx) = AgentTracker::new();
         tracker.register("p1", "task", None, None).await;
 
-        tracker.record_progress("p1", 5, 1200, Some("Running Bash".into())).await;
+        tracker
+            .record_progress("p1", 5, 1200, Some("Running Bash".into()))
+            .await;
 
         let task = tracker.get("p1").await.unwrap();
         assert_eq!(task.tool_use_count, 5);
@@ -693,7 +729,9 @@ mod tests {
     async fn tracker_record_progress_preserves_activity_on_none() {
         let (tracker, _rx) = AgentTracker::new();
         tracker.register("p2", "task", None, None).await;
-        tracker.record_progress("p2", 1, 100, Some("First".into())).await;
+        tracker
+            .record_progress("p2", 1, 100, Some("First".into()))
+            .await;
         // None should NOT overwrite existing activity
         tracker.record_progress("p2", 2, 200, None).await;
 
@@ -787,7 +825,10 @@ mod tests {
         let (tracker, _rx) = AgentTracker::new();
         let channels: AgentChannelMap = Arc::new(RwLock::new(HashMap::new()));
 
-        let tool = SendMessageTool { tracker, agent_channels: channels };
+        let tool = SendMessageTool {
+            tracker,
+            agent_channels: channels,
+        };
         let ctx = test_context();
         let input = json!({"to": "no-such-agent", "message": "hello"});
 
@@ -803,7 +844,10 @@ mod tests {
         tracker.complete("done-agent", "result".into(), 0, 0).await;
 
         let channels: AgentChannelMap = Arc::new(RwLock::new(HashMap::new()));
-        let tool = SendMessageTool { tracker, agent_channels: channels };
+        let tool = SendMessageTool {
+            tracker,
+            agent_channels: channels,
+        };
         let ctx = test_context();
         let input = json!({"to": "done-agent", "message": "hello"});
 
@@ -815,13 +859,18 @@ mod tests {
     #[tokio::test]
     async fn send_message_by_name() {
         let (tracker, _rx) = AgentTracker::new();
-        tracker.register("id-abc", "task", Some("my-worker"), None).await;
+        tracker
+            .register("id-abc", "task", Some("my-worker"), None)
+            .await;
 
         let (tx, mut rx) = mpsc::unbounded_channel();
         let channels: AgentChannelMap = Arc::new(RwLock::new(HashMap::new()));
         channels.write().await.insert("id-abc".into(), tx);
 
-        let tool = SendMessageTool { tracker, agent_channels: channels };
+        let tool = SendMessageTool {
+            tracker,
+            agent_channels: channels,
+        };
         let ctx = test_context();
         let input = json!({"to": "my-worker", "message": "do something"});
 
@@ -835,7 +884,10 @@ mod tests {
         let (tracker, _rx) = AgentTracker::new();
         let tokens: CancelTokenMap = Arc::new(RwLock::new(HashMap::new()));
 
-        let tool = TaskStopTool { tracker, cancel_tokens: tokens };
+        let tool = TaskStopTool {
+            tracker,
+            cancel_tokens: tokens,
+        };
         let ctx = test_context();
         let input = json!({"agent_id": "nope"});
 
@@ -851,7 +903,10 @@ mod tests {
         tracker.complete("fin", "done".into(), 0, 0).await;
 
         let tokens: CancelTokenMap = Arc::new(RwLock::new(HashMap::new()));
-        let tool = TaskStopTool { tracker, cancel_tokens: tokens };
+        let tool = TaskStopTool {
+            tracker,
+            cancel_tokens: tokens,
+        };
         let ctx = test_context();
         let input = json!({"agent_id": "fin"});
 
@@ -869,7 +924,10 @@ mod tests {
         let tokens: CancelTokenMap = Arc::new(RwLock::new(HashMap::new()));
         tokens.write().await.insert("stop-me".into(), token.clone());
 
-        let tool = TaskStopTool { tracker, cancel_tokens: tokens };
+        let tool = TaskStopTool {
+            tracker,
+            cancel_tokens: tokens,
+        };
         let ctx = test_context();
         let input = json!({"agent_id": "stop-me"});
 
@@ -883,7 +941,10 @@ mod tests {
 
     #[test]
     fn xml_escape_all_entities() {
-        assert_eq!(xml_escape("a&b<c>d\"e'f"), "a&amp;b&lt;c&gt;d&quot;e&apos;f");
+        assert_eq!(
+            xml_escape("a&b<c>d\"e'f"),
+            "a&amp;b&lt;c&gt;d&quot;e&apos;f"
+        );
     }
 
     #[test]

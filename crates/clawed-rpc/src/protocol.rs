@@ -364,7 +364,11 @@ mod tests {
 
     #[test]
     fn request_roundtrip() {
-        let req = Request::new(1, "agent.submit", Some(serde_json::json!({"text": "hello"})));
+        let req = Request::new(
+            1,
+            "agent.submit",
+            Some(serde_json::json!({"text": "hello"})),
+        );
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"jsonrpc\":\"2.0\""));
         assert!(json.contains("\"method\":\"agent.submit\""));
@@ -438,8 +442,8 @@ mod tests {
 
     #[test]
     fn rpc_error_with_data() {
-        let err = RpcError::new(-32600, "Bad request")
-            .with_data(serde_json::json!({"field": "method"}));
+        let err =
+            RpcError::new(-32600, "Bad request").with_data(serde_json::json!({"field": "method"}));
         assert!(err.data.is_some());
     }
 
@@ -448,7 +452,10 @@ mod tests {
         assert_eq!(RequestId::from(42_i32), RequestId::Number(42));
         assert_eq!(RequestId::from(42_i64), RequestId::Number(42));
         assert_eq!(RequestId::from("abc"), RequestId::String("abc".into()));
-        assert_eq!(RequestId::from("abc".to_string()), RequestId::String("abc".into()));
+        assert_eq!(
+            RequestId::from("abc".to_string()),
+            RequestId::String("abc".into())
+        );
     }
 
     #[test]

@@ -18,10 +18,7 @@ mod tests {
 
     #[test]
     fn rpc_result_err() {
-        let result: RpcResult<i32> = Err(RpcError::new(
-            error_codes::INTERNAL_ERROR,
-            "test error",
-        ));
+        let result: RpcResult<i32> = Err(RpcError::new(error_codes::INTERNAL_ERROR, "test error"));
         assert!(result.is_err());
     }
 }

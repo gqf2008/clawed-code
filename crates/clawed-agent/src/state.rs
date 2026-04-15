@@ -1,8 +1,8 @@
+use clawed_core::message::Message;
+use clawed_core::permissions::PermissionMode;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use clawed_core::permissions::PermissionMode;
-use clawed_core::message::Message;
 
 /// Per-model usage statistics.
 #[derive(Debug, Clone, Default)]
@@ -89,7 +89,14 @@ impl AppState {
             cache_read,
             cache_creation,
         );
-        self.record_model_usage(model, input_tokens, output_tokens, cache_read, cache_creation, cost);
+        self.record_model_usage(
+            model,
+            input_tokens,
+            output_tokens,
+            cache_read,
+            cache_creation,
+            cost,
+        );
     }
 
     /// Get total estimated cost across all models.
@@ -137,7 +144,9 @@ impl AppState {
             id: session_id.to_string(),
             title: clawed_core::session::title_from_messages(&self.messages),
             model: self.model.clone(),
-            cwd: self.cwd.as_ref()
+            cwd: self
+                .cwd
+                .as_ref()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default(),
             created_at,
@@ -145,16 +154,23 @@ impl AppState {
             turn_count: self.turn_count,
             input_tokens: self.total_input_tokens,
             output_tokens: self.total_output_tokens,
-            model_usage: self.model_usage.iter().map(|(k, v)| {
-                (k.clone(), SessionModelUsage {
-                    input_tokens: v.input_tokens,
-                    output_tokens: v.output_tokens,
-                    cache_read_tokens: v.cache_read_tokens,
-                    cache_creation_tokens: v.cache_creation_tokens,
-                    api_calls: v.api_calls,
-                    cost_usd: v.cost_usd,
+            model_usage: self
+                .model_usage
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        SessionModelUsage {
+                            input_tokens: v.input_tokens,
+                            output_tokens: v.output_tokens,
+                            cache_read_tokens: v.cache_read_tokens,
+                            cache_creation_tokens: v.cache_creation_tokens,
+                            api_calls: v.api_calls,
+                            cost_usd: v.cost_usd,
+                        },
+                    )
                 })
-            }).collect(),
+                .collect(),
             total_cost_usd: self.total_cost(),
             messages: self.messages.clone(),
             git_branch: None,
@@ -174,16 +190,23 @@ impl AppState {
         self.total_output_tokens = snap.output_tokens;
 
         // Restore per-model usage
-        self.model_usage = snap.model_usage.iter().map(|(k, v)| {
-            (k.clone(), ModelUsage {
-                input_tokens: v.input_tokens,
-                output_tokens: v.output_tokens,
-                cache_read_tokens: v.cache_read_tokens,
-                cache_creation_tokens: v.cache_creation_tokens,
-                api_calls: v.api_calls,
-                cost_usd: v.cost_usd,
+        self.model_usage = snap
+            .model_usage
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    ModelUsage {
+                        input_tokens: v.input_tokens,
+                        output_tokens: v.output_tokens,
+                        cache_read_tokens: v.cache_read_tokens,
+                        cache_creation_tokens: v.cache_creation_tokens,
+                        api_calls: v.api_calls,
+                        cost_usd: v.cost_usd,
+                    },
+                )
             })
-        }).collect();
+            .collect();
 
         if !snap.cwd.is_empty() {
             self.cwd = Some(std::path::PathBuf::from(&snap.cwd));
@@ -334,7 +357,9 @@ mod tests {
         state.total_output_tokens = 500;
         state.messages.push(Message::User(UserMessage {
             uuid: "u1".to_string(),
-            content: vec![ContentBlock::Text { text: "Hello Rust".to_string() }],
+            content: vec![ContentBlock::Text {
+                text: "Hello Rust".to_string(),
+            }],
         }));
         state.cwd = Some(std::path::PathBuf::from("/project"));
 
@@ -384,23 +409,29 @@ mod tests {
 
     #[test]
     fn test_last_user_prompt() {
-        use clawed_core::message::{ContentBlock, Message, UserMessage, AssistantMessage};
+        use clawed_core::message::{AssistantMessage, ContentBlock, Message, UserMessage};
 
         let mut state = AppState::default();
         state.messages = vec![
             Message::User(UserMessage {
                 uuid: "u1".to_string(),
-                content: vec![ContentBlock::Text { text: "first question".to_string() }],
+                content: vec![ContentBlock::Text {
+                    text: "first question".to_string(),
+                }],
             }),
             Message::Assistant(AssistantMessage {
                 uuid: "a1".to_string(),
-                content: vec![ContentBlock::Text { text: "answer".to_string() }],
+                content: vec![ContentBlock::Text {
+                    text: "answer".to_string(),
+                }],
                 stop_reason: None,
                 usage: None,
             }),
             Message::User(UserMessage {
                 uuid: "u2".to_string(),
-                content: vec![ContentBlock::Text { text: "second question".to_string() }],
+                content: vec![ContentBlock::Text {
+                    text: "second question".to_string(),
+                }],
             }),
         ];
 

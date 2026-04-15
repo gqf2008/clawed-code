@@ -21,14 +21,21 @@ pub struct McpAuthTool {
 
 impl McpAuthTool {
     pub fn new(server_name: String, transport_type: String) -> Self {
-        Self { server_name, transport_type }
+        Self {
+            server_name,
+            transport_type,
+        }
     }
 }
 
 #[async_trait]
 impl Tool for McpAuthTool {
-    fn name(&self) -> &'static str { "McpAuth" }
-    fn category(&self) -> ToolCategory { ToolCategory::Mcp }
+    fn name(&self) -> &'static str {
+        "McpAuth"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Mcp
+    }
 
     fn description(&self) -> &'static str {
         "Start the OAuth flow for an unauthenticated MCP server. \
@@ -48,7 +55,9 @@ impl Tool for McpAuthTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
 
     async fn call(&self, _input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
         match self.transport_type.as_str() {

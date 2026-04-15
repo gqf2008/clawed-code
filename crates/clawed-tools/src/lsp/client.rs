@@ -42,11 +42,17 @@ impl LspClient {
         debug!("Starting LSP server: {} {:?}", config.command, config.args);
 
         let mut child = cmd.spawn().with_context(|| {
-            format!("Failed to spawn LSP server '{}'. Make sure it is installed and in PATH.", config.command)
+            format!(
+                "Failed to spawn LSP server '{}'. Make sure it is installed and in PATH.",
+                config.command
+            )
         })?;
 
         let stdin = child.stdin.take().context("LSP server stdin unavailable")?;
-        let stdout = child.stdout.take().context("LSP server stdout unavailable")?;
+        let stdout = child
+            .stdout
+            .take()
+            .context("LSP server stdout unavailable")?;
         let reader = BufReader::new(stdout);
         let root_uri = path_to_uri(root_path);
 
@@ -132,47 +138,69 @@ impl LspClient {
         let content = std::fs::read_to_string(file_path)
             .with_context(|| format!("Cannot read file: {}", file_path.display()))?;
 
-        self.send_notification("textDocument/didOpen", json!({
-            "textDocument": {
-                "uri": uri,
-                "languageId": language_id,
-                "version": 1,
-                "text": content
-            }
-        }))?;
+        self.send_notification(
+            "textDocument/didOpen",
+            json!({
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": language_id,
+                    "version": 1,
+                    "text": content
+                }
+            }),
+        )?;
 
         self.opened_files.insert(uri);
         Ok(())
     }
 
     /// Go-to-definition: returns a list of (file_path, line, character) locations.
-    pub fn go_to_definition(&mut self, file_path: &Path, line: u32, character: u32) -> Result<Vec<LspLocation>> {
+    pub fn go_to_definition(
+        &mut self,
+        file_path: &Path,
+        line: u32,
+        character: u32,
+    ) -> Result<Vec<LspLocation>> {
         let uri = path_to_uri(file_path);
-        let result = self.send_request("textDocument/definition", json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character }
-        }))?;
+        let result = self.send_request(
+            "textDocument/definition",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character }
+            }),
+        )?;
         parse_locations(result)
     }
 
     /// Find references: returns list of locations where the symbol is used.
-    pub fn find_references(&mut self, file_path: &Path, line: u32, character: u32) -> Result<Vec<LspLocation>> {
+    pub fn find_references(
+        &mut self,
+        file_path: &Path,
+        line: u32,
+        character: u32,
+    ) -> Result<Vec<LspLocation>> {
         let uri = path_to_uri(file_path);
-        let result = self.send_request("textDocument/references", json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character },
-            "context": { "includeDeclaration": true }
-        }))?;
+        let result = self.send_request(
+            "textDocument/references",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character },
+                "context": { "includeDeclaration": true }
+            }),
+        )?;
         parse_locations(result)
     }
 
     /// Hover: returns hover text for the symbol at the position.
     pub fn hover(&mut self, file_path: &Path, line: u32, character: u32) -> Result<Option<String>> {
         let uri = path_to_uri(file_path);
-        let result = self.send_request("textDocument/hover", json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character }
-        }))?;
+        let result = self.send_request(
+            "textDocument/hover",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character }
+            }),
+        )?;
 
         if result.is_null() {
             return Ok(None);
@@ -182,47 +210,57 @@ impl LspClient {
         let text = if let Some(contents) = result.get("contents") {
             match contents {
                 Value::String(s) => s.clone(),
-                Value::Object(obj) => {
-                    obj.get("value")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .to_string()
-                }
-                Value::Array(arr) => {
-                    arr.iter()
-                        .filter_map(|item| {
-                            if item.is_string() {
-                                item.as_str().map(|s| s.to_string())
-                            } else {
-                                item.get("value").and_then(|v| v.as_str()).map(|s| s.to_string())
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                }
+                Value::Object(obj) => obj
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                Value::Array(arr) => arr
+                    .iter()
+                    .filter_map(|item| {
+                        if item.is_string() {
+                            item.as_str().map(|s| s.to_string())
+                        } else {
+                            item.get("value")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
                 _ => return Ok(None),
             }
         } else {
             return Ok(None);
         };
 
-        if text.is_empty() { Ok(None) } else { Ok(Some(text)) }
+        if text.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(text))
+        }
     }
 
     /// Document symbols: returns list of symbols in the file.
     pub fn document_symbols(&mut self, file_path: &Path) -> Result<Vec<LspSymbol>> {
         let uri = path_to_uri(file_path);
-        let result = self.send_request("textDocument/documentSymbol", json!({
-            "textDocument": { "uri": uri }
-        }))?;
+        let result = self.send_request(
+            "textDocument/documentSymbol",
+            json!({
+                "textDocument": { "uri": uri }
+            }),
+        )?;
         parse_symbols(result)
     }
 
     /// Workspace symbols: search for symbols matching the query.
     pub fn workspace_symbols(&mut self, query: &str) -> Result<Vec<LspSymbol>> {
-        let result = self.send_request("workspace/symbol", json!({
-            "query": query
-        }))?;
+        let result = self.send_request(
+            "workspace/symbol",
+            json!({
+                "query": query
+            }),
+        )?;
         parse_symbols(result)
     }
 
@@ -271,12 +309,14 @@ fn parse_locations(val: Value) -> Result<Vec<LspLocation>> {
     let mut locs = Vec::new();
     for item in items {
         // Handle LocationLink (targetUri + targetRange) or Location (uri + range)
-        let uri = item.get("targetUri")
+        let uri = item
+            .get("targetUri")
             .or_else(|| item.get("uri"))
             .and_then(|u| u.as_str())
             .unwrap_or_default();
 
-        let range = item.get("targetRange")
+        let range = item
+            .get("targetRange")
             .or_else(|| item.get("range"))
             .unwrap_or(&Value::Null);
 
@@ -285,27 +325,64 @@ fn parse_locations(val: Value) -> Result<Vec<LspLocation>> {
 
         locs.push(LspLocation {
             file_path: uri_to_path(uri),
-            line: start.and_then(|s| s.get("line")).and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-            character: start.and_then(|s| s.get("character")).and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-            end_line: end.and_then(|e| e.get("line")).and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-            end_character: end.and_then(|e| e.get("character")).and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            line: start
+                .and_then(|s| s.get("line"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
+            character: start
+                .and_then(|s| s.get("character"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
+            end_line: end
+                .and_then(|e| e.get("line"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
+            end_character: end
+                .and_then(|e| e.get("character"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
         });
     }
     Ok(locs)
 }
 
 const SYMBOL_KIND_NAMES: &[&str] = &[
-    "File", "Module", "Namespace", "Package", "Class", "Method", "Property", "Field",
-    "Constructor", "Enum", "Interface", "Function", "Variable", "Constant", "String",
-    "Number", "Boolean", "Array", "Object", "Key", "Null", "EnumMember", "Struct",
-    "Event", "Operator", "TypeParameter",
+    "File",
+    "Module",
+    "Namespace",
+    "Package",
+    "Class",
+    "Method",
+    "Property",
+    "Field",
+    "Constructor",
+    "Enum",
+    "Interface",
+    "Function",
+    "Variable",
+    "Constant",
+    "String",
+    "Number",
+    "Boolean",
+    "Array",
+    "Object",
+    "Key",
+    "Null",
+    "EnumMember",
+    "Struct",
+    "Event",
+    "Operator",
+    "TypeParameter",
 ];
 
 fn symbol_kind_name(kind: u64) -> &'static str {
     if kind == 0 {
         return "Unknown";
     }
-    SYMBOL_KIND_NAMES.get(kind.saturating_sub(1) as usize).copied().unwrap_or("Unknown")
+    SYMBOL_KIND_NAMES
+        .get(kind.saturating_sub(1) as usize)
+        .copied()
+        .unwrap_or("Unknown")
 }
 
 fn parse_symbols(val: Value) -> Result<Vec<LspSymbol>> {
@@ -317,27 +394,57 @@ fn parse_symbols(val: Value) -> Result<Vec<LspSymbol>> {
 
     let mut symbols = Vec::new();
     for item in items {
-        let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("?").to_string();
+        let name = item
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("?")
+            .to_string();
         let kind_num = item.get("kind").and_then(|k| k.as_u64()).unwrap_or(0);
         let kind = symbol_kind_name(kind_num).to_string();
 
         // Document symbols have 'selectionRange', workspace symbols have 'location'
         let (file_path, line, character) = if let Some(loc) = item.get("location") {
-            let uri = loc.get("uri").and_then(|u| u.as_str()).unwrap_or("").to_string();
-            let l = loc.get("range").and_then(|r| r.get("start"))
-                .and_then(|s| s.get("line")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-            let c = loc.get("range").and_then(|r| r.get("start"))
-                .and_then(|s| s.get("character")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let uri = loc
+                .get("uri")
+                .and_then(|u| u.as_str())
+                .unwrap_or("")
+                .to_string();
+            let l = loc
+                .get("range")
+                .and_then(|r| r.get("start"))
+                .and_then(|s| s.get("line"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            let c = loc
+                .get("range")
+                .and_then(|r| r.get("start"))
+                .and_then(|s| s.get("character"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
             (Some(uri_to_path(&uri)), l, c)
         } else if let Some(sel) = item.get("selectionRange") {
-            let l = sel.get("start").and_then(|s| s.get("line")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-            let c = sel.get("start").and_then(|s| s.get("character")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let l = sel
+                .get("start")
+                .and_then(|s| s.get("line"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            let c = sel
+                .get("start")
+                .and_then(|s| s.get("character"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
             (None, l, c)
         } else {
             (None, 0, 0)
         };
 
-        symbols.push(LspSymbol { name, kind, file_path, line, character });
+        symbols.push(LspSymbol {
+            name,
+            kind,
+            file_path,
+            line,
+            character,
+        });
     }
     Ok(symbols)
 }
@@ -386,10 +493,14 @@ fn uri_to_path(uri: &str) -> String {
 }
 
 /// Spawn an LSP client in a blocking thread with a timeout.
-pub async fn start_lsp_client_async(config: LspServerConfig, root_path: std::path::PathBuf) -> Result<LspClient> {
-    timeout(LSP_TIMEOUT, tokio::task::spawn_blocking(move || {
-        LspClient::start(&config, &root_path)
-    }))
+pub async fn start_lsp_client_async(
+    config: LspServerConfig,
+    root_path: std::path::PathBuf,
+) -> Result<LspClient> {
+    timeout(
+        LSP_TIMEOUT,
+        tokio::task::spawn_blocking(move || LspClient::start(&config, &root_path)),
+    )
     .await
     .context("LSP server initialization timed out")?
     .context("LSP server thread failed")?

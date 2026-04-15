@@ -87,7 +87,10 @@ mod tests {
 
     #[test]
     fn sanitize_replaces_non_alnum() {
-        assert_eq!(sanitize_path_key("/home/user/project"), "-home-user-project");
+        assert_eq!(
+            sanitize_path_key("/home/user/project"),
+            "-home-user-project"
+        );
         // Backslash is a single non-alnum char → single dash
         assert_eq!(sanitize_path_key("simple"), "simple");
     }

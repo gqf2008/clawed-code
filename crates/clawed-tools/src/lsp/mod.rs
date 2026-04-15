@@ -29,13 +29,14 @@ async fn run_rg(cwd: &Path, args: &[&str]) -> Result<String, ToolResult> {
         tokio::process::Command::new("rg")
             .args(args)
             .current_dir(cwd)
-            .output()
-    ).await;
+            .output(),
+    )
+    .await;
 
     match output {
         Ok(Ok(out)) => Ok(String::from_utf8_lossy(&out.stdout).to_string()),
         Ok(Err(_)) => Err(ToolResult::error(
-            "ripgrep (rg) not found. Install ripgrep for code intelligence."
+            "ripgrep (rg) not found. Install ripgrep for code intelligence.",
         )),
         Err(_) => Err(ToolResult::error(format!(
             "Search timed out after {}s. Try a more specific query.",
@@ -46,8 +47,12 @@ async fn run_rg(cwd: &Path, args: &[&str]) -> Result<String, ToolResult> {
 
 #[async_trait]
 impl Tool for LspTool {
-    fn name(&self) -> &'static str { "LSP" }
-    fn category(&self) -> ToolCategory { ToolCategory::Code }
+    fn name(&self) -> &'static str {
+        "LSP"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Code
+    }
 
     fn description(&self) -> &'static str {
         "Interact with language servers for code intelligence. \
@@ -85,18 +90,25 @@ impl Tool for LspTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { true }
+    fn is_read_only(&self) -> bool {
+        true
+    }
 
     async fn call(&self, input: Value, ctx: &ToolContext) -> anyhow::Result<ToolResult> {
         let cwd = &ctx.cwd;
-        let operation = input["operation"].as_str()
+        let operation = input["operation"]
+            .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'operation' field."))?;
-        let file_path = input["filePath"].as_str()
+        let file_path = input["filePath"]
+            .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'filePath' field."))?;
 
         let abs_path = resolve_path(cwd, file_path);
         if !abs_path.exists() {
-            return Ok(ToolResult::error(format!("File not found: {}", abs_path.display())));
+            return Ok(ToolResult::error(format!(
+                "File not found: {}",
+                abs_path.display()
+            )));
         }
 
         let line = input["line"].as_u64().unwrap_or(1) as usize;
@@ -111,13 +123,24 @@ impl Tool for LspTool {
             let query = input["query"].as_str().unwrap_or("").to_string();
             let server_cfg = server_cfg.clone();
             let result = tokio::task::spawn_blocking(move || {
-                try_lsp_client(server_cfg, &op, &path_clone, &cwd_clone, line, character, &query)
-            }).await;
+                try_lsp_client(
+                    server_cfg,
+                    &op,
+                    &path_clone,
+                    &cwd_clone,
+                    line,
+                    character,
+                    &query,
+                )
+            })
+            .await;
 
             match result {
                 Ok(Ok(tr)) => return Ok(tr),
                 Ok(Err(e)) => {
-                    tracing::warn!("LSP client failed for {operation}, falling back to ripgrep: {e:#}");
+                    tracing::warn!(
+                        "LSP client failed for {operation}, falling back to ripgrep: {e:#}"
+                    );
                 }
                 Err(e) => {
                     tracing::warn!("LSP task panicked, falling back to ripgrep: {e}");
@@ -178,7 +201,8 @@ fn try_lsp_client(
             if locs.is_empty() {
                 ToolResult::text("No definition found.")
             } else {
-                let lines: Vec<String> = locs.iter()
+                let lines: Vec<String> = locs
+                    .iter()
                     .map(|l| format!("{}:{}", l.file_path, l.line + 1))
                     .collect();
                 ToolResult::text(format!("Definition(s):\n{}", lines.join("\n")))
@@ -189,27 +213,35 @@ fn try_lsp_client(
             if locs.is_empty() {
                 ToolResult::text("No references found.")
             } else {
-                let lines: Vec<String> = locs.iter()
+                let lines: Vec<String> = locs
+                    .iter()
                     .map(|l| format!("{}:{}", l.file_path, l.line + 1))
                     .collect();
-                ToolResult::text(format!("References ({}):\n{}", locs.len(), lines.join("\n")))
+                ToolResult::text(format!(
+                    "References ({}):\n{}",
+                    locs.len(),
+                    lines.join("\n")
+                ))
             }
         }
-        "hover" => {
-            match lsp.hover(abs_path, lsp_line, lsp_char)? {
-                Some(text) => ToolResult::text(format!("Hover info:\n{text}")),
-                None => ToolResult::text("No hover information available."),
-            }
-        }
+        "hover" => match lsp.hover(abs_path, lsp_line, lsp_char)? {
+            Some(text) => ToolResult::text(format!("Hover info:\n{text}")),
+            None => ToolResult::text("No hover information available."),
+        },
         "documentSymbol" => {
             let syms = lsp.document_symbols(abs_path)?;
             if syms.is_empty() {
                 ToolResult::text("No symbols found.")
             } else {
-                let lines: Vec<String> = syms.iter()
+                let lines: Vec<String> = syms
+                    .iter()
                     .map(|s| format!("  L{}: {} {}", s.line + 1, s.kind, s.name))
                     .collect();
-                ToolResult::text(format!("Symbols in {}:\n{}", abs_path.display(), lines.join("\n")))
+                ToolResult::text(format!(
+                    "Symbols in {}:\n{}",
+                    abs_path.display(),
+                    lines.join("\n")
+                ))
             }
         }
         "workspaceSymbol" => {
@@ -217,13 +249,17 @@ fn try_lsp_client(
             if syms.is_empty() {
                 ToolResult::text(format!("No symbols matching '{query}'."))
             } else {
-                let lines: Vec<String> = syms.iter()
+                let lines: Vec<String> = syms
+                    .iter()
                     .map(|s| {
                         let loc = s.file_path.as_deref().unwrap_or("?");
                         format!("  {} {} ({}:{})", s.kind, s.name, loc, s.line + 1)
                     })
                     .collect();
-                ToolResult::text(format!("Workspace symbols matching '{query}':\n{}", lines.join("\n")))
+                ToolResult::text(format!(
+                    "Workspace symbols matching '{query}':\n{}",
+                    lines.join("\n")
+                ))
             }
         }
         other => return Err(anyhow::anyhow!("Unsupported operation for LSP: {other}")),
@@ -235,13 +271,19 @@ fn try_lsp_client(
 
 fn resolve_path(cwd: &Path, file_path: &str) -> PathBuf {
     let p = Path::new(file_path);
-    if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) }
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        cwd.join(p)
+    }
 }
 
 fn get_word_at_position(path: &Path, line: usize, character: usize) -> anyhow::Result<String> {
     let content = std::fs::read_to_string(path)?;
 
-    let target_line = content.lines().nth(line.saturating_sub(1))
+    let target_line = content
+        .lines()
+        .nth(line.saturating_sub(1))
         .ok_or_else(|| anyhow::anyhow!("Line {line} out of range"))?;
 
     let col = character.saturating_sub(1).min(target_line.len());
@@ -292,32 +334,73 @@ async fn extract_document_symbols(path: &Path) -> anyhow::Result<ToolResult> {
     if symbols.is_empty() {
         Ok(ToolResult::text("No symbols found in file."))
     } else {
-        Ok(ToolResult::text(format!("Symbols in {}:\n{}", path.display(), symbols.join("\n"))))
+        Ok(ToolResult::text(format!(
+            "Symbols in {}:\n{}",
+            path.display(),
+            symbols.join("\n")
+        )))
     }
 }
 
 fn extract_rust_symbol(line: &str) -> Option<(&'static str, String)> {
-    if line.starts_with("pub fn ") || line.starts_with("fn ") || line.starts_with("pub(crate) fn ") {
-        let name = line.split("fn ").nth(1)?.split('(').next()?.trim().to_string();
+    if line.starts_with("pub fn ") || line.starts_with("fn ") || line.starts_with("pub(crate) fn ")
+    {
+        let name = line
+            .split("fn ")
+            .nth(1)?
+            .split('(')
+            .next()?
+            .trim()
+            .to_string();
         Some(("fn", name))
     } else if line.starts_with("pub struct ") || line.starts_with("struct ") {
-        let name = line.split("struct ").nth(1)?.split([' ', '{', '(']).next()?.trim().to_string();
+        let name = line
+            .split("struct ")
+            .nth(1)?
+            .split([' ', '{', '('])
+            .next()?
+            .trim()
+            .to_string();
         Some(("struct", name))
     } else if line.starts_with("pub enum ") || line.starts_with("enum ") {
-        let name = line.split("enum ").nth(1)?.split([' ', '{']).next()?.trim().to_string();
+        let name = line
+            .split("enum ")
+            .nth(1)?
+            .split([' ', '{'])
+            .next()?
+            .trim()
+            .to_string();
         Some(("enum", name))
     } else if line.starts_with("pub trait ") || line.starts_with("trait ") {
-        let name = line.split("trait ").nth(1)?.split([' ', '{', ':']).next()?.trim().to_string();
+        let name = line
+            .split("trait ")
+            .nth(1)?
+            .split([' ', '{', ':'])
+            .next()?
+            .trim()
+            .to_string();
         Some(("trait", name))
     } else if line.starts_with("impl ") {
         let rest = line.strip_prefix("impl ")?;
         let name = rest.split([' ', '{']).next()?.trim().to_string();
         Some(("impl", name))
     } else if line.starts_with("pub const ") || line.starts_with("const ") {
-        let name = line.split("const ").nth(1)?.split([' ', ':']).next()?.trim().to_string();
+        let name = line
+            .split("const ")
+            .nth(1)?
+            .split([' ', ':'])
+            .next()?
+            .trim()
+            .to_string();
         Some(("const", name))
     } else if line.starts_with("pub type ") || line.starts_with("type ") {
-        let name = line.split("type ").nth(1)?.split([' ', '=']).next()?.trim().to_string();
+        let name = line
+            .split("type ")
+            .nth(1)?
+            .split([' ', '='])
+            .next()?
+            .trim()
+            .to_string();
         Some(("type", name))
     } else {
         None
@@ -331,24 +414,56 @@ fn extract_ts_symbol(line: &str) -> Option<(&'static str, String)> {
     let stripped = stripped.strip_prefix("declare ").unwrap_or(stripped);
 
     if stripped.starts_with("function ") {
-        let name = stripped.strip_prefix("function ")?.split(['(', '<']).next()?.trim().to_string();
+        let name = stripped
+            .strip_prefix("function ")?
+            .split(['(', '<'])
+            .next()?
+            .trim()
+            .to_string();
         Some(("function", name))
     } else if stripped.starts_with("class ") {
-        let name = stripped.strip_prefix("class ")?.split([' ', '{', '<']).next()?.trim().to_string();
+        let name = stripped
+            .strip_prefix("class ")?
+            .split([' ', '{', '<'])
+            .next()?
+            .trim()
+            .to_string();
         Some(("class", name))
     } else if stripped.starts_with("interface ") {
-        let name = stripped.strip_prefix("interface ")?.split([' ', '{', '<']).next()?.trim().to_string();
+        let name = stripped
+            .strip_prefix("interface ")?
+            .split([' ', '{', '<'])
+            .next()?
+            .trim()
+            .to_string();
         Some(("interface", name))
     } else if stripped.starts_with("type ") {
-        let name = stripped.strip_prefix("type ")?.split([' ', '=', '<']).next()?.trim().to_string();
+        let name = stripped
+            .strip_prefix("type ")?
+            .split([' ', '=', '<'])
+            .next()?
+            .trim()
+            .to_string();
         Some(("type", name))
     } else if stripped.starts_with("enum ") {
-        let name = stripped.strip_prefix("enum ")?.split([' ', '{']).next()?.trim().to_string();
+        let name = stripped
+            .strip_prefix("enum ")?
+            .split([' ', '{'])
+            .next()?
+            .trim()
+            .to_string();
         Some(("enum", name))
-    } else if stripped.starts_with("const ") || stripped.starts_with("let ") || stripped.starts_with("var ") {
+    } else if stripped.starts_with("const ")
+        || stripped.starts_with("let ")
+        || stripped.starts_with("var ")
+    {
         let rest = stripped.split_once(' ')?.1;
         let name = rest.split([' ', ':', '=']).next()?.trim().to_string();
-        if name.len() > 1 { Some(("variable", name)) } else { None }
+        if name.len() > 1 {
+            Some(("variable", name))
+        } else {
+            None
+        }
     } else {
         None
     }
@@ -356,10 +471,21 @@ fn extract_ts_symbol(line: &str) -> Option<(&'static str, String)> {
 
 fn extract_py_symbol(line: &str) -> Option<(&'static str, String)> {
     if line.starts_with("def ") || line.starts_with("async def ") {
-        let name = line.split("def ").nth(1)?.split('(').next()?.trim().to_string();
+        let name = line
+            .split("def ")
+            .nth(1)?
+            .split('(')
+            .next()?
+            .trim()
+            .to_string();
         Some(("def", name))
     } else if line.starts_with("class ") {
-        let name = line.strip_prefix("class ")?.split(['(', ':']).next()?.trim().to_string();
+        let name = line
+            .strip_prefix("class ")?
+            .split(['(', ':'])
+            .next()?
+            .trim()
+            .to_string();
         Some(("class", name))
     } else {
         None
@@ -371,7 +497,13 @@ fn extract_go_symbol(line: &str) -> Option<(&'static str, String)> {
         let rest = line.strip_prefix("func ")?;
         let name = if rest.starts_with('(') {
             // Method: func (r *Receiver) Name(...)
-            rest.split(')').nth(1)?.trim().split('(').next()?.trim().to_string()
+            rest.split(')')
+                .nth(1)?
+                .trim()
+                .split('(')
+                .next()?
+                .trim()
+                .to_string()
         } else {
             rest.split('(').next()?.trim().to_string()
         };
@@ -388,17 +520,34 @@ fn extract_go_symbol(line: &str) -> Option<(&'static str, String)> {
 fn extract_java_symbol(line: &str) -> Option<(&'static str, String)> {
     // Remove access modifiers
     let stripped = line
-        .replace("public ", "").replace("private ", "").replace("protected ", "")
-        .replace("static ", "").replace("final ", "").replace("abstract ", "");
+        .replace("public ", "")
+        .replace("private ", "")
+        .replace("protected ", "")
+        .replace("static ", "")
+        .replace("final ", "")
+        .replace("abstract ", "");
     let stripped = stripped.trim();
 
     if stripped.starts_with("class ") {
-        let name = stripped.strip_prefix("class ")?.split([' ', '{', '<']).next()?.trim().to_string();
+        let name = stripped
+            .strip_prefix("class ")?
+            .split([' ', '{', '<'])
+            .next()?
+            .trim()
+            .to_string();
         Some(("class", name))
     } else if stripped.starts_with("interface ") {
-        let name = stripped.strip_prefix("interface ")?.split([' ', '{', '<']).next()?.trim().to_string();
+        let name = stripped
+            .strip_prefix("interface ")?
+            .split([' ', '{', '<'])
+            .next()?
+            .trim()
+            .to_string();
         Some(("interface", name))
-    } else if stripped.contains('(') && !stripped.starts_with("if ") && !stripped.starts_with("for ") {
+    } else if stripped.contains('(')
+        && !stripped.starts_with("if ")
+        && !stripped.starts_with("for ")
+    {
         // Likely a method
         let before_paren = stripped.split('(').next()?;
         let parts: Vec<&str> = before_paren.split_whitespace().collect();
@@ -415,7 +564,13 @@ fn extract_java_symbol(line: &str) -> Option<(&'static str, String)> {
 
 fn extract_generic_symbol(line: &str) -> Option<(&'static str, String)> {
     if line.starts_with("function ") || line.starts_with("def ") || line.starts_with("fn ") {
-        let word = line.split_whitespace().nth(1)?.split('(').next()?.trim().to_string();
+        let word = line
+            .split_whitespace()
+            .nth(1)?
+            .split('(')
+            .next()?
+            .trim()
+            .to_string();
         Some(("function", word))
     } else {
         None
@@ -425,32 +580,70 @@ fn extract_generic_symbol(line: &str) -> Option<(&'static str, String)> {
 /// Search workspace symbols via ripgrep.
 async fn search_workspace_symbols(cwd: &Path, query: &str) -> anyhow::Result<ToolResult> {
     if query.is_empty() {
-        return Ok(ToolResult::error("'query' is required for workspaceSymbol operation."));
+        return Ok(ToolResult::error(
+            "'query' is required for workspaceSymbol operation.",
+        ));
     }
 
-    let pattern = format!(r"(fn|function|def|class|struct|enum|trait|interface|type)\s+{}", regex::escape(query));
-    let result = match run_rg(cwd, &["--no-heading", "--line-number", "--max-count", "30", "-e", &pattern]).await {
+    let pattern = format!(
+        r"(fn|function|def|class|struct|enum|trait|interface|type)\s+{}",
+        regex::escape(query)
+    );
+    let result = match run_rg(
+        cwd,
+        &[
+            "--no-heading",
+            "--line-number",
+            "--max-count",
+            "30",
+            "-e",
+            &pattern,
+        ],
+    )
+    .await
+    {
         Ok(text) => text,
         Err(e) => return Ok(e),
     };
 
     if result.is_empty() {
-        Ok(ToolResult::text(format!("No symbols matching '{query}' found.")))
+        Ok(ToolResult::text(format!(
+            "No symbols matching '{query}' found."
+        )))
     } else {
-        Ok(ToolResult::text(format!("Symbols matching '{}':\n{}", query, result.trim())))
+        Ok(ToolResult::text(format!(
+            "Symbols matching '{}':\n{}",
+            query,
+            result.trim()
+        )))
     }
 }
 
 /// Find definition of a symbol using ripgrep.
 async fn find_definition(cwd: &Path, word: &str) -> anyhow::Result<ToolResult> {
     let patterns = [
-        format!(r"(fn|function|def|class|struct|enum|trait|interface|type)\s+{}\b", regex::escape(word)),
+        format!(
+            r"(fn|function|def|class|struct|enum|trait|interface|type)\s+{}\b",
+            regex::escape(word)
+        ),
         format!(r"(const|let|var)\s+{}\s*[:=]", regex::escape(word)),
     ];
 
     let mut results = Vec::new();
     for pattern in &patterns {
-        let text = match run_rg(cwd, &["--no-heading", "--line-number", "--max-count", "10", "-e", pattern]).await {
+        let text = match run_rg(
+            cwd,
+            &[
+                "--no-heading",
+                "--line-number",
+                "--max-count",
+                "10",
+                "-e",
+                pattern,
+            ],
+        )
+        .await
+        {
             Ok(t) => t,
             Err(e) => return Ok(e),
         };
@@ -462,25 +655,50 @@ async fn find_definition(cwd: &Path, word: &str) -> anyhow::Result<ToolResult> {
     }
 
     if results.is_empty() {
-        Ok(ToolResult::text(format!("No definition found for '{word}'.")))
+        Ok(ToolResult::text(format!(
+            "No definition found for '{word}'."
+        )))
     } else {
         results.truncate(20);
-        Ok(ToolResult::text(format!("Possible definitions of '{}':\n{}", word, results.join("\n"))))
+        Ok(ToolResult::text(format!(
+            "Possible definitions of '{}':\n{}",
+            word,
+            results.join("\n")
+        )))
     }
 }
 
 /// Find references to a symbol using ripgrep.
 async fn find_references(cwd: &Path, word: &str) -> anyhow::Result<ToolResult> {
-    let text = match run_rg(cwd, &["--no-heading", "--line-number", "--max-count", "50", "-w", word]).await {
+    let text = match run_rg(
+        cwd,
+        &[
+            "--no-heading",
+            "--line-number",
+            "--max-count",
+            "50",
+            "-w",
+            word,
+        ],
+    )
+    .await
+    {
         Ok(t) => t,
         Err(e) => return Ok(e),
     };
     let count = text.lines().count();
 
     if count == 0 {
-        Ok(ToolResult::text(format!("No references found for '{word}'.")))
+        Ok(ToolResult::text(format!(
+            "No references found for '{word}'."
+        )))
     } else {
-        Ok(ToolResult::text(format!("References to '{}' ({} found):\n{}", word, count, text.trim())))
+        Ok(ToolResult::text(format!(
+            "References to '{}' ({} found):\n{}",
+            word,
+            count,
+            text.trim()
+        )))
     }
 }
 
@@ -500,7 +718,19 @@ async fn find_implementations(cwd: &Path, word: &str) -> anyhow::Result<ToolResu
 
     let mut results = Vec::new();
     for pattern in &patterns {
-        let text = match run_rg(cwd, &["--no-heading", "--line-number", "--max-count", "30", "-e", pattern]).await {
+        let text = match run_rg(
+            cwd,
+            &[
+                "--no-heading",
+                "--line-number",
+                "--max-count",
+                "30",
+                "-e",
+                pattern,
+            ],
+        )
+        .await
+        {
             Ok(t) => t,
             Err(e) => return Ok(e),
         };
@@ -512,7 +742,9 @@ async fn find_implementations(cwd: &Path, word: &str) -> anyhow::Result<ToolResu
     }
 
     if results.is_empty() {
-        Ok(ToolResult::text(format!("No implementations found for '{word}'.")))
+        Ok(ToolResult::text(format!(
+            "No implementations found for '{word}'."
+        )))
     } else {
         Ok(ToolResult::text(format!(
             "Implementations of '{}' ({} found):\n{}",
@@ -541,7 +773,10 @@ fn get_hover_info(path: &Path, line: usize, word: &str) -> anyhow::Result<ToolRe
 
     Ok(ToolResult::text(format!(
         "Hover info for '{}' at {}:{}:\n{}",
-        word, path.display(), line, context_lines.join("\n")
+        word,
+        path.display(),
+        line,
+        context_lines.join("\n")
     )))
 }
 
@@ -579,22 +814,38 @@ mod tests {
 
     #[test]
     fn resolve_absolute() {
-        let cwd = Path::new(if cfg!(windows) { "C:\\projects" } else { "/home/user/projects" });
-        let abs = if cfg!(windows) { "C:\\tmp\\file.rs" } else { "/tmp/file.rs" };
+        let cwd = Path::new(if cfg!(windows) {
+            "C:\\projects"
+        } else {
+            "/home/user/projects"
+        });
+        let abs = if cfg!(windows) {
+            "C:\\tmp\\file.rs"
+        } else {
+            "/tmp/file.rs"
+        };
         let result = resolve_path(cwd, abs);
         assert_eq!(result, PathBuf::from(abs));
     }
 
     #[test]
     fn resolve_relative() {
-        let cwd = Path::new(if cfg!(windows) { "C:\\projects" } else { "/home/user/projects" });
+        let cwd = Path::new(if cfg!(windows) {
+            "C:\\projects"
+        } else {
+            "/home/user/projects"
+        });
         let result = resolve_path(cwd, "src/main.rs");
         assert_eq!(result, cwd.join("src/main.rs"));
     }
 
     #[test]
     fn resolve_relative_with_dots() {
-        let cwd = Path::new(if cfg!(windows) { "C:\\projects" } else { "/home/user/projects" });
+        let cwd = Path::new(if cfg!(windows) {
+            "C:\\projects"
+        } else {
+            "/home/user/projects"
+        });
         let result = resolve_path(cwd, "../other/file.rs");
         assert_eq!(result, cwd.join("../other/file.rs"));
     }

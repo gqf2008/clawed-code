@@ -71,8 +71,7 @@ fn wrap_ranges(text: &str, opts: Options<'_>) -> Vec<Range<usize>> {
             }
             std::borrow::Cow::Owned(slice) => {
                 let mapped = map_owned_line(text, cursor, &slice);
-                let trailing_spaces =
-                    text[mapped.end..].chars().take_while(|c| *c == ' ').count();
+                let trailing_spaces = text[mapped.end..].chars().take_while(|c| *c == ' ').count();
                 let range_end = (mapped.end + trailing_spaces + 1).min(text.len());
                 lines.push(mapped.start..range_end);
                 cursor = mapped.end + trailing_spaces;
@@ -232,16 +231,32 @@ impl TextArea {
         }
         match event {
             // C0 control chars without CONTROL modifier (some terminals)
-            KeyEvent { code: KeyCode::Char('\u{0002}'), modifiers: KeyModifiers::NONE, .. } => {
+            KeyEvent {
+                code: KeyCode::Char('\u{0002}'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
                 self.move_cursor_left();
             }
-            KeyEvent { code: KeyCode::Char('\u{0006}'), modifiers: KeyModifiers::NONE, .. } => {
+            KeyEvent {
+                code: KeyCode::Char('\u{0006}'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
                 self.move_cursor_right();
             }
-            KeyEvent { code: KeyCode::Char('\u{0010}'), modifiers: KeyModifiers::NONE, .. } => {
+            KeyEvent {
+                code: KeyCode::Char('\u{0010}'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
                 self.move_cursor_up();
             }
-            KeyEvent { code: KeyCode::Char('\u{000e}'), modifiers: KeyModifiers::NONE, .. } => {
+            KeyEvent {
+                code: KeyCode::Char('\u{000e}'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
                 self.move_cursor_down();
             }
 
@@ -351,50 +366,100 @@ impl TextArea {
             } => self.yank(),
 
             // Arrow keys
-            KeyEvent { code: KeyCode::Left, modifiers: KeyModifiers::NONE, .. } => {
+            KeyEvent {
+                code: KeyCode::Left,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
                 self.move_cursor_left();
             }
-            KeyEvent { code: KeyCode::Right, modifiers: KeyModifiers::NONE, .. } => {
+            KeyEvent {
+                code: KeyCode::Right,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
                 self.move_cursor_right();
             }
-            KeyEvent { code: KeyCode::Char('b'), modifiers: KeyModifiers::CONTROL, .. } => {
+            KeyEvent {
+                code: KeyCode::Char('b'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => {
                 self.move_cursor_left();
             }
-            KeyEvent { code: KeyCode::Char('f'), modifiers: KeyModifiers::CONTROL, .. } => {
+            KeyEvent {
+                code: KeyCode::Char('f'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => {
                 self.move_cursor_right();
             }
-            KeyEvent { code: KeyCode::Char('p'), modifiers: KeyModifiers::CONTROL, .. } => {
+            KeyEvent {
+                code: KeyCode::Char('p'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => {
                 self.move_cursor_up();
             }
-            KeyEvent { code: KeyCode::Char('n'), modifiers: KeyModifiers::CONTROL, .. } => {
+            KeyEvent {
+                code: KeyCode::Char('n'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => {
                 self.move_cursor_down();
             }
 
             // Alt+Arrow / Ctrl+Arrow → word movement
-            KeyEvent { code: KeyCode::Left, modifiers: KeyModifiers::ALT | KeyModifiers::CONTROL, .. } => {
+            KeyEvent {
+                code: KeyCode::Left,
+                modifiers: KeyModifiers::ALT | KeyModifiers::CONTROL,
+                ..
+            } => {
                 self.set_cursor(self.beginning_of_previous_word());
             }
-            KeyEvent { code: KeyCode::Right, modifiers: KeyModifiers::ALT | KeyModifiers::CONTROL, .. } => {
+            KeyEvent {
+                code: KeyCode::Right,
+                modifiers: KeyModifiers::ALT | KeyModifiers::CONTROL,
+                ..
+            } => {
                 self.set_cursor(self.end_of_next_word());
             }
 
             // Up / Down
-            KeyEvent { code: KeyCode::Up, .. } => self.move_cursor_up(),
-            KeyEvent { code: KeyCode::Down, .. } => self.move_cursor_down(),
+            KeyEvent {
+                code: KeyCode::Up, ..
+            } => self.move_cursor_up(),
+            KeyEvent {
+                code: KeyCode::Down,
+                ..
+            } => self.move_cursor_down(),
 
             // Home / Ctrl+A → beginning of line
-            KeyEvent { code: KeyCode::Home, .. } => {
+            KeyEvent {
+                code: KeyCode::Home,
+                ..
+            } => {
                 self.move_cursor_to_beginning_of_line(false);
             }
-            KeyEvent { code: KeyCode::Char('a'), modifiers: KeyModifiers::CONTROL, .. } => {
+            KeyEvent {
+                code: KeyCode::Char('a'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => {
                 self.move_cursor_to_beginning_of_line(true);
             }
 
             // End / Ctrl+E → end of line
-            KeyEvent { code: KeyCode::End, .. } => {
+            KeyEvent {
+                code: KeyCode::End, ..
+            } => {
                 self.move_cursor_to_end_of_line(false);
             }
-            KeyEvent { code: KeyCode::Char('e'), modifiers: KeyModifiers::CONTROL, .. } => {
+            KeyEvent {
+                code: KeyCode::Char('e'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => {
                 self.move_cursor_to_end_of_line(true);
             }
 
@@ -463,7 +528,11 @@ impl TextArea {
     pub fn kill_to_beginning_of_line(&mut self) {
         let bol = self.beginning_of_current_line();
         let range = if self.cursor_pos == bol {
-            if bol > 0 { Some(bol - 1..bol) } else { None }
+            if bol > 0 {
+                Some(bol - 1..bol)
+            } else {
+                None
+            }
         } else {
             Some(bol..self.cursor_pos)
         };
@@ -630,8 +699,7 @@ impl TextArea {
     pub fn is_at_first_line(&self) -> bool {
         let cache_ref = self.wrap_cache.borrow();
         if let Some(cache) = cache_ref.as_ref() {
-            Self::line_index_for(&cache.lines, self.cursor_pos)
-                .is_none_or(|idx| idx == 0)
+            Self::line_index_for(&cache.lines, self.cursor_pos).is_none_or(|idx| idx == 0)
         } else {
             !self.text[..self.cursor_pos].contains('\n')
         }
@@ -642,8 +710,7 @@ impl TextArea {
         let cache_ref = self.wrap_cache.borrow();
         if let Some(cache) = cache_ref.as_ref() {
             let lines = &cache.lines;
-            Self::line_index_for(lines, self.cursor_pos)
-                .is_none_or(|idx| idx + 1 >= lines.len())
+            Self::line_index_for(lines, self.cursor_pos).is_none_or(|idx| idx + 1 >= lines.len())
         } else {
             !self.text[self.cursor_pos..].contains('\n')
         }
@@ -697,7 +764,11 @@ impl TextArea {
 
     fn line_index_for(lines: &[Range<usize>], pos: usize) -> Option<usize> {
         let idx = lines.partition_point(|r| r.start <= pos);
-        if idx == 0 { None } else { Some(idx - 1) }
+        if idx == 0 {
+            None
+        } else {
+            Some(idx - 1)
+        }
     }
 
     fn move_to_display_col(&mut self, line_start: usize, line_end: usize, target_col: usize) {
@@ -823,8 +894,7 @@ impl TextArea {
             if needs_recalc {
                 let lines = wrap_ranges(
                     &self.text,
-                    Options::new(width as usize)
-                        .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
+                    Options::new(width as usize).wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
                 );
                 *cache = Some(WrapCache { width, lines });
             }
@@ -853,7 +923,12 @@ impl Widget for &TextArea {
             let y = area.y + row as u16;
             let line_end = r.end.saturating_sub(1).min(self.text.len());
             let line_start = r.start.min(line_end);
-            buf.set_string(area.x, y, &self.text[line_start..line_end], Style::default());
+            buf.set_string(
+                area.x,
+                y,
+                &self.text[line_start..line_end],
+                Style::default(),
+            );
         }
     }
 }

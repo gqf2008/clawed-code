@@ -223,7 +223,9 @@ pub fn section_tool_guidance(enabled_tools: &[String]) -> String {
 /// Dynamic: language preference instruction.
 pub fn section_language(preference: Option<&str>) -> Option<String> {
     let lang = preference?;
-    if lang.is_empty() { return None; }
+    if lang.is_empty() {
+        return None;
+    }
     Some(format!(
         "\n# Language\n\
          Always respond in {lang}. Use {lang} for all explanations, comments, and \
@@ -233,7 +235,10 @@ pub fn section_language(preference: Option<&str>) -> Option<String> {
 }
 
 /// Dynamic: output style override section.
-pub fn section_output_style(style_name: Option<&str>, style_prompt: Option<&str>) -> Option<String> {
+pub fn section_output_style(
+    style_name: Option<&str>,
+    style_prompt: Option<&str>,
+) -> Option<String> {
     let name = style_name?;
     let prompt = style_prompt?;
     Some(format!("\n# Output Style: {name}\n{prompt}"))
@@ -241,8 +246,11 @@ pub fn section_output_style(style_name: Option<&str>, style_prompt: Option<&str>
 
 /// Dynamic: MCP server instructions.
 pub fn section_mcp_instructions(mcp_instructions: &[(String, String)]) -> Option<String> {
-    if mcp_instructions.is_empty() { return None; }
-    let blocks: Vec<String> = mcp_instructions.iter()
+    if mcp_instructions.is_empty() {
+        return None;
+    }
+    let blocks: Vec<String> = mcp_instructions
+        .iter()
         .map(|(name, instructions)| format!("## {name}\n{instructions}"))
         .collect();
     Some(format!(
@@ -272,7 +280,9 @@ pub fn section_scratchpad(scratchpad_dir: Option<&str>) -> Option<String> {
 
 /// Dynamic: token budget guidance (when a spend limit is set).
 pub fn section_token_budget(budget: u64) -> Option<String> {
-    if budget == 0 { return None; }
+    if budget == 0 {
+        return None;
+    }
     Some(format!(
         "\n# Token Budget\n\n\
          You have a token budget of {} tokens for this task. Be mindful of token usage:\n\
@@ -314,7 +324,8 @@ When working on tasks autonomously:
 ///
 /// Aligned with TS `memdir.ts:buildMemoryLines()` + `memoryTypes.ts`.
 pub fn section_memory_behavioral(memory_dir: &str) -> String {
-    format!(r#"
+    format!(
+        r#"
 # Auto Memory
 
 You have a persistent, file-based memory system at `{memory_dir}`. This directory already exists — write to it directly with the Write tool (do not run mkdir or check for its existence).
@@ -420,7 +431,8 @@ A memory that names a specific function, file, or flag is a claim that it existe
 ## Memory and other forms of persistence
 Memory is one of several persistence mechanisms available to you. The distinction is that memory can be recalled in future conversations and should not be used for persisting information only useful within the current conversation.
 - When to use or update a plan instead of memory: If you are about to start a non-trivial implementation task and would like to reach alignment with the user, use a Plan rather than saving to memory.
-- When to use tasks instead of memory: When you need to break your work into discrete steps or keep track of your progress, use tasks instead of saving to memory."#)
+- When to use tasks instead of memory: When you need to break your work into discrete steps or keep track of your progress, use tasks instead of saving to memory."#
+    )
 }
 
 /// Dynamic: file editing best practices.

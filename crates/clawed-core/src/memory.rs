@@ -114,7 +114,9 @@ fn parse_frontmatter(text: &str) -> (Vec<String>, &str) {
     let fm = &rest[..end];
     let body_start = end + 4; // skip `\n---`
     let body = if body_start <= rest.len() {
-        rest[body_start..].trim_start_matches('\n').trim_start_matches('\r')
+        rest[body_start..]
+            .trim_start_matches('\n')
+            .trim_start_matches('\r')
     } else {
         ""
     };
@@ -128,7 +130,9 @@ fn parse_yaml_kv(line: &str) -> Option<(&str, &str)> {
     Some((k.trim(), v.trim()))
 }
 
-fn parse_header_from_frontmatter(lines: &[String]) -> (Option<MemoryType>, Option<String>, Option<String>) {
+fn parse_header_from_frontmatter(
+    lines: &[String],
+) -> (Option<MemoryType>, Option<String>, Option<String>) {
     let mut mem_type = None;
     let mut description = None;
     let mut name = None;
@@ -167,7 +171,12 @@ pub fn scan_memory_dir(dir: &Path) -> Vec<MemoryHeader> {
         let filename = path
             .strip_prefix(dir)
             .map(|p| p.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_else(|_| path.file_name().unwrap_or_default().to_string_lossy().to_string());
+            .unwrap_or_else(|_| {
+                path.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
+            });
 
         let mtime = entry
             .metadata()
@@ -239,10 +248,14 @@ pub fn memory_dirs(cwd: &Path) -> Vec<PathBuf> {
 /// Falls back to `<sanitized-cwd>` if not inside a git repo.
 fn project_isolated_memory_dir(cwd: &Path) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
-    let base = crate::git_util::find_git_root(cwd)
-        .unwrap_or_else(|| cwd.to_path_buf());
+    let base = crate::git_util::find_git_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
     let key = crate::git_util::sanitize_path_key(&base.to_string_lossy());
-    Some(home.join(".claude").join("projects").join(key).join("memory"))
+    Some(
+        home.join(".claude")
+            .join("projects")
+            .join(key)
+            .join("memory"),
+    )
 }
 
 /// Returns the primary memory directory path for behavioral prompt injection.
@@ -371,7 +384,8 @@ pub fn load_memories_for_prompt(cwd: &Path) -> Option<String> {
 
     for h in &all_headers {
         if total_bytes >= MAX_TOTAL_MEMORY_BYTES {
-            result.push_str("\n> Additional memory files were omitted (context budget exceeded).\n");
+            result
+                .push_str("\n> Additional memory files were omitted (context budget exceeded).\n");
             break;
         }
 
@@ -420,13 +434,17 @@ pub fn ensure_user_memory_dir() -> anyhow::Result<PathBuf> {
 ///
 /// TS format: `- [Title](file.md) — one-line description`
 fn format_manifest_entry(h: &MemoryHeader) -> String {
-    let title = h.name.as_deref()
+    let title = h
+        .name
+        .as_deref()
         .or(h.description.as_deref())
         .unwrap_or(&h.filename);
-    let desc_part = h.description.as_deref()
+    let desc_part = h
+        .description
+        .as_deref()
         .map(|d| format!(" — {}", d))
         .unwrap_or_default();
-    format!("- [{}]({}){}",  title, h.filename, desc_part)
+    format!("- [{}]({}){}", title, h.filename, desc_part)
 }
 
 /// Format the complete memory manifest from a list of headers.
@@ -511,7 +529,10 @@ pub fn write_memory_file(
     let path = memory_dir.join(filename);
     let file_content = format!(
         "---\nname: {}\ndescription: {}\ntype: {}\n---\n\n{}",
-        name, description, memory_type.as_str(), content
+        name,
+        description,
+        memory_type.as_str(),
+        content
     );
     std::fs::write(&path, &file_content)?;
 
@@ -854,7 +875,10 @@ mod tests {
             memory_type: Some(MemoryType::User),
         };
         let entry = format_manifest_entry(&h);
-        assert_eq!(entry, "- [User's Role](user_role.md) — Data scientist focused on logging");
+        assert_eq!(
+            entry,
+            "- [User's Role](user_role.md) — Data scientist focused on logging"
+        );
     }
 
     #[test]
@@ -921,7 +945,9 @@ mod tests {
 
     #[test]
     fn truncate_manifest_over_line_limit() {
-        let lines: Vec<String> = (0..250).map(|i| format!("- [Item{}](item{}.md) — desc", i, i)).collect();
+        let lines: Vec<String> = (0..250)
+            .map(|i| format!("- [Item{}](item{}.md) — desc", i, i))
+            .collect();
         let manifest = lines.join("\n");
         let result = truncate_manifest(&manifest);
         // Should be 200 lines + warning
@@ -936,7 +962,8 @@ mod tests {
         std::fs::write(
             tmp.path().join("note1.md"),
             "---\nname: Note One\ndescription: First note\ntype: user\n---\nContent",
-        ).unwrap();
+        )
+        .unwrap();
 
         let count = update_memory_index(tmp.path()).unwrap();
         assert_eq!(count, 1);
@@ -973,7 +1000,8 @@ mod tests {
             "A test memory",
             MemoryType::Feedback,
             "Some important feedback",
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
@@ -995,7 +1023,8 @@ mod tests {
         std::fs::write(
             tmp.path().join("named.md"),
             "---\nname: My Named Memory\ntype: reference\n---\nContent",
-        ).unwrap();
+        )
+        .unwrap();
 
         let headers = scan_memory_dir(tmp.path());
         assert_eq!(headers.len(), 1);

@@ -183,8 +183,8 @@ fn sanitize_inline_text(text: &str) -> String {
 
 fn build_description_line(perm: &PendingPermission) -> Line<'static> {
     let risk_icon = match perm.request.risk_level {
-        RiskLevel::Low => "\u{1F513}",       // 🔓
-        RiskLevel::Medium => "\u{1F512}",    // 🔒
+        RiskLevel::Low => "\u{1F513}",         // 🔓
+        RiskLevel::Medium => "\u{1F512}",      // 🔒
         RiskLevel::High => "\u{26A0}\u{FE0F}", // ⚠️
     };
     let accent = risk_color(perm);
@@ -209,7 +209,12 @@ fn build_button_lines(selected: PermissionChoice, accent: Color, width: u16) -> 
     let buttons = [
         build_button("Allow", PermissionChoice::Allow, selected, accent),
         build_button("Deny", PermissionChoice::Deny, selected, accent),
-        build_button("Allow Always", PermissionChoice::AllowAlways, selected, accent),
+        build_button(
+            "Allow Always",
+            PermissionChoice::AllowAlways,
+            selected,
+            accent,
+        ),
     ];
 
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -307,8 +312,14 @@ mod tests {
     fn choice_cycling() {
         assert_eq!(PermissionChoice::Allow.next(), PermissionChoice::Deny);
         assert_eq!(PermissionChoice::Deny.next(), PermissionChoice::AllowAlways);
-        assert_eq!(PermissionChoice::AllowAlways.next(), PermissionChoice::Allow);
-        assert_eq!(PermissionChoice::Allow.prev(), PermissionChoice::AllowAlways);
+        assert_eq!(
+            PermissionChoice::AllowAlways.next(),
+            PermissionChoice::Allow
+        );
+        assert_eq!(
+            PermissionChoice::Allow.prev(),
+            PermissionChoice::AllowAlways
+        );
     }
 
     #[test]

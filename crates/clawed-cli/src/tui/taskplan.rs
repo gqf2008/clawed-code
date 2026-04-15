@@ -112,9 +112,21 @@ impl TaskPlan {
     }
 
     fn count_by_status(&self) -> (usize, usize, usize) {
-        let done = self.tasks.iter().filter(|t| t.status == TaskStatus::Done).count();
-        let failed = self.tasks.iter().filter(|t| t.status == TaskStatus::Failed).count();
-        let open = self.tasks.iter().filter(|t| t.status == TaskStatus::Running).count();
+        let done = self
+            .tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Done)
+            .count();
+        let failed = self
+            .tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Failed)
+            .count();
+        let open = self
+            .tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Running)
+            .count();
         (done, failed, open)
     }
 }
@@ -138,10 +150,7 @@ pub fn render(frame: &mut Frame, area: Rect, plan: &TaskPlan) {
     let mut lines: Vec<Line> = Vec::new();
 
     // Summary line: ✻ Cooked for Xm Ys · N shells running
-    let elapsed = plan
-        .plan_start
-        .map(|s| s.elapsed())
-        .unwrap_or_default();
+    let elapsed = plan.plan_start.map(|s| s.elapsed()).unwrap_or_default();
     let mins = elapsed.as_secs() / 60;
     let secs = elapsed.as_secs() % 60;
 

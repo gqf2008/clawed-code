@@ -11,8 +11,8 @@
 
 #![allow(dead_code)]
 
-use crate::input::SLASH_COMMANDS;
 use super::textarea::TextArea;
+use crate::input::SLASH_COMMANDS;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use unicode_width::UnicodeWidthStr;
 
@@ -211,8 +211,8 @@ impl InputWidget {
                 let old_cursor = self.textarea.cursor();
                 self.textarea.input(key);
 
-                let changed = self.textarea.text() != old_text
-                    || self.textarea.cursor() != old_cursor;
+                let changed =
+                    self.textarea.text() != old_text || self.textarea.cursor() != old_cursor;
 
                 if changed {
                     // Update completion on slash commands
@@ -338,7 +338,9 @@ impl InputWidget {
 
     pub fn cursor(&self) -> usize {
         // Return char-index for compatibility with existing tests
-        self.textarea.text()[..self.textarea.cursor()].chars().count()
+        self.textarea.text()[..self.textarea.cursor()]
+            .chars()
+            .count()
     }
 
     pub fn display_width(&self) -> usize {
@@ -523,10 +525,7 @@ mod tests {
     fn test_escape_clears_input_not_quit() {
         let mut w = InputWidget::new();
         // ESC with empty buffer → no-op
-        assert!(matches!(
-            w.handle_key(key(KeyCode::Esc)),
-            InputAction::None
-        ));
+        assert!(matches!(w.handle_key(key(KeyCode::Esc)), InputAction::None));
 
         // Type something, then ESC → clears buffer
         w.handle_key(key(KeyCode::Char('h')));
@@ -581,7 +580,7 @@ mod tests {
         // Move cursor to line 1
         w.handle_key(key(KeyCode::Up));
         assert_eq!(w.cursor_position().0, 0); // row 0
-        // Ctrl+N moves down
+                                              // Ctrl+N moves down
         w.handle_key(ctrl('n'));
         assert_eq!(w.cursor_position().0, 1); // row 1
     }
@@ -590,10 +589,7 @@ mod tests {
     fn test_shift_enter_inserts_newline() {
         let mut w = InputWidget::new();
         w.handle_key(key(KeyCode::Char('a')));
-        assert!(matches!(
-            w.handle_key(shift_enter()),
-            InputAction::Changed
-        ));
+        assert!(matches!(w.handle_key(shift_enter()), InputAction::Changed));
         w.handle_key(key(KeyCode::Char('b')));
         assert_eq!(w.buffer(), "a\nb");
     }
@@ -602,10 +598,7 @@ mod tests {
     fn test_alt_enter_inserts_newline() {
         let mut w = InputWidget::new();
         w.handle_key(key(KeyCode::Char('a')));
-        assert!(matches!(
-            w.handle_key(alt_enter()),
-            InputAction::Changed
-        ));
+        assert!(matches!(w.handle_key(alt_enter()), InputAction::Changed));
         w.handle_key(key(KeyCode::Char('b')));
         assert_eq!(w.buffer(), "a\nb");
     }
@@ -674,12 +667,17 @@ mod tests {
     fn test_tab_accepts_completion() {
         let mut w = InputWidget::new();
         // Type enough to get a single match
-        for c in "/hel".chars() { w.handle_key(key(KeyCode::Char(c))); }
+        for c in "/hel".chars() {
+            w.handle_key(key(KeyCode::Char(c)));
+        }
         assert!(w.in_completion());
         // Tab should accept the currently highlighted item
         w.handle_key(key(KeyCode::Tab));
         assert!(!w.in_completion(), "Tab should dismiss completion menu");
-        assert!(w.buffer().starts_with('/'), "Tab should fill in the selected command");
+        assert!(
+            w.buffer().starts_with('/'),
+            "Tab should fill in the selected command"
+        );
     }
 
     #[test]
@@ -767,7 +765,7 @@ mod tests {
         // Home should go to start of current line (line 2), not start of buffer
         w.handle_key(key(KeyCode::Home));
         assert_eq!(w.cursor(), 4); // char index 4 = start of "defgh" (after "abc\n")
-        // End should go to end of current line
+                                   // End should go to end of current line
         w.handle_key(key(KeyCode::End));
         assert_eq!(w.cursor(), 9); // 3 + 1 + 5 = 9
     }
@@ -782,7 +780,7 @@ mod tests {
         }
         // Buffer has all lines (no cap)
         assert_eq!(w.line_count(), MAX_INPUT_ROWS + 4); // +3 newlines + final empty line
-        // Visible rows capped at MAX_INPUT_ROWS
+                                                        // Visible rows capped at MAX_INPUT_ROWS
         assert_eq!(w.visible_rows(), MAX_INPUT_ROWS as u16);
         // Scroll indicators: cursor is at bottom, so has_above=true
         let (above, _) = w.scroll_indicators();
@@ -797,7 +795,10 @@ mod tests {
             w.handle_key(key(KeyCode::Char(c)));
         }
         // On single line, Up = history
-        assert!(matches!(w.handle_key(key(KeyCode::Up)), InputAction::Changed));
+        assert!(matches!(
+            w.handle_key(key(KeyCode::Up)),
+            InputAction::Changed
+        ));
         assert_eq!(w.buffer(), "old");
     }
 

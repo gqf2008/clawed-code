@@ -17,8 +17,8 @@
 //! server.serve_tcp("127.0.0.1:9100").await?;
 //! ```
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
@@ -189,17 +189,16 @@ async fn authenticate_connection(
     expected_token: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     // Read first message with a timeout
-    let msg = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        transport.read_message(),
-    ).await
+    let msg = tokio::time::timeout(std::time::Duration::from_secs(5), transport.read_message())
+        .await
         .map_err(|_| "Auth timeout: no message received within 5s")?
         .map_err(|e| format!("Auth transport error: {e}"))?
         .ok_or("Auth failed: connection closed before auth message")?;
 
     // Check method == "auth" and extract token
     let is_auth = msg.method.as_deref() == Some("auth");
-    let token = msg.params
+    let token = msg
+        .params
         .as_ref()
         .and_then(|p| p.get("token"))
         .and_then(|v| v.as_str());
@@ -210,16 +209,23 @@ async fn authenticate_connection(
             msg.id.unwrap_or(crate::protocol::RequestId::Null),
             serde_json::json!({"authenticated": true}),
         );
-        transport.write_message(&RawMessage::from(resp)).await
+        transport
+            .write_message(&RawMessage::from(resp))
+            .await
             .map_err(|e| format!("Auth write error: {e}"))?;
         Ok(true)
     } else {
         // Send auth failure
         let resp = Response::error(
             msg.id.unwrap_or(crate::protocol::RequestId::Null),
-            RpcError::new(error_codes::INVALID_PARAMS, "Authentication failed: invalid or missing token"),
+            RpcError::new(
+                error_codes::INVALID_PARAMS,
+                "Authentication failed: invalid or missing token",
+            ),
         );
-        transport.write_message(&RawMessage::from(resp)).await
+        transport
+            .write_message(&RawMessage::from(resp))
+            .await
             .map_err(|e| format!("Auth write error: {e}"))?;
         Ok(false)
     }
@@ -253,10 +259,7 @@ mod tests {
 
         // Shutdown
         server.shutdown();
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            serve_task,
-        ).await;
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(500), serve_task).await;
     }
 
     #[tokio::test]

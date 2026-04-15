@@ -98,18 +98,26 @@ fn load_merged_multi_layer() {
     std::fs::create_dir_all(&claude_dir).unwrap();
 
     // Project settings
-    let proj = Settings { model: Some("proj-model".into()), ..Default::default() };
+    let proj = Settings {
+        model: Some("proj-model".into()),
+        ..Default::default()
+    };
     std::fs::write(
         claude_dir.join("settings.json"),
         serde_json::to_string(&proj).unwrap(),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Local override
-    let local = Settings { language: Some("Japanese".into()), ..Default::default() };
+    let local = Settings {
+        language: Some("Japanese".into()),
+        ..Default::default()
+    };
     std::fs::write(
         claude_dir.join("settings.local.json"),
         serde_json::to_string(&local).unwrap(),
-    ).unwrap();
+    )
+    .unwrap();
 
     let loaded = Settings::load_merged(dir.path());
     assert_eq!(loaded.settings.model.as_deref(), Some("proj-model"));
@@ -123,7 +131,8 @@ fn update_field_creates_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = Settings::update_field(SettingsSource::Project, dir.path(), |s| {
         s.model = Some("new-model".into());
-    }).unwrap();
+    })
+    .unwrap();
 
     let loaded = load_settings_file(&path).unwrap();
     assert_eq!(loaded.model.as_deref(), Some("new-model"));
@@ -165,12 +174,18 @@ fn settings_summary_format() {
 fn settings_source_display() {
     assert_eq!(SettingsSource::User.to_string(), "~/.claude/settings.json");
     assert_eq!(SettingsSource::Project.to_string(), ".claude/settings.json");
-    assert_eq!(SettingsSource::Local.to_string(), ".claude/settings.local.json");
+    assert_eq!(
+        SettingsSource::Local.to_string(),
+        ".claude/settings.local.json"
+    );
 }
 
 #[test]
 fn export_json_is_valid() {
-    let s = Settings { model: Some("test".into()), ..Default::default() };
+    let s = Settings {
+        model: Some("test".into()),
+        ..Default::default()
+    };
     let json = s.export_json();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed["model"], "test");
@@ -208,7 +223,11 @@ fn merge_hooks_overlay_extends_base() {
     };
     let merged = merge_settings(base, &overlay);
     // Overlay extends base — base hooks are preserved
-    assert_eq!(merged.hooks.pre_tool_use.len(), 1, "base pre_tool_use should be kept");
+    assert_eq!(
+        merged.hooks.pre_tool_use.len(),
+        1,
+        "base pre_tool_use should be kept"
+    );
     assert_eq!(merged.hooks.pre_tool_use[0].hooks[0].command, "echo base");
     assert_eq!(merged.hooks.stop.len(), 1);
     assert_eq!(merged.hooks.stop[0].hooks[0].command, "echo overlay");

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use tracing::{debug, warn};
 
-use crate::types::{TeamFile, TeamMember, sanitize_name};
+use crate::types::{sanitize_name, TeamFile, TeamMember};
 
 /// Get the teams root directory: `~/.claude/teams/`.
 pub fn teams_dir() -> Result<PathBuf> {
@@ -50,8 +50,7 @@ pub fn write_team_file_at(path: &Path, team: &TeamFile) -> Result<()> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create team directory: {}", parent.display()))?;
     }
-    let json = serde_json::to_string_pretty(team)
-        .context("Failed to serialize team config")?;
+    let json = serde_json::to_string_pretty(team).context("Failed to serialize team config")?;
     std::fs::write(path, json)
         .with_context(|| format!("Failed to write team file: {}", path.display()))?;
     debug!("Wrote team config to {}", path.display());
@@ -148,14 +147,25 @@ pub fn generate_unique_team_name(base_name: &str) -> String {
             return candidate;
         }
     }
-    warn!("Could not generate unique team name from '{}' after 100 attempts", base_name);
+    warn!(
+        "Could not generate unique team name from '{}' after 100 attempts",
+        base_name
+    );
     format!("{}-{}", sanitized, uuid::Uuid::new_v4().as_simple())
 }
 
 /// Available teammate colors for terminal display.
 pub const TEAMMATE_COLORS: &[&str] = &[
-    "cyan", "magenta", "yellow", "green", "blue", "red",
-    "bright-cyan", "bright-magenta", "bright-yellow", "bright-green",
+    "cyan",
+    "magenta",
+    "yellow",
+    "green",
+    "blue",
+    "red",
+    "bright-cyan",
+    "bright-magenta",
+    "bright-yellow",
+    "bright-green",
 ];
 
 /// Pick a color for a new teammate (round-robin from available colors).
@@ -173,7 +183,7 @@ pub fn pick_teammate_color(existing_members: &[TeamMember]) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{TeamFile, TeamMember, TEAM_LEAD_NAME, format_agent_id};
+    use crate::types::{format_agent_id, TeamFile, TeamMember, TEAM_LEAD_NAME};
 
     fn make_test_team(name: &str) -> TeamFile {
         TeamFile {
@@ -248,13 +258,19 @@ mod tests {
 
     #[test]
     fn pick_color_avoids_used() {
-        let members = vec![
-            TeamMember {
-                agent_id: "a".into(), name: "a".into(), agent_type: None, model: None,
-                prompt: None, color: Some("cyan".into()), joined_at: 0, cwd: ".".into(),
-                session_id: None, is_active: true, backend_type: None,
-            },
-        ];
+        let members = vec![TeamMember {
+            agent_id: "a".into(),
+            name: "a".into(),
+            agent_type: None,
+            model: None,
+            prompt: None,
+            color: Some("cyan".into()),
+            joined_at: 0,
+            cwd: ".".into(),
+            session_id: None,
+            is_active: true,
+            backend_type: None,
+        }];
         let color = pick_teammate_color(&members);
         assert_ne!(color, "cyan");
         assert_eq!(color, "magenta"); // next in sequence

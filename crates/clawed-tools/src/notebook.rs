@@ -15,8 +15,12 @@ pub struct NotebookEditTool;
 
 #[async_trait]
 impl Tool for NotebookEditTool {
-    fn name(&self) -> &'static str { "NotebookEdit" }
-    fn category(&self) -> ToolCategory { ToolCategory::FileSystem }
+    fn name(&self) -> &'static str {
+        "NotebookEdit"
+    }
+    fn category(&self) -> ToolCategory {
+        ToolCategory::FileSystem
+    }
 
     fn description(&self) -> &'static str {
         "Edit Jupyter notebook (.ipynb) cells. Supports replacing cell content, \
@@ -62,7 +66,9 @@ impl Tool for NotebookEditTool {
         })
     }
 
-    fn is_read_only(&self) -> bool { false }
+    fn is_read_only(&self) -> bool {
+        false
+    }
 
     async fn call(&self, input: Value, context: &ToolContext) -> anyhow::Result<ToolResult> {
         let notebook_path = input["notebook_path"]
@@ -78,18 +84,10 @@ impl Tool for NotebookEditTool {
             Err(e) => return Ok(ToolResult::error(format!("{e}"))),
         };
 
-        let new_source = input["new_source"]
-            .as_str()
-            .unwrap_or("");
-        let cell_number = input["cell_number"]
-            .as_u64()
-            .unwrap_or(0) as usize;
-        let cell_type = input["cell_type"]
-            .as_str()
-            .unwrap_or("code");
-        let edit_mode = input["edit_mode"]
-            .as_str()
-            .unwrap_or("replace");
+        let new_source = input["new_source"].as_str().unwrap_or("");
+        let cell_number = input["cell_number"].as_u64().unwrap_or(0) as usize;
+        let cell_type = input["cell_type"].as_str().unwrap_or("code");
+        let edit_mode = input["edit_mode"].as_str().unwrap_or("replace");
 
         let content = std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("Failed to read notebook: {e}"))?;
@@ -106,7 +104,8 @@ impl Tool for NotebookEditTool {
                 if cell_number >= cells.len() {
                     return Ok(ToolResult::error(format!(
                         "Cell index {} out of range (notebook has {} cells)",
-                        cell_number, cells.len()
+                        cell_number,
+                        cells.len()
                     )));
                 }
                 let source_lines: Vec<Value> = new_source
@@ -136,7 +135,8 @@ impl Tool for NotebookEditTool {
                 if cell_number >= cells.len() {
                     return Ok(ToolResult::error(format!(
                         "Cell index {} out of range (notebook has {} cells)",
-                        cell_number, cells.len()
+                        cell_number,
+                        cells.len()
                     )));
                 }
                 cells.remove(cell_number);
@@ -153,7 +153,9 @@ impl Tool for NotebookEditTool {
 
         Ok(ToolResult::text(format!(
             "Notebook {} updated: {} cell at index {}. Total cells: {}",
-            path.display(), edit_mode, cell_number,
+            path.display(),
+            edit_mode,
+            cell_number,
             notebook["cells"].as_array().map_or(0, std::vec::Vec::len)
         )))
     }
@@ -162,8 +164,8 @@ impl Tool for NotebookEditTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clawed_core::tool::AbortSignal;
     use clawed_core::permissions::PermissionMode;
+    use clawed_core::tool::AbortSignal;
 
     fn ctx(dir: &std::path::Path) -> ToolContext {
         ToolContext {
@@ -200,7 +202,8 @@ mod tests {
                     "source": ["# Title\n"]
                 }
             ]
-        }).to_string()
+        })
+        .to_string()
     }
 
     #[tokio::test]
@@ -220,7 +223,8 @@ mod tests {
         assert!(!result.is_error);
         assert!(result_text(&result).contains("replace"));
 
-        let updated: Value = serde_json::from_str(&std::fs::read_to_string(&nb_path).unwrap()).unwrap();
+        let updated: Value =
+            serde_json::from_str(&std::fs::read_to_string(&nb_path).unwrap()).unwrap();
         let source = updated["cells"][0]["source"][0].as_str().unwrap();
         assert!(source.contains("updated"));
     }
@@ -242,7 +246,8 @@ mod tests {
         let result = tool.call(input, &ctx(tmp.path())).await.unwrap();
         assert!(!result.is_error);
 
-        let updated: Value = serde_json::from_str(&std::fs::read_to_string(&nb_path).unwrap()).unwrap();
+        let updated: Value =
+            serde_json::from_str(&std::fs::read_to_string(&nb_path).unwrap()).unwrap();
         assert_eq!(updated["cells"].as_array().unwrap().len(), 3);
     }
 
@@ -262,7 +267,8 @@ mod tests {
         let result = tool.call(input, &ctx(tmp.path())).await.unwrap();
         assert!(!result.is_error);
 
-        let updated: Value = serde_json::from_str(&std::fs::read_to_string(&nb_path).unwrap()).unwrap();
+        let updated: Value =
+            serde_json::from_str(&std::fs::read_to_string(&nb_path).unwrap()).unwrap();
         assert_eq!(updated["cells"].as_array().unwrap().len(), 1);
     }
 

@@ -1,7 +1,7 @@
 //! Tests for the hook system.
 
-use super::*;
 use super::execution::{get_cached_regex, interpret_output, tool_matches};
+use super::*;
 use clawed_core::config::{HookCommandDef, HookRule, HooksConfig};
 
 // ── HookEvent ────────────────────────────────────────────────────────
@@ -9,17 +9,28 @@ use clawed_core::config::{HookCommandDef, HookRule, HooksConfig};
 #[test]
 fn test_event_as_str_roundtrip() {
     let events = [
-        HookEvent::PreToolUse, HookEvent::PostToolUse,
-        HookEvent::PostToolUseFailure, HookEvent::Stop,
-        HookEvent::StopFailure, HookEvent::UserPromptSubmit,
-        HookEvent::SessionStart, HookEvent::SessionEnd,
-        HookEvent::Setup, HookEvent::PreCompact,
-        HookEvent::PostCompact, HookEvent::SubagentStart,
-        HookEvent::SubagentStop, HookEvent::Notification,
-        HookEvent::PostSampling, HookEvent::PermissionRequest,
-        HookEvent::PermissionDenied, HookEvent::InstructionsLoaded,
-        HookEvent::CwdChanged, HookEvent::FileChanged,
-        HookEvent::ConfigChange, HookEvent::TaskCreated,
+        HookEvent::PreToolUse,
+        HookEvent::PostToolUse,
+        HookEvent::PostToolUseFailure,
+        HookEvent::Stop,
+        HookEvent::StopFailure,
+        HookEvent::UserPromptSubmit,
+        HookEvent::SessionStart,
+        HookEvent::SessionEnd,
+        HookEvent::Setup,
+        HookEvent::PreCompact,
+        HookEvent::PostCompact,
+        HookEvent::SubagentStart,
+        HookEvent::SubagentStop,
+        HookEvent::Notification,
+        HookEvent::PostSampling,
+        HookEvent::PermissionRequest,
+        HookEvent::PermissionDenied,
+        HookEvent::InstructionsLoaded,
+        HookEvent::CwdChanged,
+        HookEvent::FileChanged,
+        HookEvent::ConfigChange,
+        HookEvent::TaskCreated,
         HookEvent::TaskCompleted,
     ];
     // All 23 events have unique string representations
@@ -144,7 +155,9 @@ fn test_interpret_exit0_json_continue() {
 #[test]
 fn test_interpret_exit2_stop_event() {
     let d = interpret_output(HookEvent::Stop, 2, "keep going".into());
-    assert!(matches!(d, HookDecision::FeedbackAndContinue { feedback } if feedback == "keep going"));
+    assert!(
+        matches!(d, HookDecision::FeedbackAndContinue { feedback } if feedback == "keep going")
+    );
 }
 
 #[test]
@@ -174,18 +187,36 @@ fn test_interpret_nonzero_empty_reason() {
 #[test]
 fn test_interpret_fire_and_forget_events() {
     // StopFailure, Notification, SessionEnd, PostCompact always Continue
-    for event in [HookEvent::StopFailure, HookEvent::Notification, HookEvent::SessionEnd, HookEvent::PostCompact] {
+    for event in [
+        HookEvent::StopFailure,
+        HookEvent::Notification,
+        HookEvent::SessionEnd,
+        HookEvent::PostCompact,
+    ] {
         let d = interpret_output(event, 1, "error".into());
-        assert!(matches!(d, HookDecision::Continue), "event {:?} should Continue", event.as_str());
+        assert!(
+            matches!(d, HookDecision::Continue),
+            "event {:?} should Continue",
+            event.as_str()
+        );
     }
 }
 
 #[test]
 fn test_interpret_injection_events_list() {
     // All 4 injection events should get AppendContext with exit 0 + text
-    for event in [HookEvent::UserPromptSubmit, HookEvent::SessionStart, HookEvent::SubagentStart, HookEvent::PreCompact] {
+    for event in [
+        HookEvent::UserPromptSubmit,
+        HookEvent::SessionStart,
+        HookEvent::SubagentStart,
+        HookEvent::PreCompact,
+    ] {
         let d = interpret_output(event, 0, "ctx".into());
-        assert!(matches!(d, HookDecision::AppendContext { .. }), "event {:?} should AppendContext", event.as_str());
+        assert!(
+            matches!(d, HookDecision::AppendContext { .. }),
+            "event {:?} should AppendContext",
+            event.as_str()
+        );
     }
 }
 
@@ -196,7 +227,11 @@ fn test_interpret_modify_without_input_no_panic() {
     let json = r#"{"decision":"modify"}"#;
     let d = interpret_output(HookEvent::PreToolUse, 0, json.into());
     // Should NOT panic; falls through to Continue for non-injection events
-    assert!(matches!(d, HookDecision::Continue), "expected Continue, got {:?}", d);
+    assert!(
+        matches!(d, HookDecision::Continue),
+        "expected Continue, got {:?}",
+        d
+    );
 }
 
 // ── HookRegistry ─────────────────────────────────────────────────────
@@ -222,7 +257,9 @@ fn test_registry_empty_has_no_hooks() {
 #[test]
 fn test_registry_from_config_routes_events() {
     let mut config = HooksConfig::default();
-    config.pre_tool_use.push(make_rule(Some("Bash"), "echo pre"));
+    config
+        .pre_tool_use
+        .push(make_rule(Some("Bash"), "echo pre"));
     config.stop.push(make_rule(None, "echo stop"));
 
     let reg = HookRegistry::from_config(config, "/tmp", "test-session");
@@ -236,17 +273,28 @@ fn test_registry_rules_for_all_events() {
     // Ensure rules_for handles all 23 events without panic
     let reg = HookRegistry::new();
     let events = [
-        HookEvent::PreToolUse, HookEvent::PostToolUse,
-        HookEvent::PostToolUseFailure, HookEvent::Stop,
-        HookEvent::StopFailure, HookEvent::UserPromptSubmit,
-        HookEvent::SessionStart, HookEvent::SessionEnd,
-        HookEvent::Setup, HookEvent::PreCompact,
-        HookEvent::PostCompact, HookEvent::SubagentStart,
-        HookEvent::SubagentStop, HookEvent::Notification,
-        HookEvent::PostSampling, HookEvent::PermissionRequest,
-        HookEvent::PermissionDenied, HookEvent::InstructionsLoaded,
-        HookEvent::CwdChanged, HookEvent::FileChanged,
-        HookEvent::ConfigChange, HookEvent::TaskCreated,
+        HookEvent::PreToolUse,
+        HookEvent::PostToolUse,
+        HookEvent::PostToolUseFailure,
+        HookEvent::Stop,
+        HookEvent::StopFailure,
+        HookEvent::UserPromptSubmit,
+        HookEvent::SessionStart,
+        HookEvent::SessionEnd,
+        HookEvent::Setup,
+        HookEvent::PreCompact,
+        HookEvent::PostCompact,
+        HookEvent::SubagentStart,
+        HookEvent::SubagentStop,
+        HookEvent::Notification,
+        HookEvent::PostSampling,
+        HookEvent::PermissionRequest,
+        HookEvent::PermissionDenied,
+        HookEvent::InstructionsLoaded,
+        HookEvent::CwdChanged,
+        HookEvent::FileChanged,
+        HookEvent::ConfigChange,
+        HookEvent::TaskCreated,
         HookEvent::TaskCompleted,
     ];
     for event in events {
@@ -366,7 +414,9 @@ async fn test_run_no_hooks_returns_continue() {
 async fn test_run_matcher_filters_tool_name() {
     let mut config = HooksConfig::default();
     // Only matches "Edit" — should not fire for "Bash"
-    config.pre_tool_use.push(make_rule(Some("Edit"), "echo blocked"));
+    config
+        .pre_tool_use
+        .push(make_rule(Some("Edit"), "echo blocked"));
     let reg = HookRegistry::from_config(config, ".", "test");
     let ctx = reg.tool_ctx(HookEvent::PreToolUse, "Bash", None, None, None);
     let decision = reg.run(HookEvent::PreToolUse, ctx).await;

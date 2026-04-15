@@ -49,9 +49,10 @@ impl Transport for StdioTransport {
                 return Ok(None); // EOF
             }
             if line.len() > MAX_LINE_SIZE {
-                return Err(TransportError::Other(
-                    format!("Message exceeds max size ({} > {MAX_LINE_SIZE})", line.len()),
-                ));
+                return Err(TransportError::Other(format!(
+                    "Message exceeds max size ({} > {MAX_LINE_SIZE})",
+                    line.len()
+                )));
             }
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -87,10 +88,7 @@ pub mod test_transport {
         pub fn pair(capacity: usize) -> (Self, Self) {
             let (tx_a, rx_b) = mpsc::channel(capacity);
             let (tx_b, rx_a) = mpsc::channel(capacity);
-            (
-                Self { rx: rx_a, tx: tx_a },
-                Self { rx: rx_b, tx: tx_b },
-            )
+            (Self { rx: rx_a, tx: tx_a }, Self { rx: rx_b, tx: tx_b })
         }
     }
 
@@ -101,7 +99,9 @@ pub mod test_transport {
         }
 
         async fn write_message(&mut self, msg: &RawMessage) -> Result<(), TransportError> {
-            self.tx.send(msg.clone()).await
+            self.tx
+                .send(msg.clone())
+                .await
                 .map_err(|_| TransportError::Closed)
         }
     }
@@ -131,7 +131,10 @@ mod tests {
     async fn channel_transport_notification() {
         let (mut server, mut client) = ChannelTransport::pair(16);
 
-        let notif = Notification::new("agent.textDelta", Some(serde_json::json!({"text": "hello"})));
+        let notif = Notification::new(
+            "agent.textDelta",
+            Some(serde_json::json!({"text": "hello"})),
+        );
         let raw = RawMessage::from(notif);
 
         server.write_message(&raw).await.unwrap();

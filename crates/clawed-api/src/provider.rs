@@ -233,9 +233,7 @@ impl ApiBackend for BedrockBackend {
         _http: &reqwest::Client,
         _request: &MessagesRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
-        anyhow::bail!(
-            "Bedrock streaming not yet implemented: AWS SigV4 signing required."
-        )
+        anyhow::bail!("Bedrock streaming not yet implemented: AWS SigV4 signing required.")
     }
 }
 
@@ -311,7 +309,7 @@ impl ApiBackend for VertexBackend {
 ///
 /// For OpenAI-compatible providers, use [`create_backend`] with explicit provider name
 /// via `--provider` CLI flag.
-#[must_use] 
+#[must_use]
 pub fn detect_backend(api_key: &str) -> Box<dyn ApiBackend> {
     let is_truthy = |var: &str| -> bool {
         std::env::var(var)
@@ -331,8 +329,7 @@ pub fn detect_backend(api_key: &str) -> Box<dyn ApiBackend> {
     } else if is_truthy("CLAUDE_CODE_USE_VERTEX") {
         let project = std::env::var("ANTHROPIC_VERTEX_PROJECT_ID")
             .unwrap_or_else(|_| "unknown-project".to_string());
-        let region = std::env::var("CLOUD_ML_REGION")
-            .unwrap_or_else(|_| "us-central1".to_string());
+        let region = std::env::var("CLOUD_ML_REGION").unwrap_or_else(|_| "us-central1".to_string());
         Box::new(VertexBackend::new(project, region))
     } else {
         let mut backend = FirstPartyBackend::new(api_key);
@@ -348,7 +345,7 @@ pub fn detect_backend(api_key: &str) -> Box<dyn ApiBackend> {
 /// Supports: "anthropic" (default), "openai", "deepseek", "ollama", "bedrock", "vertex".
 /// For OpenAI-compatible providers, `api_key` is used for Bearer auth and `base_url`
 /// overrides the default endpoint.
-#[must_use] 
+#[must_use]
 pub fn create_backend(
     provider: &str,
     api_key: &str,
@@ -359,49 +356,30 @@ pub fn create_backend(
     match provider {
         "openai" => {
             let url = base_url.unwrap_or("https://api.openai.com");
-            Box::new(
-                OpenAIBackend::new(api_key, url)
-                    .with_provider_name("openai"),
-            )
+            Box::new(OpenAIBackend::new(api_key, url).with_provider_name("openai"))
         }
         "deepseek" => {
             let url = base_url.unwrap_or("https://api.deepseek.com");
-            Box::new(
-                OpenAIBackend::new(api_key, url)
-                    .with_provider_name("deepseek"),
-            )
+            Box::new(OpenAIBackend::new(api_key, url).with_provider_name("deepseek"))
         }
         "ollama" => {
             let url = base_url.unwrap_or("http://localhost:11434");
-            Box::new(
-                OpenAIBackend::new("ollama", url)
-                    .with_provider_name("ollama"),
-            )
+            Box::new(OpenAIBackend::new("ollama", url).with_provider_name("ollama"))
         }
         "together" => {
             let url = base_url.unwrap_or("https://api.together.xyz");
-            Box::new(
-                OpenAIBackend::new(api_key, url)
-                    .with_provider_name("together"),
-            )
+            Box::new(OpenAIBackend::new(api_key, url).with_provider_name("together"))
         }
         "groq" => {
             let url = base_url.unwrap_or("https://api.groq.com/openai");
-            Box::new(
-                OpenAIBackend::new(api_key, url)
-                    .with_provider_name("groq"),
-            )
+            Box::new(OpenAIBackend::new(api_key, url).with_provider_name("groq"))
         }
         "openai-compatible" => {
             let url = base_url.unwrap_or("http://localhost:8000");
-            Box::new(
-                OpenAIBackend::new(api_key, url)
-                    .auto_detect_provider(),
-            )
+            Box::new(OpenAIBackend::new(api_key, url).auto_detect_provider())
         }
         "bedrock" => {
-            let region = std::env::var("AWS_REGION")
-                .unwrap_or_else(|_| "us-east-1".to_string());
+            let region = std::env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string());
             let mut backend = BedrockBackend::new(region);
             if let Some(url) = base_url {
                 backend = backend.with_base_url(url);
@@ -411,8 +389,8 @@ pub fn create_backend(
         "vertex" => {
             let project = std::env::var("ANTHROPIC_VERTEX_PROJECT_ID")
                 .unwrap_or_else(|_| "unknown-project".to_string());
-            let region = std::env::var("CLOUD_ML_REGION")
-                .unwrap_or_else(|_| "us-central1".to_string());
+            let region =
+                std::env::var("CLOUD_ML_REGION").unwrap_or_else(|_| "us-central1".to_string());
             Box::new(VertexBackend::new(project, region))
         }
         _ => {
@@ -449,7 +427,7 @@ impl Default for MockBackend {
 
 #[cfg(any(test, feature = "test-support"))]
 impl MockBackend {
-    #[must_use] 
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             responses: std::sync::Mutex::new(Vec::new()),
@@ -467,7 +445,10 @@ impl MockBackend {
 
     /// Queue an error for `send_messages`.
     pub fn with_error(self, msg: &str) -> Self {
-        self.responses.lock().unwrap().push(Err(anyhow::anyhow!("{msg}")));
+        self.responses
+            .lock()
+            .unwrap()
+            .push(Err(anyhow::anyhow!("{msg}")));
         self
     }
 
@@ -479,7 +460,10 @@ impl MockBackend {
 
     /// Queue a connection-level error for `send_messages_stream`.
     pub fn with_stream_error(self, msg: &str) -> Self {
-        self.stream_events.lock().unwrap().push(Err(anyhow::anyhow!("{msg}")));
+        self.stream_events
+            .lock()
+            .unwrap()
+            .push(Err(anyhow::anyhow!("{msg}")));
         self
     }
 
@@ -488,15 +472,20 @@ impl MockBackend {
     }
 
     pub fn stream_call_count(&self) -> usize {
-        self.stream_call_count.load(std::sync::atomic::Ordering::SeqCst)
+        self.stream_call_count
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait::async_trait]
 impl ApiBackend for MockBackend {
-    fn provider_name(&self) -> &'static str { "mock" }
-    fn base_url(&self) -> &'static str { "http://mock.test" }
+    fn provider_name(&self) -> &'static str {
+        "mock"
+    }
+    fn base_url(&self) -> &'static str {
+        "http://mock.test"
+    }
 
     fn headers(&self) -> Result<HeaderMap> {
         Ok(HeaderMap::new())
@@ -511,7 +500,8 @@ impl ApiBackend for MockBackend {
         _http: &reqwest::Client,
         _request: &MessagesRequest,
     ) -> Result<MessagesResponse> {
-        self.call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.call_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut responses = self.responses.lock().unwrap();
         if responses.is_empty() {
             anyhow::bail!("MockBackend: no responses queued");
@@ -524,7 +514,8 @@ impl ApiBackend for MockBackend {
         _http: &reqwest::Client,
         _request: &MessagesRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
-        self.stream_call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.stream_call_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut queues = self.stream_events.lock().unwrap();
         if queues.is_empty() {
             anyhow::bail!("MockBackend: no stream events queued");
@@ -604,8 +595,8 @@ mod tests {
 
     #[test]
     fn bedrock_base_url_custom() {
-        let b = BedrockBackend::new("us-east-1")
-            .with_base_url("https://custom-bedrock.example.com");
+        let b =
+            BedrockBackend::new("us-east-1").with_base_url("https://custom-bedrock.example.com");
         assert_eq!(b.base_url(), "https://custom-bedrock.example.com");
     }
 
@@ -681,8 +672,14 @@ mod tests {
         let req = sample_request();
 
         let mut stream = mock.send_messages_stream(&http, &req).await.unwrap();
-        assert!(matches!(stream.next().await.unwrap().unwrap(), StreamEvent::Ping));
-        assert!(matches!(stream.next().await.unwrap().unwrap(), StreamEvent::Ping));
+        assert!(matches!(
+            stream.next().await.unwrap().unwrap(),
+            StreamEvent::Ping
+        ));
+        assert!(matches!(
+            stream.next().await.unwrap().unwrap(),
+            StreamEvent::Ping
+        ));
         assert!(stream.next().await.is_none());
         assert_eq!(mock.stream_call_count(), 1);
     }
@@ -699,8 +696,14 @@ mod tests {
 
     #[tokio::test]
     async fn mock_backend_multiple_responses_fifo() {
-        let r1 = MessagesResponse { id: "msg_1".into(), ..sample_response() };
-        let r2 = MessagesResponse { id: "msg_2".into(), ..sample_response() };
+        let r1 = MessagesResponse {
+            id: "msg_1".into(),
+            ..sample_response()
+        };
+        let r2 = MessagesResponse {
+            id: "msg_2".into(),
+            ..sample_response()
+        };
 
         let mock = MockBackend::new().with_response(r1).with_response(r2);
         let http = reqwest::Client::new();
@@ -718,8 +721,7 @@ mod tests {
         use crate::client::ApiClient;
 
         let mock = MockBackend::new().with_response(sample_response());
-        let client = ApiClient::new("test-key")
-            .with_backend(Box::new(mock));
+        let client = ApiClient::new("test-key").with_backend(Box::new(mock));
 
         assert_eq!(client.provider_name(), "mock");
     }

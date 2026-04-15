@@ -1,8 +1,8 @@
 //! QueryEngineBuilder — fluent builder for constructing a QueryEngine.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use clawed_api::client::ApiClient;
 use clawed_core::claude_md::load_claude_md;
@@ -24,7 +24,9 @@ use crate::hooks::HookRegistry;
 use crate::permissions::PermissionChecker;
 use crate::query::QueryConfig;
 use crate::state::new_shared_state_with_model;
-use crate::system_prompt::{build_system_prompt_ext, coordinator_system_prompt, sections, DynamicSections};
+use crate::system_prompt::{
+    build_system_prompt_ext, coordinator_system_prompt, sections, DynamicSections,
+};
 
 use super::QueryEngine;
 
@@ -225,7 +227,9 @@ impl QueryEngineBuilder {
         let mut registry = ToolRegistry::with_defaults();
 
         // Get or create shared MCP manager for tool routing
-        let mcp_manager = self.mcp_manager.clone()
+        let mcp_manager = self
+            .mcp_manager
+            .clone()
             .unwrap_or_else(|| Arc::new(RwLock::new(clawed_mcp::McpManager::new())));
 
         // Register Computer Use tools — auto-detect display availability
@@ -264,7 +268,10 @@ impl QueryEngineBuilder {
 
         let permission_checker = Arc::new(self.permission_checker);
 
-        let model_name = self.model.clone().unwrap_or_else(|| "claude-sonnet-4-20250514".into());
+        let model_name = self
+            .model
+            .clone()
+            .unwrap_or_else(|| "claude-sonnet-4-20250514".into());
         let caps = clawed_core::model::model_capabilities(&model_name);
 
         // Apply context window overrides (precedence: CLI flag > env var > model default):
@@ -324,7 +331,10 @@ impl QueryEngineBuilder {
         } else if self.system_prompt.is_empty() {
             let dynamic = DynamicSections {
                 language: self.language.as_deref(),
-                output_style: self.output_style.as_ref().map(|(n, p)| (n.as_str(), p.as_str())),
+                output_style: self
+                    .output_style
+                    .as_ref()
+                    .map(|(n, p)| (n.as_str(), p.as_str())),
                 mcp_instructions: self.mcp_instructions.clone(),
                 scratchpad_dir: self.scratchpad_dir.as_deref(),
                 memory_dir: memory_dir_str.as_deref(),
@@ -370,11 +380,19 @@ impl QueryEngineBuilder {
         let sub_registry = Arc::new(ToolRegistry::with_defaults());
 
         // ── Coordinator mode setup ───────────────────────────────────────────
-        let (agent_tracker, notification_rx, coord_cancel_tokens, coord_agent_channels, agent_notif_tx, agent_notif_rx) = if self.coordinator_mode {
+        let (
+            agent_tracker,
+            notification_rx,
+            coord_cancel_tokens,
+            coord_agent_channels,
+            agent_notif_tx,
+            agent_notif_rx,
+        ) = if self.coordinator_mode {
             let (tracker, rx) = AgentTracker::new();
             let agent_channels: AgentChannelMap = Arc::new(RwLock::new(HashMap::new()));
             let cancel_tokens: CancelTokenMap = Arc::new(RwLock::new(HashMap::new()));
-            let (notif_tx, notif_rx) = tokio::sync::mpsc::unbounded_channel::<clawed_bus::AgentNotification>();
+            let (notif_tx, notif_rx) =
+                tokio::sync::mpsc::unbounded_channel::<clawed_bus::AgentNotification>();
 
             registry.register(SendMessageTool {
                 tracker: tracker.clone(),
@@ -425,11 +443,8 @@ impl QueryEngineBuilder {
             session_id.clone(),
         ));
         let executor = Arc::new({
-            let mut exec = ToolExecutor::with_hooks(
-                registry.clone(),
-                permission_checker,
-                hooks.clone(),
-            );
+            let mut exec =
+                ToolExecutor::with_hooks(registry.clone(), permission_checker, hooks.clone());
             exec.set_session_id(&session_id);
             exec
         });

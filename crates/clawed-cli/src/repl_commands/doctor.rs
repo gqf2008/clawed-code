@@ -115,7 +115,11 @@ pub(crate) async fn handle_doctor(engine: &QueryEngine, cwd: &std::path::Path) {
     let sessions = clawed_core::session::list_sessions();
     if !sessions.is_empty() {
         let latest_age = clawed_core::session::format_age(&sessions[0].updated_at);
-        println!("  \x1b[32m✓\x1b[0m {} saved session(s), latest: {}", sessions.len(), latest_age);
+        println!(
+            "  \x1b[32m✓\x1b[0m {} saved session(s), latest: {}",
+            sessions.len(),
+            latest_age
+        );
     }
 
     // 9. Settings file (multi-layer)
@@ -124,13 +128,20 @@ pub(crate) async fn handle_doctor(engine: &QueryEngine, cwd: &std::path::Path) {
         println!("  \x1b[2m·\x1b[0m Using default settings (no config files found)");
     } else {
         let sources: Vec<String> = loaded.sources.iter().map(|s| s.to_string()).collect();
-        println!("  \x1b[32m✓\x1b[0m Settings loaded from: {}", sources.join(", "));
+        println!(
+            "  \x1b[32m✓\x1b[0m Settings loaded from: {}",
+            sources.join(", ")
+        );
     }
 
     // 10. Ripgrep (result from parallel check)
     match rg_ver.ok().and_then(|r| r.ok()) {
         Some(out) if out.status.success() => {
-            let ver = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").to_string();
+            let ver = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .to_string();
             println!("  \x1b[32m✓\x1b[0m {}", ver);
         }
         _ => {
@@ -156,7 +167,10 @@ pub(crate) async fn handle_doctor(engine: &QueryEngine, cwd: &std::path::Path) {
         let display = clawed_core::model::display_name_any(&s.model);
         println!("  \x1b[2m·\x1b[0m Model: {} ({})", display, s.model);
         println!("  \x1b[2m·\x1b[0m Permission mode: {:?}", s.permission_mode);
-        println!("  \x1b[2m·\x1b[0m Tools: {} registered", engine.tool_count());
+        println!(
+            "  \x1b[2m·\x1b[0m Tools: {} registered",
+            engine.tool_count()
+        );
         if let Some(pct) = engine.context_usage_percent().await {
             println!("  \x1b[2m·\x1b[0m Context usage: {}%", pct);
         }
@@ -168,7 +182,8 @@ pub(crate) async fn handle_doctor(engine: &QueryEngine, cwd: &std::path::Path) {
         if let Ok(content) = std::fs::read_to_string(&mcp_config) {
             match serde_json::from_str::<serde_json::Value>(&content) {
                 Ok(val) => {
-                    let count = val.get("mcpServers")
+                    let count = val
+                        .get("mcpServers")
                         .and_then(|s| s.as_object())
                         .map(|o| o.len())
                         .unwrap_or(0);

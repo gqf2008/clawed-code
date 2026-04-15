@@ -112,7 +112,14 @@ pub fn build_system_prompt(
     claude_md_content: &str,
     memory_content: &str,
 ) -> SystemPrompt {
-    build_system_prompt_ext(cwd, model, enabled_tools, claude_md_content, memory_content, &DynamicSections::default())
+    build_system_prompt_ext(
+        cwd,
+        model,
+        enabled_tools,
+        claude_md_content,
+        memory_content,
+        &DynamicSections::default(),
+    )
 }
 
 /// Extended build accepting additional dynamic sections.
@@ -499,14 +506,8 @@ mod tests {
             memory_dir: Some("/home/user/.claude/memory"),
             ..Default::default()
         };
-        let prompt = build_system_prompt_ext(
-            &cwd,
-            "claude-sonnet-4-20250514",
-            &[],
-            "",
-            "",
-            &dynamic,
-        );
+        let prompt =
+            build_system_prompt_ext(&cwd, "claude-sonnet-4-20250514", &[], "", "", &dynamic);
         // Behavioral prompt is injected even without memory content
         assert!(prompt.text.contains("# Auto Memory"));
         assert!(prompt.text.contains("Types of memory"));
@@ -528,14 +529,8 @@ mod tests {
             memory_dir: None,
             ..Default::default()
         };
-        let prompt = build_system_prompt_ext(
-            &cwd,
-            "claude-sonnet-4-20250514",
-            &[],
-            "",
-            "",
-            &dynamic,
-        );
+        let prompt =
+            build_system_prompt_ext(&cwd, "claude-sonnet-4-20250514", &[], "", "", &dynamic);
         assert!(!prompt.text.contains("# Auto Memory"));
     }
 
@@ -567,14 +562,8 @@ mod tests {
             coordinator_mode: true,
             ..Default::default()
         };
-        let prompt = build_system_prompt_ext(
-            &cwd,
-            "claude-sonnet-4-20250514",
-            &[],
-            "",
-            "",
-            &dynamic,
-        );
+        let prompt =
+            build_system_prompt_ext(&cwd, "claude-sonnet-4-20250514", &[], "", "", &dynamic);
         assert!(prompt.text.contains("Coordinator Mode"));
         assert!(prompt.text.contains("task-notification"));
         assert!(prompt.text.contains("SendMessage"));
