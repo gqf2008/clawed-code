@@ -25,7 +25,7 @@ mod textarea;
 pub use input::InputWidget;
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{io, path::PathBuf};
 
 use clawed_agent::engine::QueryEngine;
@@ -57,6 +57,34 @@ type TuiTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io:
 /// Uses a true-color gray that is readable on both dark and light backgrounds,
 /// unlike `Color::DarkGray` (ANSI 8) which maps to bright on many terminals.
 const MUTED: Color = Color::Rgb(140, 140, 140);
+const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+fn collapsed_thinking_lines(text: &str) -> Vec<Line<'static>> {
+    if text.is_empty() {
+        return vec![];
+    }
+
+    let line_count = text.lines().count();
+    vec![Line::styled(
+        format!("▶ thinking ({line_count} lines, Ctrl+O to expand)"),
+        Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+    )]
+}
+
+fn plain_text_lines(text: &str) -> Vec<Line<'static>> {
+    if text.is_empty() {
+        return vec![];
+    }
+
+    text.lines()
+        .map(|line| Line::from(line.to_string()))
+        .collect()
+}
+
+fn should_clear_message_area(previous_total_visual: Option<usize>, total_visual: usize) -> bool {
+    previous_total_visual.is_some_and(|previous| previous > total_visual)
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct LayoutSignature {
@@ -165,6 +193,10 @@ struct App {
     /// that need a full terminal clear to avoid ghost cells.
     last_layout_sig: LayoutSignature,
     pending_workflow: Option<PendingWorkflow>,
+    cached_visible_lines: Vec<Line<'static>>,
+    cached_visible_lines_dirty: bool,
+    cached_visible_line_count: Option<(u16, usize)>,
+    last_rendered_message_visual_count: Option<usize>,
 }
 
 impl App {
@@ -194,11 +226,76 @@ impl App {
             expecting_turn_start: false,
             last_layout_sig: LayoutSignature::default(),
             pending_workflow: None,
+            cached_visible_lines: Vec::new(),
+            cached_visible_lines_dirty: false,
+            cached_visible_line_count: None,
+            last_rendered_message_visual_count: None,
         }
     }
 
+    fn visible_message_lines_at(&self, index: usize) -> Vec<Line<'static>> {
+        let msg = &self.messages[index];
+
+        if self.thinking_collapsed {
+            if let MessageContent::ThinkingText(text) = &msg.content {
+                return collapsed_thinking_lines(text);
+            }
+        }
+
+        if self.is_generating && index + 1 == self.messages.len() {
+            if let MessageContent::AssistantText(text) = &msg.content {
+                return plain_text_lines(text);
+            }
+        }
+
+        msg.to_lines()
+    }
+
+    fn invalidate_visible_lines(&mut self) {
+        self.cached_visible_lines_dirty = true;
+        self.cached_visible_line_count = None;
+    }
+
+    fn replace_cached_tail(&mut self, old_len: usize, new_lines: Vec<Line<'static>>) {
+        let new_start = self.cached_visible_lines.len().saturating_sub(old_len);
+        self.cached_visible_lines.truncate(new_start);
+        self.cached_visible_lines.extend(new_lines);
+        self.cached_visible_line_count = None;
+    }
+
+    fn rebuild_visible_lines(&mut self) {
+        if !self.cached_visible_lines_dirty {
+            return;
+        }
+
+        let lines = (0..self.messages.len())
+            .flat_map(|index| self.visible_message_lines_at(index))
+            .collect();
+        self.cached_visible_lines = lines;
+        self.cached_visible_lines_dirty = false;
+        self.cached_visible_line_count = None;
+    }
+
+    fn clear_messages(&mut self) {
+        self.messages.clear();
+        self.scroll_offset = 0;
+        self.cached_visible_lines.clear();
+        self.cached_visible_lines_dirty = false;
+        self.cached_visible_line_count = None;
+        self.last_rendered_message_visual_count = None;
+    }
+
     fn push_message(&mut self, content: MessageContent) {
-        self.messages.push(Message::new(content));
+        let msg = Message::new(content);
+        if self.cached_visible_lines_dirty {
+            self.messages.push(msg);
+        } else {
+            self.messages.push(msg);
+            let last_index = self.messages.len().saturating_sub(1);
+            self.cached_visible_lines
+                .extend(self.visible_message_lines_at(last_index));
+            self.cached_visible_line_count = None;
+        }
         if self.auto_scroll {
             self.scroll_offset = 0;
         }
@@ -229,6 +326,7 @@ impl App {
         self.status.thinking = true;
         self.status.is_generating = true;
         self.is_generating = true;
+        self.invalidate_visible_lines();
         // Discard any TextDelta/ThinkingDelta that arrive before TurnStart —
         // they belong to the previous (possibly aborted) stream.
         self.expecting_turn_start = true;
@@ -239,6 +337,7 @@ impl App {
         self.status.thinking = false;
         self.status.is_generating = false;
         self.is_generating = false;
+        self.invalidate_visible_lines();
         self.expecting_turn_start = false;
         self.status.active_tools.clear();
         self.status.active_shells = 0;
@@ -256,30 +355,70 @@ impl App {
 
     /// Append text to the last AssistantText message, or create one.
     fn append_assistant_text(&mut self, text: &str) {
-        if let Some(msg) = self.messages.last_mut() {
-            if let MessageContent::AssistantText(ref mut buf) = msg.content {
-                buf.push_str(text);
-                msg.invalidate_cache();
-                if self.auto_scroll {
-                    self.scroll_offset = 0;
-                }
+        if let Some(last_idx) = self.messages.len().checked_sub(1) {
+            if !matches!(
+                self.messages[last_idx].content,
+                MessageContent::AssistantText(_)
+            ) {
+                self.push_message(MessageContent::AssistantText(text.to_string()));
                 return;
             }
+
+            let old_visible = if self.cached_visible_lines_dirty {
+                None
+            } else {
+                Some(self.visible_message_lines_at(last_idx))
+            };
+
+            if let Some(msg) = self.messages.get_mut(last_idx) {
+                msg.append_assistant_text(text);
+            }
+
+            if let Some(old_visible) = old_visible {
+                let new_visible = self.visible_message_lines_at(last_idx);
+                self.replace_cached_tail(old_visible.len(), new_visible);
+            } else {
+                self.invalidate_visible_lines();
+            }
+            if self.auto_scroll {
+                self.scroll_offset = 0;
+            }
+            return;
         }
         self.push_message(MessageContent::AssistantText(text.to_string()));
     }
 
     /// Append text to the last ThinkingText message, or create one.
     fn append_thinking_text(&mut self, text: &str) {
-        if let Some(msg) = self.messages.last_mut() {
-            if let MessageContent::ThinkingText(ref mut buf) = msg.content {
-                buf.push_str(text);
-                msg.invalidate_cache();
-                if self.auto_scroll {
-                    self.scroll_offset = 0;
-                }
+        if let Some(last_idx) = self.messages.len().checked_sub(1) {
+            if !matches!(
+                self.messages[last_idx].content,
+                MessageContent::ThinkingText(_)
+            ) {
+                self.push_message(MessageContent::ThinkingText(text.to_string()));
                 return;
             }
+
+            let old_visible = if self.cached_visible_lines_dirty {
+                None
+            } else {
+                Some(self.visible_message_lines_at(last_idx))
+            };
+
+            if let Some(msg) = self.messages.get_mut(last_idx) {
+                msg.append_thinking_text(text);
+            }
+
+            if let Some(old_visible) = old_visible {
+                let new_visible = self.visible_message_lines_at(last_idx);
+                self.replace_cached_tail(old_visible.len(), new_visible);
+            } else {
+                self.invalidate_visible_lines();
+            }
+            if self.auto_scroll {
+                self.scroll_offset = 0;
+            }
+            return;
         }
         self.push_message(MessageContent::ThinkingText(text.to_string()));
     }
@@ -537,8 +676,7 @@ impl App {
                 self.push_message(MessageContent::System(lines));
             }
             AgentNotification::HistoryCleared => {
-                self.messages.clear();
-                self.scroll_offset = 0;
+                self.clear_messages();
                 self.push_message(MessageContent::System(
                     "Conversation history cleared.".to_string(),
                 ));
@@ -640,8 +778,7 @@ impl App {
             }
             crate::commands::CommandResult::ClearHistory => {
                 let _ = client.send_request(clawed_bus::events::AgentRequest::ClearHistory);
-                self.messages.clear();
-                self.scroll_offset = 0;
+                self.clear_messages();
             }
             crate::commands::CommandResult::SetModel(name) => {
                 if name.is_empty() {
@@ -802,7 +939,7 @@ impl App {
 
 // -- Rendering ----------------------------------------------------------------
 
-fn render(frame: &mut Frame, app: &App) {
+fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     let perm_layout = app
@@ -910,34 +1047,33 @@ fn render(frame: &mut Frame, app: &App) {
     }
 }
 
-fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
+fn poll_interval(app: &App) -> Duration {
+    if app.is_generating
+        || !app.status.active_tools.is_empty()
+        || app.status.active_shells > 0
+        || !app.status.active_agents.is_empty()
+    {
+        ACTIVE_POLL_INTERVAL
+    } else {
+        IDLE_POLL_INTERVAL
+    }
+}
+
+fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
     if area.height == 0 || area.width == 0 {
         return;
     }
 
-    // Collect all lines from all messages
-    let all_lines: Vec<Line> = if app.messages.is_empty() {
-        render_welcome_lines(area.width, &app.model)
-    } else {
-        app.messages
-            .iter()
-            .flat_map(|msg| {
-                if app.thinking_collapsed {
-                    if let MessageContent::ThinkingText(text) = &msg.content {
-                        if text.is_empty() {
-                            return vec![];
-                        }
-                        let line_count = text.lines().count();
-                        return vec![Line::styled(
-                            format!("\u{25B6} thinking ({line_count} lines, Ctrl+O to expand)"),
-                            Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
-                        )];
-                    }
-                }
-                msg.to_lines()
-            })
-            .collect()
-    };
+    let (all_lines, cached_visual_count): (Vec<Line<'static>>, Option<usize>) =
+        if app.messages.is_empty() {
+            (render_welcome_lines(area.width, &app.model), None)
+        } else {
+            app.rebuild_visible_lines();
+            let cached_visual_count = app
+                .cached_visible_line_count
+                .and_then(|(width, count)| (width == area.width).then_some(count));
+            (app.cached_visible_lines.clone(), cached_visual_count)
+        };
 
     let viewport_height = area.height as usize;
 
@@ -945,7 +1081,15 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
     // This avoids the div_ceil approximation which can be wrong for word-wrapped
     // content (word boundaries differ from column boundaries).
     let paragraph = Paragraph::new(all_lines).wrap(Wrap { trim: false });
-    let total_visual = paragraph.line_count(area.width);
+    let total_visual = if let Some(count) = cached_visual_count {
+        count
+    } else {
+        let count = paragraph.line_count(area.width);
+        if !app.messages.is_empty() {
+            app.cached_visible_line_count = Some((area.width, count));
+        }
+        count
+    };
 
     // scroll_offset = 0 → bottom of content; higher = scroll up.
     let scroll_row: u16 = if total_visual <= viewport_height {
@@ -958,10 +1102,11 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &App) {
         (max_scroll - clamped).min(u16::MAX as usize) as u16
     };
 
-    // Clear the area first to prevent ghost cells from prior frames leaking through
-    // when content shifts (especially large markdown blocks rendered all at once).
-    frame.render_widget(Clear, area);
+    if should_clear_message_area(app.last_rendered_message_visual_count, total_visual) {
+        frame.render_widget(Clear, area);
+    }
     frame.render_widget(paragraph.scroll((scroll_row, 0)), area);
+    app.last_rendered_message_visual_count = Some(total_visual);
 }
 
 fn render_queue_banner(frame: &mut Frame, area: Rect, queued: &[String]) {
@@ -1392,6 +1537,42 @@ pub async fn run_tui(
 
     // Main event loop
     while app.running {
+        // Drain notifications before drawing so fresh deltas land in the current frame
+        // instead of waiting for the next input poll cycle.
+        while let Ok(notification) = notify_rx.try_recv() {
+            // Discard TextDelta/ThinkingDelta when:
+            // - not generating (after abort), OR
+            // - expecting_turn_start (new submit queued, waiting for TurnStart
+            //   to confirm the new turn — deltas arriving now belong to the
+            //   previous, possibly aborted, stream and must not bleed through).
+            if !app.is_generating || app.expecting_turn_start {
+                match &notification {
+                    AgentNotification::TextDelta { .. }
+                    | AgentNotification::ThinkingDelta { .. } => continue,
+                    _ => {}
+                }
+            }
+            let turn_complete = matches!(notification, AgentNotification::TurnComplete { .. });
+            let merged = app.handle_notification(notification);
+            let workflow_submitted = if turn_complete {
+                handle_pending_workflow(&client, &mut app).await
+            } else {
+                false
+            };
+
+            if workflow_submitted {
+                continue;
+            }
+
+            if let Some(merged) = merged {
+                app.push_message(MessageContent::UserInput(merged.clone()));
+                let _ = client.submit(&merged);
+                app.mark_generating();
+            } else if turn_complete && app.pending_workflow.is_none() && !app.expecting_turn_start {
+                submit_queued_inputs(&client, &mut app);
+            }
+        }
+
         // Advance spinner whenever generating (covers thinking, text streaming, tool execution)
         if app.status.is_generating || !app.status.active_tools.is_empty() {
             app.status.spinner_frame = app.status.spinner_frame.wrapping_add(1);
@@ -1415,10 +1596,11 @@ pub async fn run_tui(
         }
 
         // Render
-        terminal.draw(|frame| render(frame, &app))?;
+        terminal.draw(|frame| render(frame, &mut app))?;
 
-        // Non-blocking input poll
-        if event::poll(std::time::Duration::from_millis(100))? {
+        // Keep the terminal responsive at rest, but use a tighter tick while the
+        // agent is actively streaming or running tools so output feels less coarse.
+        if event::poll(poll_interval(&app))? {
             match event::read()? {
                 Event::Key(key) => {
                     if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
@@ -1551,6 +1733,7 @@ pub async fn run_tui(
                                     msg.invalidate_cache();
                                 }
                             }
+                            app.invalidate_visible_lines();
                             continue;
                         }
                         (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
@@ -1559,12 +1742,12 @@ pub async fn run_tui(
                                 app.messages.iter_mut().rev().find(|m| m.is_collapsible())
                             {
                                 msg.toggle_collapsed();
+                                app.invalidate_visible_lines();
                             }
                             continue;
                         }
                         (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
-                            app.messages.clear();
-                            app.scroll_offset = 0;
+                            app.clear_messages();
                             continue;
                         }
                         // Toggle key debug mode
@@ -1691,41 +1874,6 @@ pub async fn run_tui(
                     app.input.insert_text(&text);
                 }
                 _ => {} // Mouse, Focus -- ignored
-            }
-        }
-
-        // Drain notification channel
-        while let Ok(notification) = notify_rx.try_recv() {
-            // Discard TextDelta/ThinkingDelta when:
-            // - not generating (after abort), OR
-            // - expecting_turn_start (new submit queued, waiting for TurnStart
-            //   to confirm the new turn — deltas arriving now belong to the
-            //   previous, possibly aborted, stream and must not bleed through).
-            if !app.is_generating || app.expecting_turn_start {
-                match &notification {
-                    AgentNotification::TextDelta { .. }
-                    | AgentNotification::ThinkingDelta { .. } => continue,
-                    _ => {}
-                }
-            }
-            let turn_complete = matches!(notification, AgentNotification::TurnComplete { .. });
-            let merged = app.handle_notification(notification);
-            let workflow_submitted = if turn_complete {
-                handle_pending_workflow(&client, &mut app).await
-            } else {
-                false
-            };
-
-            if workflow_submitted {
-                continue;
-            }
-
-            if let Some(merged) = merged {
-                app.push_message(MessageContent::UserInput(merged.clone()));
-                let _ = client.submit(&merged);
-                app.mark_generating();
-            } else if turn_complete && app.pending_workflow.is_none() && !app.expecting_turn_start {
-                submit_queued_inputs(&client, &mut app);
             }
         }
 
@@ -2768,8 +2916,7 @@ fn read_clipboard_image() -> anyhow::Result<ImageAttachment> {
 async fn replay_session_messages(engine: &Arc<QueryEngine>, app: &mut App) {
     use clawed_core::message::{ContentBlock, Message as CoreMsg};
 
-    app.messages.clear();
-    app.scroll_offset = 0;
+    app.clear_messages();
 
     let state = engine.state().read().await;
     app.model = state.model.clone();
@@ -2822,6 +2969,13 @@ mod tests {
     use clawed_bus::events::{AgentRequest, PermissionRequest, RiskLevel};
     use serde_json::json;
     use tempfile::TempDir;
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
 
     #[test]
     fn welcome_lines_are_nonempty() {
@@ -2885,6 +3039,70 @@ mod tests {
         assert!(app.overlay.is_some());
         app.overlay = None;
         assert!(app.overlay.is_none());
+    }
+
+    #[test]
+    fn poll_interval_is_idle_when_inactive() {
+        let app = App::new("test".to_string());
+        assert_eq!(poll_interval(&app), IDLE_POLL_INTERVAL);
+    }
+
+    #[test]
+    fn poll_interval_is_active_while_generating() {
+        let mut app = App::new("test".to_string());
+        app.is_generating = true;
+        assert_eq!(poll_interval(&app), ACTIVE_POLL_INTERVAL);
+    }
+
+    #[test]
+    fn should_clear_message_area_only_when_visual_height_shrinks() {
+        assert!(should_clear_message_area(Some(10), 9));
+        assert!(!should_clear_message_area(Some(10), 10));
+        assert!(!should_clear_message_area(Some(10), 11));
+        assert!(!should_clear_message_area(None, 9));
+    }
+
+    #[test]
+    fn cached_visible_lines_track_assistant_append() {
+        let mut app = App::new("test".to_string());
+        app.thinking_collapsed = false;
+        app.push_message(MessageContent::System("system".to_string()));
+        app.push_message(MessageContent::AssistantText("hello".to_string()));
+
+        app.append_assistant_text(" world");
+
+        assert!(!app.cached_visible_lines_dirty);
+        assert_eq!(
+            line_text(app.cached_visible_lines.last().expect("cached line")),
+            "hello world"
+        );
+    }
+
+    #[test]
+    fn cached_visible_lines_track_collapsed_thinking_append() {
+        let mut app = App::new("test".to_string());
+        app.thinking_collapsed = true;
+        app.push_message(MessageContent::ThinkingText("one".to_string()));
+
+        app.append_thinking_text("\ntwo");
+
+        assert!(!app.cached_visible_lines_dirty);
+        assert_eq!(app.cached_visible_lines.len(), 1);
+        assert!(line_text(&app.cached_visible_lines[0]).contains("2 lines"));
+    }
+
+    #[test]
+    fn streaming_assistant_renders_raw_markdown_until_done() {
+        let mut app = App::new("test".to_string());
+        app.is_generating = true;
+        app.push_message(MessageContent::AssistantText("**bold**".to_string()));
+
+        assert_eq!(line_text(&app.cached_visible_lines[0]), "**bold**");
+
+        app.mark_done();
+        app.rebuild_visible_lines();
+
+        assert_eq!(line_text(&app.cached_visible_lines[0]), "bold");
     }
 
     #[test]

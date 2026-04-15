@@ -412,7 +412,7 @@ fn render_code_block(lang: &str, code: &str, lines: &mut Vec<Line<'static>>) {
 }
 
 /// Quick heuristic: does this text look like it contains markdown?
-fn likely_markdown(text: &str) -> bool {
+pub(crate) fn likely_markdown(text: &str) -> bool {
     // Check first ~2048 bytes for common markdown markers.
     // Must find a valid char boundary to avoid panicking on multi-byte characters.
     let sample = if text.len() > 2048 {

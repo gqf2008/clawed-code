@@ -8,6 +8,40 @@ use ratatui::{
     text::{Line, Span},
 };
 
+fn thinking_style() -> Style {
+    Style::default().fg(MUTED).add_modifier(Modifier::ITALIC)
+}
+
+fn line_text(line: &Line<'_>) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect()
+}
+
+fn append_plain_lines(lines: &mut Vec<Line<'static>>, text: &str, style: Style) {
+    if text.is_empty() {
+        return;
+    }
+
+    let mut parts = text.split_terminator('\n');
+    let Some(first_part) = parts.next() else {
+        return;
+    };
+
+    if let Some(last_line) = lines.last_mut() {
+        let mut merged = line_text(last_line);
+        merged.push_str(first_part);
+        *last_line = Line::styled(merged, style);
+    } else {
+        lines.push(Line::styled(first_part.to_string(), style));
+    }
+
+    for part in parts {
+        lines.push(Line::styled(part.to_string(), style));
+    }
+}
+
 /// Returns an appropriate style for a line in a unified diff.
 fn diff_line_style(line: &str) -> Style {
     if line.starts_with("+++") || line.starts_with("---") {
@@ -76,6 +110,48 @@ impl Message {
         *self.cached_lines.borrow_mut() = None;
     }
 
+    pub fn append_assistant_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+
+        let can_append_plain = match &mut self.content {
+            MessageContent::AssistantText(buf) => {
+                let was_plain = !markdown::likely_markdown(buf);
+                buf.push_str(text);
+                was_plain && !markdown::likely_markdown(buf)
+            }
+            _ => return,
+        };
+
+        let cached_lines = self.cached_lines.get_mut();
+        if let Some(lines) = cached_lines.as_mut() {
+            if can_append_plain {
+                append_plain_lines(lines, text, Style::default());
+                return;
+            }
+        }
+        *cached_lines = None;
+    }
+
+    pub fn append_thinking_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+
+        match &mut self.content {
+            MessageContent::ThinkingText(buf) => buf.push_str(text),
+            _ => return,
+        }
+
+        let cached_lines = self.cached_lines.get_mut();
+        if let Some(lines) = cached_lines.as_mut() {
+            append_plain_lines(lines, text, thinking_style());
+            return;
+        }
+        *cached_lines = None;
+    }
+
     /// Toggle collapsed state for tool results.
     pub fn toggle_collapsed(&mut self) {
         if matches!(self.content, MessageContent::ToolResult { .. }) {
@@ -130,12 +206,10 @@ impl Message {
                 }
                 markdown::render_markdown(text)
             }
-            MessageContent::ThinkingText(text) => {
-                let style = Style::default().fg(MUTED).add_modifier(Modifier::ITALIC);
-                text.lines()
-                    .map(|l| Line::styled(l.to_string(), style))
-                    .collect()
-            }
+            MessageContent::ThinkingText(text) => text
+                .lines()
+                .map(|l| Line::styled(l.to_string(), thinking_style()))
+                .collect(),
             MessageContent::ToolUseStart { name } => vec![
                 Line::from(""),
                 Line::from(vec![
@@ -318,5 +392,32 @@ mod tests {
         msg.invalidate_cache();
         let lines3 = msg.to_lines();
         assert_eq!(lines3.len(), 1);
+    }
+
+    #[test]
+    fn append_assistant_text_extends_plain_cache() {
+        let mut msg = Message::new(MessageContent::AssistantText("hello".into()));
+        assert_eq!(msg.to_lines().len(), 1);
+
+        msg.append_assistant_text(" world\nnext");
+        let lines = msg.to_lines();
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(line_text(&lines[0]), "hello world");
+        assert_eq!(line_text(&lines[1]), "next");
+    }
+
+    #[test]
+    fn append_thinking_text_extends_cache() {
+        let mut msg = Message::new(MessageContent::ThinkingText("thinking".into()));
+        assert_eq!(msg.to_lines().len(), 1);
+
+        msg.append_thinking_text("...\nmore");
+        let lines = msg.to_lines();
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(line_text(&lines[0]), "thinking...");
+        assert_eq!(line_text(&lines[1]), "more");
+        assert_eq!(lines[0].style.fg, Some(MUTED));
     }
 }

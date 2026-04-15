@@ -116,8 +116,8 @@ impl PluginLoader {
     /// Convert all plugin hooks into a `HooksConfig` that can be merged with
     /// the settings-based hooks before passing to the engine.
     pub fn hooks_config(&self) -> clawed_core::config::HooksConfig {
-        use clawed_core::config::{HookCommandDef, HookRule, HooksConfig};
         use super::manifest::HookEvent as PluginEvent;
+        use clawed_core::config::{HookCommandDef, HookRule, HooksConfig};
 
         let mut config = HooksConfig::default();
         for plugin in &self.plugins {

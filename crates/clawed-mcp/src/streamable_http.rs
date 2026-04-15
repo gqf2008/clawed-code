@@ -58,10 +58,7 @@ impl StreamableHttpTransport {
     /// This does NOT open the optional GET SSE stream — that happens lazily
     /// when the server sends back a session ID.
     pub async fn connect(config: &McpStreamableHttpConfig) -> Result<Self> {
-        info!(
-            "Connecting to MCP Streamable HTTP server at {}",
-            config.url
-        );
+        info!("Connecting to MCP Streamable HTTP server at {}", config.url);
 
         let http = reqwest::Client::builder()
             .user_agent("claude-code-rs/0.1 MCP-StreamableHTTP")
@@ -92,9 +89,7 @@ impl StreamableHttpTransport {
         );
         header_map.insert(
             reqwest::header::ACCEPT,
-            reqwest::header::HeaderValue::from_static(
-                "application/json, text/event-stream",
-            ),
+            reqwest::header::HeaderValue::from_static("application/json, text/event-stream"),
         );
         // Session ID
         if let Some(sid) = self.session_id.read().await.as_ref() {
@@ -213,18 +208,14 @@ impl StreamableHttpTransport {
 
                         if let Some(data) = extract_sse_data(&event_block) {
                             // Try as a JSON-RPC response
-                            if let Ok(rpc_resp) =
-                                serde_json::from_str::<JsonRpcResponse>(&data)
-                            {
+                            if let Ok(rpc_resp) = serde_json::from_str::<JsonRpcResponse>(&data) {
                                 if rpc_resp.id == Some(request_id) {
                                     if let Some(error) = rpc_resp.error {
                                         anyhow::bail!(
                                             "MCP error {}: {} {}",
                                             error.code,
                                             error.message,
-                                            error.data
-                                                .map(|d| d.to_string())
-                                                .unwrap_or_default()
+                                            error.data.map(|d| d.to_string()).unwrap_or_default()
                                         );
                                     }
                                     return Ok(rpc_resp.result.unwrap_or(Value::Null));
@@ -239,9 +230,7 @@ impl StreamableHttpTransport {
                                 continue;
                             }
                             // Try as a notification
-                            if let Ok(notif) =
-                                serde_json::from_str::<JsonRpcNotification>(&data)
-                            {
+                            if let Ok(notif) = serde_json::from_str::<JsonRpcNotification>(&data) {
                                 let _ = self.notification_tx.send(notif);
                             }
                         }

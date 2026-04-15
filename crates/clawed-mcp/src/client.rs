@@ -93,12 +93,9 @@ impl McpClient {
                     config.command,
                     config.args.join(" ")
                 );
-                let t =
-                    StdioTransport::spawn(&config.command, &config.args, &config.env)
-                        .await
-                        .with_context(|| {
-                            format!("Failed to start MCP server '{}'", config.name)
-                        })?;
+                let t = StdioTransport::spawn(&config.command, &config.args, &config.env)
+                    .await
+                    .with_context(|| format!("Failed to start MCP server '{}'", config.name))?;
                 Transport::Stdio(t)
             }
         };

@@ -14,7 +14,9 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::client::McpClient;
-use crate::types::{McpContent, McpResource, McpServerConfig, McpToolDef, McpToolResult, McpTransportType};
+use crate::types::{
+    McpContent, McpResource, McpServerConfig, McpToolDef, McpToolResult, McpTransportType,
+};
 
 /// Prefix for MCP tool proxy names: `mcp__<server>__<tool>`.
 pub const MCP_TOOL_PREFIX: &str = "mcp__";
@@ -638,7 +640,10 @@ pub fn load_mcp_configs(path: &std::path::Path) -> Result<Vec<McpServerConfig>> 
                 ..Default::default()
             });
         } else {
-            warn!("MCP server '{}': no 'command' or 'url' found, skipping", name);
+            warn!(
+                "MCP server '{}': no 'command' or 'url' found, skipping",
+                name
+            );
         }
     }
 
@@ -895,7 +900,10 @@ mod tests {
         let configs = load_mcp_configs(&config_path).unwrap();
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].name, "remote");
-        assert_eq!(configs[0].url.as_deref(), Some("https://mcp.example.com/api"));
+        assert_eq!(
+            configs[0].url.as_deref(),
+            Some("https://mcp.example.com/api")
+        );
         assert_eq!(configs[0].transport, McpTransportType::StreamableHttp);
         assert_eq!(configs[0].headers.len(), 1);
     }
