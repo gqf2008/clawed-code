@@ -127,6 +127,7 @@ mod tests {
             permission_mode: PermissionMode::Default,
             abort_signal: Default::default(),
             messages: vec![],
+            output_line: None,
         }
     }
 

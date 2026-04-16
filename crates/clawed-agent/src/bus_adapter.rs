@@ -379,6 +379,14 @@ impl AgentCoreAdapter {
                     }
                 }
 
+                AgentEvent::ToolOutputLine { id, name, line } => {
+                    AgentNotification::ToolOutputLine {
+                        id,
+                        tool_name: name,
+                        line,
+                    }
+                }
+
                 AgentEvent::ToolResult { id, is_error, text } => {
                     let tool_name = self.tool_names.lock().await.remove(&id).unwrap_or_default();
                     AgentNotification::ToolUseComplete {
@@ -865,6 +873,9 @@ mod tests {
                 code: ErrorCode::InternalError,
                 message: msg,
             }),
+            AgentEvent::ToolOutputLine { id, name, line } => {
+                Some(AgentNotification::ToolOutputLine { id, tool_name: name, line })
+            }
         }
     }
 }

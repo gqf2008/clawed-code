@@ -221,6 +221,7 @@ impl SwarmSession {
                     abort_signal: AbortSignal::new(),
                     permission_mode: PermissionMode::Auto,
                     messages: self.history.clone(),
+                    output_line: None,
                 };
                 let result_block = match self.registry.get(&name) {
                     Some(tool) => match tool.call(input, &ctx).await {

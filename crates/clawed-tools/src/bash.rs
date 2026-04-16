@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use clawed_core::tool::{Tool, ToolCategory, ToolContext, ToolResult};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 /// Maximum output size in bytes before truncation.
@@ -394,18 +395,75 @@ impl Tool for BashTool {
             cmd.env(k, v);
         }
 
-        let child = cmd
+        let mut child = cmd
             .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to execute: {e}"))?;
 
         let child_id = child.id();
         let abort = context.abort_signal.clone();
 
+        // Take ownership of stdout/stderr pipes
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+
+        // Stream stdout lines via the output_line callback.
+        let output_line_cb = context.output_line.clone();
+
+        let stdout_task = async move {
+            let mut collected = String::new();
+            if let Some(stdout) = stdout_pipe {
+                let mut reader = BufReader::new(stdout);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match reader.read_line(&mut line).await {
+                        Ok(0) => break, // EOF
+                        Ok(_) => {
+                            let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
+                            if let Some(ref cb) = output_line_cb {
+                                cb(trimmed);
+                            }
+                            collected.push_str(&line);
+                        }
+                        Err(e) => {
+                            collected.push_str(&format!("[read error: {e}]\n"));
+                            break;
+                        }
+                    }
+                }
+            }
+            collected
+        };
+
+        let stderr_task = async move {
+            let mut collected = String::new();
+            if let Some(stderr) = stderr_pipe {
+                let mut reader = BufReader::new(stderr);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match reader.read_line(&mut line).await {
+                        Ok(0) => break,
+                        Ok(_) => collected.push_str(&line),
+                        Err(_) => break,
+                    }
+                }
+            }
+            collected
+        };
+
         // Race: child completion vs timeout vs abort signal
         let result = tokio::select! {
             r = tokio::time::timeout(
                 std::time::Duration::from_millis(timeout_ms),
-                child.wait_with_output(),
+                async {
+                    let (stdout_result, stderr_result, status) = tokio::join!(
+                        stdout_task,
+                        stderr_task,
+                        child.wait()
+                    );
+                    (stdout_result, stderr_result, status)
+                },
             ) => r,
             () = async {
                 loop {
@@ -422,23 +480,21 @@ impl Tool for BashTool {
         };
 
         match result {
-            Ok(Ok(output)) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let mut result = stdout.to_string();
-                if !stderr.is_empty() {
+            Ok((stdout_str, stderr_str, Ok(status))) => {
+                let mut result = stdout_str;
+                if !stderr_str.is_empty() {
                     if !result.is_empty() {
                         result.push('\n');
                     }
                     result.push_str("STDERR:\n");
-                    result.push_str(&stderr);
+                    result.push_str(&stderr_str);
                 }
 
                 let result = truncate_output(result);
 
-                let exit_code = output.status.code().unwrap_or(-1);
+                let exit_code = status.code().unwrap_or(-1);
 
-                if output.status.success() {
+                if status.success() {
                     Ok(ToolResult::text(if result.is_empty() {
                         "(no output)".into()
                     } else {
@@ -470,7 +526,7 @@ impl Tool for BashTool {
                     }
                 }
             }
-            Ok(Err(e)) => Err(anyhow::anyhow!("Process error: {e}")),
+            Ok((_, _, Err(e))) => Err(anyhow::anyhow!("Process error: {e}")),
             Err(_) => {
                 if let Some(pid) = child_id {
                     kill_process(pid);
@@ -729,6 +785,7 @@ mod tests {
             abort_signal: abort,
             permission_mode: PermissionMode::BypassAll,
             messages: Vec::new(),
+            output_line: None,
         };
 
         // Use a long-running command; abort should stop it immediately

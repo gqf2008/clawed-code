@@ -23,7 +23,7 @@ pub enum AgentNotification {
     ThinkingDelta { text: String },
 
     // ── Tool lifecycle ──
-    /// A tool invocation has started (input may still be streaming).
+    /// A tool invocation has started.
     ToolUseStart { id: String, tool_name: String },
 
     /// Tool input is fully available.
@@ -31,6 +31,13 @@ pub enum AgentNotification {
         id: String,
         tool_name: String,
         input: Value,
+    },
+
+    /// Tool output line emitted during execution (for live display).
+    ToolOutputLine {
+        id: String,
+        tool_name: String,
+        line: String,
     },
 
     /// Tool execution completed (success or error).

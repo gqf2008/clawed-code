@@ -353,6 +353,7 @@ impl Tool for DispatchAgentTool {
             abort_signal: context.abort_signal.clone(),
             permission_mode: context.permission_mode,
             messages: Vec::new(),
+            output_line: None,
         };
 
         // Bootstrap with the user prompt as the first message
@@ -409,6 +410,7 @@ impl Tool for DispatchAgentTool {
                     abort_signal: agent_abort.clone(),
                     permission_mode: tool_context.permission_mode,
                     messages: Vec::new(),
+                    output_line: None,
                 };
 
                 // Create message channel so SendMessage can deliver follow-ups

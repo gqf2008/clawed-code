@@ -687,6 +687,21 @@ pub fn notification_to_jsonrpc(notif: &AgentNotification) -> Notification {
                 ],
             ),
         ),
+        AgentNotification::ToolOutputLine {
+            id,
+            tool_name,
+            line,
+        } => Notification::new(
+            "agent.toolOutputLine",
+            json_obj(
+                3,
+                &[
+                    ("id", Value::String(id.clone())),
+                    ("tool_name", Value::String(tool_name.clone())),
+                    ("line", Value::String(line.clone())),
+                ],
+            ),
+        ),
     }
 }
 

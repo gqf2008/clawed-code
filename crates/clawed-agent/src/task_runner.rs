@@ -202,7 +202,8 @@ where
             AgentEvent::TurnTokens { .. }
             | AgentEvent::ContextWarning { .. }
             | AgentEvent::CompactStart
-            | AgentEvent::CompactComplete { .. } => {}
+            | AgentEvent::CompactComplete { .. }
+            | AgentEvent::ToolOutputLine { .. } => {}
         }
     }
 

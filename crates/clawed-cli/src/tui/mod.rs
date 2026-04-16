@@ -65,9 +65,29 @@ const SPINNER_TICK_INTERVAL: Duration = Duration::from_millis(80);
 const MIN_RENDER_INTERVAL: Duration = Duration::from_millis(32);
 const MAX_COMPLETION_POPUP_ITEMS: usize = 10;
 
-fn collapsed_thinking_lines(_text: &str) -> Vec<Line<'static>> {
-    // Thinking tracking lives in the status bar — keep transcript clean.
-    vec![]
+fn collapsed_thinking_lines(text: &str) -> Vec<Line<'static>> {
+    if text.is_empty() {
+        return vec![];
+    }
+
+    let line_count = text.lines().count();
+    if line_count <= 3 {
+        // Short thinking (≤3 lines) — render normally with muted/italic style
+        return text
+            .lines()
+            .map(|l| {
+                Line::styled(
+                    l.to_string(),
+                    Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
+                )
+            })
+            .collect();
+    }
+
+    vec![Line::styled(
+        format!("+ {line_count} lines (Ctrl+O to expand)"),
+        Style::default().fg(MUTED),
+    )]
 }
 
 fn plain_text_lines(text: &str) -> Vec<Line<'static>> {
@@ -78,6 +98,24 @@ fn plain_text_lines(text: &str) -> Vec<Line<'static>> {
     text.lines()
         .map(|line| Line::from(line.to_string()))
         .collect()
+}
+
+/// Extract a short display string from tool input JSON for the header line.
+/// e.g. Bash → `command` field, Read → `path` field.
+fn extract_tool_input_display(tool_name: &str, input: &serde_json::Value) -> Option<String> {
+    let key = match tool_name.to_lowercase().as_str() {
+        "bash" | "shell" => "command",
+        "read" | "read_file" | "write" | "write_file" | "edit" | "multi_edit" => "path",
+        "web_search" | "websearch" => "query",
+        "web_fetch" | "webfetch" => "url",
+        "ls" => "path",
+        "grep" => "pattern",
+        _ => return None,
+    };
+    input
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 fn should_clear_message_area(previous_total_visual: Option<usize>, total_visual: usize) -> bool {
@@ -752,8 +790,33 @@ impl App {
                         started: Instant::now(),
                     },
                 );
-                // Skip pushing ToolUseStart message — tool tracking lives in
-                // the status bar, keeping the transcript compact.
+                // Create message immediately so ToolOutputLine streaming has
+                // somewhere to append. Input will be filled in by ToolUseReady.
+                self.push_message(MessageContent::ToolExecution {
+                    name: tool_name,
+                    input: None,
+                    output_lines: vec![],
+                    is_error: false,
+                    duration_ms: 0,
+                    full_result: None,
+                });
+            }
+            AgentNotification::ToolUseReady { tool_name, input, .. } => {
+                // Update the last ToolExecution message with the input display.
+                let input_str = extract_tool_input_display(&tool_name, &input);
+                if let Some(msg) = self.messages.iter_mut().rev().find(|m| {
+                    matches!(
+                        &m.content,
+                        MessageContent::ToolExecution { name, .. } if *name == tool_name
+                    )
+                }) {
+                    if let MessageContent::ToolExecution { input: ref mut inp, .. } =
+                        &mut msg.content
+                    {
+                        *inp = input_str;
+                    }
+                    msg.invalidate_cache();
+                }
             }
             AgentNotification::ToolUseComplete {
                 tool_name,
@@ -761,8 +824,9 @@ impl App {
                 result_preview,
                 ..
             } => {
-                if tool_name.to_lowercase().contains("bash")
-                    || tool_name.to_lowercase().contains("shell")
+                if !tool_name.is_empty()
+                    && (tool_name.to_lowercase().contains("bash")
+                        || tool_name.to_lowercase().contains("shell"))
                 {
                     self.status.active_shells = self.status.active_shells.saturating_sub(1);
                     self.task_plan.set_shells(self.status.active_shells);
@@ -774,20 +838,43 @@ impl App {
                     .map(|t| t.started.elapsed().as_millis() as u64)
                     .unwrap_or(0);
                 self.status.active_tools.remove(&tool_name);
-                let preview = result_preview.unwrap_or_default();
-                // Store full_result only when preview is substantial enough to warrant collapsing
-                let full_result = if preview.len() > 200 || preview.lines().count() > 3 {
-                    Some(preview.clone())
+                // Update the last ToolExecution message in-place.
+                // If tool_name is empty (lookup failed), fall back to last ToolExecution.
+                let result = result_preview.unwrap_or_default();
+                let msg = if tool_name.is_empty() {
+                    self.messages.iter_mut().rev().find(|m| {
+                        matches!(&m.content, MessageContent::ToolExecution { .. })
+                    })
                 } else {
-                    None
+                    self.messages.iter_mut().rev().find(|m| {
+                        matches!(
+                            &m.content,
+                            MessageContent::ToolExecution { name, .. } if *name == tool_name
+                        )
+                    })
                 };
-                self.push_message(MessageContent::ToolResult {
-                    name: tool_name,
-                    preview,
-                    full_result,
-                    is_error,
-                    duration_ms,
-                });
+                if let Some(msg) = msg {
+                    msg.update_tool_result(is_error, duration_ms, &result);
+                }
+            }
+            AgentNotification::ToolOutputLine { tool_name, line, .. } => {
+                // Append output line to the last matching ToolExecution message.
+                // Fall back to last ToolExecution if name doesn't match (name lookup may fail).
+                let msg = if tool_name.is_empty() {
+                    self.messages.iter_mut().rev().find(|m| {
+                        matches!(&m.content, MessageContent::ToolExecution { .. })
+                    })
+                } else {
+                    self.messages.iter_mut().rev().find(|m| {
+                        matches!(
+                            &m.content,
+                            MessageContent::ToolExecution { name, .. } if *name == tool_name
+                        )
+                    })
+                };
+                if let Some(msg) = msg {
+                    msg.append_tool_output_line(line);
+                }
             }
             AgentNotification::TurnComplete { turn, usage, .. } => {
                 self.total_turns = turn;
@@ -987,10 +1074,6 @@ impl App {
                     "Session saved: {session_id}",
                 )));
             }
-            // Tool input is intentionally not shown in TUI history. The user only
-            // needs to know which tool is running; long parameter dumps add noise
-            // and can still produce visually disruptive output.
-            AgentNotification::ToolUseReady { .. } => {}
             // Tool selected — pre-execution signal (just a brief note)
             AgentNotification::ToolSelected { .. } => {}
             // AssistantMessage — full text for logging, already shown via TextDelta
@@ -3438,8 +3521,16 @@ async fn replay_session_messages(engine: &Arc<QueryEngine>, app: &mut App) {
                         ContentBlock::Thinking { thinking } => {
                             app.push_message(MessageContent::ThinkingText(thinking.clone()));
                         }
-                        ContentBlock::ToolUse { .. } => {
-                            // Skip — tool tracking lives in the status bar.
+                        ContentBlock::ToolUse { name, input, .. } => {
+                            let input_str = extract_tool_input_display(name, input);
+                            app.push_message(MessageContent::ToolExecution {
+                                name: name.clone(),
+                                input: input_str,
+                                output_lines: vec![],
+                                is_error: false,
+                                duration_ms: 0,
+                                full_result: None,
+                            });
                         }
                         _ => {}
                     }
@@ -3754,16 +3845,27 @@ mod tests {
     }
 
     #[test]
-    fn collapsed_thinking_shows_no_lines() {
+    fn collapsed_thinking_short_text_shows_lines() {
+        // Short thinking (≤3 lines) renders normally even when collapsed
         let mut app = App::new("test".to_string());
         app.thinking_collapsed = true;
-        app.push_message(MessageContent::ThinkingText("one".to_string()));
+        app.push_message(MessageContent::ThinkingText("one\n\ntwo".to_string()));
 
-        app.append_thinking_text("\ntwo");
+        // 3 lines, so no collapse hint — lines render directly
+        assert_eq!(app.cached_visible_lines.len(), 3);
+    }
 
-        // Thinking tracking lives in status bar — transcript shows nothing.
-        assert!(!app.cached_visible_lines_dirty);
-        assert_eq!(app.cached_visible_lines.len(), 0);
+    #[test]
+    fn collapsed_thinking_long_text_shows_hint() {
+        let mut app = App::new("test".to_string());
+        app.thinking_collapsed = true;
+        app.push_message(MessageContent::ThinkingText(
+            "one\ntwo\nthree\nfour".to_string(),
+        ));
+
+        // >3 lines, so collapse hint
+        assert_eq!(app.cached_visible_lines.len(), 1);
+        assert!(line_text(&app.cached_visible_lines[0]).contains("4 lines"));
     }
 
     #[test]

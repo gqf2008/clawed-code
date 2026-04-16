@@ -6,6 +6,11 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+/// Callback for streaming tool output lines during execution.
+/// Tools call this with just the line text. The executor sets this up
+/// so that each line is forwarded with the tool's id and name.
+pub type OutputLineCallback = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// Simple abort signal using atomic boolean
 #[derive(Clone)]
 pub struct AbortSignal(Arc<AtomicBool>);
@@ -42,6 +47,9 @@ pub struct ToolContext {
     pub abort_signal: AbortSignal,
     pub permission_mode: PermissionMode,
     pub messages: Vec<crate::message::Message>,
+    /// Optional callback for streaming output during tool execution.
+    /// Tools like Bash can call this for each stdout line.
+    pub output_line: Option<OutputLineCallback>,
 }
 
 /// Result of a tool execution
@@ -91,6 +99,7 @@ impl Default for ToolContext {
             abort_signal: AbortSignal::new(),
             permission_mode: PermissionMode::Default,
             messages: Vec::new(),
+            output_line: None,
         }
     }
 }
@@ -261,6 +270,7 @@ mod tests {
             abort_signal: AbortSignal::new(),
             permission_mode: PermissionMode::Default,
             messages: vec![],
+            output_line: None,
         };
         let ctx2 = ctx.clone();
         assert_eq!(ctx2.cwd, PathBuf::from("/tmp"));

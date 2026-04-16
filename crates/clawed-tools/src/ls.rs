@@ -160,6 +160,7 @@ mod tests {
             abort_signal: AbortSignal::new(),
             permission_mode: PermissionMode::Default,
             messages: vec![],
+            output_line: None,
         }
     }
 

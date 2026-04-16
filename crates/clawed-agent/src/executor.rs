@@ -14,6 +14,9 @@ use tracing::{debug, warn};
 /// Max number of tools that may run concurrently (mirrors TS default of 10).
 const MAX_TOOL_CONCURRENCY: usize = 10;
 
+/// Sender for streaming tool output lines (message_id, tool_name, line).
+type OutputLineSender = tokio::sync::mpsc::UnboundedSender<(String, String, String)>;
+
 pub struct ToolExecutor {
     registry: Arc<ToolRegistry>,
     permission_checker: Arc<PermissionChecker>,
@@ -22,6 +25,9 @@ pub struct ToolExecutor {
     /// Pluggable permission prompter. Defaults to [`TerminalPrompter`] (REPL).
     /// Replaced with a bus-based prompter when running inside the ratatui TUI.
     prompter: std::sync::OnceLock<Arc<dyn PermissionPrompter>>,
+    /// Optional sender for streaming tool output lines (id, name, line).
+    /// Uses RwLock for interior mutability since executor is behind Arc.
+    output_tx: std::sync::RwLock<Option<Arc<OutputLineSender>>>,
 }
 
 impl ToolExecutor {
@@ -32,6 +38,7 @@ impl ToolExecutor {
             hooks: Arc::new(HookRegistry::new()),
             session_id: String::new(),
             prompter: std::sync::OnceLock::new(),
+            output_tx: std::sync::RwLock::new(None),
         }
     }
 
@@ -46,7 +53,13 @@ impl ToolExecutor {
             hooks,
             session_id: String::new(),
             prompter: std::sync::OnceLock::new(),
+            output_tx: std::sync::RwLock::new(None),
         }
+    }
+
+    /// Set the channel for streaming tool output lines during execution.
+    pub fn set_output_tx(&self, tx: tokio::sync::mpsc::UnboundedSender<(String, String, String)>) {
+        *self.output_tx.write().unwrap() = Some(Arc::new(tx));
     }
 
     /// Set the session ID for audit logging.
@@ -278,7 +291,21 @@ impl ToolExecutor {
 
         debug!("Executing tool: {}", tool_name);
         let audit = AuditSpan::begin(&self.session_id, tool_name, &input);
-        match tool.call(input.clone(), context).await {
+
+        // Set up the output_line callback for this tool invocation.
+        // If the executor has an output_tx channel, create a callback that sends
+        // (tool_use_id, tool_name, line) so the query loop can yield ToolOutputLine events.
+        let mut ctx = context.clone();
+        if let Some(tx) = self.output_tx.read().unwrap().as_ref() {
+            let id = tool_use_id.to_string();
+            let tname = tool_name.to_string();
+            let tx = Arc::clone(tx);
+            ctx.output_line = Some(std::sync::Arc::new(move |line: &str| {
+                let _ = tx.send((id.clone(), tname.clone(), line.to_string()));
+            }));
+        }
+
+        match tool.call(input.clone(), &ctx).await {
             Ok(result) => {
                 audit.finish(true, None);
                 // Apply tool result size limiting to prevent context explosion
@@ -625,6 +652,7 @@ mod tests {
             abort_signal: clawed_core::tool::AbortSignal::new(),
             permission_mode: PermissionMode::BypassAll,
             messages: Vec::new(),
+            output_line: None,
         };
         let result = executor
             .execute("t1", "NonExistentTool", json!({}), &ctx)
@@ -669,6 +697,7 @@ mod tests {
             abort_signal: clawed_core::tool::AbortSignal::new(),
             permission_mode: PermissionMode::BypassAll,
             messages: Vec::new(),
+            output_line: None,
         };
         let cargo_toml = cwd.join("Cargo.toml");
         let result = executor
@@ -711,6 +740,7 @@ mod tests {
             abort_signal,
             permission_mode: PermissionMode::BypassAll,
             messages: Vec::new(),
+            output_line: None,
         };
         let result = executor
             .execute("t1", "Read", json!({"file_path": "Cargo.toml"}), &ctx)
@@ -751,6 +781,7 @@ mod tests {
             abort_signal: clawed_core::tool::AbortSignal::new(),
             permission_mode: PermissionMode::Default,
             messages: Vec::new(),
+            output_line: None,
         };
         let result = executor
             .execute("t1", "Read", json!({"file_path": "Cargo.toml"}), &ctx)
@@ -787,6 +818,7 @@ mod tests {
             abort_signal: clawed_core::tool::AbortSignal::new(),
             permission_mode: PermissionMode::Plan,
             messages: Vec::new(),
+            output_line: None,
         };
         let cargo_toml = cwd.join("Cargo.toml");
         let result = executor
@@ -855,5 +887,66 @@ mod tests {
         assert!(!desc.contains('\n'), "got: {desc}");
         assert!(!desc.contains('\t'), "got: {desc}");
         assert!(desc.contains("echo hello world && ls"), "got: {desc}");
+    }
+
+    #[tokio::test]
+    async fn test_output_line_callback_streams_during_execution() {
+        let registry = Arc::new(ToolRegistry::with_defaults());
+        let checker = Arc::new(PermissionChecker::new(
+            PermissionMode::BypassAll,
+            Vec::new(),
+        ));
+        let mut executor = ToolExecutor::new(registry, checker);
+        executor.set_session_id("test-stream");
+
+        // Set up the output channel
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, String, String)>();
+        executor.set_output_tx(tx);
+
+        let ctx = clawed_core::tool::ToolContext {
+            cwd: std::path::PathBuf::from("/tmp"),
+            abort_signal: clawed_core::tool::AbortSignal::new(),
+            permission_mode: PermissionMode::BypassAll,
+            messages: Vec::new(),
+            output_line: None,
+        };
+
+        // Run a command that produces multi-line output
+        let result = executor
+            .execute("t1", "Bash", json!({"command": "echo line1\necho line2\necho line3"}), &ctx)
+            .await;
+
+        // Verify the result is correct
+        let text = match result {
+            ContentBlock::ToolResult { content, .. } => {
+                content.first().and_then(|c| {
+                    if let ToolResultContent::Text { text } = c {
+                        Some(text.clone())
+                    } else { None }
+                }).unwrap_or_default()
+            }
+            _ => String::new(),
+        };
+        assert!(text.contains("line1"), "expected line1 in result, got: {text}");
+
+        // Verify streaming lines were sent through the channel
+        let mut lines = Vec::new();
+        while let Ok((_id, _name, line)) = rx.try_recv() {
+            if !line.is_empty() {
+                lines.push(line);
+            }
+        }
+        assert!(
+            lines.iter().any(|l| l.contains("line1")),
+            "expected line1 in streamed output, got: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("line2")),
+            "expected line2 in streamed output, got: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("line3")),
+            "expected line3 in streamed output, got: {lines:?}"
+        );
     }
 }

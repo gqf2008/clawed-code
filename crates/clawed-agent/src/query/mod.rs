@@ -33,6 +33,12 @@ pub enum AgentEvent {
         name: String,
         input: serde_json::Value,
     },
+    /// Live output line from a running tool.
+    ToolOutputLine {
+        id: String,
+        name: String,
+        line: String,
+    },
     ToolResult {
         id: String,
         is_error: bool,
@@ -149,6 +155,14 @@ pub fn query_stream_with_injection(
         const MAX_STOP_HOOK_RETRIES: u32 = 3;
         let mut inject_rx = inject_rx;
 
+        // Channel for streaming tool output lines during execution.
+        // The executor's output_tx is set to this channel; during tool execution,
+        // the executor creates a wrapped callback that sends (id, name, line).
+        let (output_tx, mut output_rx) = tokio::sync::mpsc::unbounded_channel::<(String, String, String)>();
+        executor.set_output_tx(output_tx);
+        // Clear the output_line field since the executor handles it directly
+        tool_context.output_line = None;
+
         // ── Recovery state (aligned with TS query.ts) ────────────────────────
         let mut max_tokens_recovery_count: u32 = 0;
         const MAX_TOKENS_RECOVERY_LIMIT: u32 = 3;
@@ -176,6 +190,11 @@ pub fn query_stream_with_injection(
                         }],
                     }));
                 }
+            }
+
+            // Drain any streaming tool output lines from tool executions
+            while let Ok((id, name, line)) = output_rx.try_recv() {
+                yield AgentEvent::ToolOutputLine { id, name, line };
             }
 
             // Check abort at the top of every turn
@@ -520,7 +539,31 @@ pub fn query_stream_with_injection(
 
                     // Snapshot messages into tool_context so tools like ContextTool can inspect them
                     tool_context.messages = messages.clone();
-                    let results: Vec<ContentBlock> = executor.execute_many(tool_uses, &tool_context).await;
+
+                    // Interleave tool execution with live output draining.
+                    // tokio::select! polls both branches concurrently, so output lines
+                    // are yielded as they arrive — not buffered until execution finishes.
+                    let exec_fut = executor.execute_many(tool_uses, &tool_context);
+                    let results = {
+                        let mut exec_fut = std::pin::pin!(exec_fut);
+                        loop {
+                            tokio::select! {
+                                // Tool execution completes
+                                results = &mut exec_fut => {
+                                    // Drain any remaining output
+                                    while let Ok((id, name, line)) = output_rx.try_recv() {
+                                        yield AgentEvent::ToolOutputLine { id, name, line };
+                                    }
+                                    break results;
+                                }
+                                // Output line arrives during execution
+                                Some((id, name, line)) = output_rx.recv() => {
+                                    yield AgentEvent::ToolOutputLine { id, name, line };
+                                }
+                            }
+                        }
+                    };
+
                     let tool_result_msg = UserMessage {
                         uuid: Uuid::new_v4().to_string(),
                         content: results.clone(),

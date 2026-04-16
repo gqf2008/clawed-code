@@ -159,6 +159,7 @@ fn test_setup(
         abort_signal: clawed_core::tool::AbortSignal::new(),
         permission_mode: clawed_core::permissions::PermissionMode::Default,
         messages: vec![],
+        output_line: None,
     };
     let hooks = Arc::new(crate::hooks::HookRegistry::new());
     (client, executor, state, tool_context, hooks)
@@ -611,6 +612,7 @@ async fn e2e_full_tool_round_trip_with_registered_tool() {
         abort_signal: clawed_core::tool::AbortSignal::new(),
         permission_mode: clawed_core::permissions::PermissionMode::BypassAll,
         messages: vec![],
+        output_line: None,
     };
     let hooks = Arc::new(crate::hooks::HookRegistry::new());
     let config = QueryConfig {
@@ -982,6 +984,7 @@ async fn e2e_permission_denied_returns_error_tool_result() {
         abort_signal: clawed_core::tool::AbortSignal::new(),
         permission_mode: clawed_core::permissions::PermissionMode::Plan,
         messages: vec![],
+        output_line: None,
     };
     let hooks = Arc::new(crate::hooks::HookRegistry::new());
     let config = QueryConfig {
@@ -1072,6 +1075,7 @@ async fn e2e_tool_execution_error_returns_error_result() {
         abort_signal: clawed_core::tool::AbortSignal::new(),
         permission_mode: clawed_core::permissions::PermissionMode::Default,
         messages: vec![],
+        output_line: None,
     };
     let hooks = Arc::new(crate::hooks::HookRegistry::new());
     let config = QueryConfig {
@@ -1232,6 +1236,7 @@ async fn e2e_text_and_tool_use_in_same_response() {
         abort_signal: clawed_core::tool::AbortSignal::new(),
         permission_mode: clawed_core::permissions::PermissionMode::Default,
         messages: vec![],
+        output_line: None,
     };
     let hooks = Arc::new(crate::hooks::HookRegistry::new());
     let config = QueryConfig {

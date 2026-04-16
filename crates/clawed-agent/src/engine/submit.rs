@@ -65,6 +65,7 @@ impl QueryEngine {
             abort_signal: self.abort_signal.clone(),
             permission_mode,
             messages: Vec::new(),
+            output_line: None,
         };
 
         query_stream(
@@ -146,6 +147,7 @@ impl QueryEngine {
             abort_signal: self.abort_signal.clone(),
             permission_mode,
             messages: Vec::new(),
+            output_line: None,
         };
 
         query_stream(

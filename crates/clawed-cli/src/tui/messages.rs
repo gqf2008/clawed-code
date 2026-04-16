@@ -8,10 +8,6 @@ use ratatui::{
     text::{Line, Span},
 };
 
-fn thinking_style() -> Style {
-    Style::default().fg(MUTED).add_modifier(Modifier::ITALIC)
-}
-
 fn line_text(line: &Line<'_>) -> String {
     line.spans
         .iter()
@@ -59,18 +55,25 @@ fn diff_line_style(line: &str) -> Style {
     }
 }
 
+// ── Message content types ───────────────────────────────────────────────────
+
 /// The content type of a single message in the conversation history.
 #[derive(Debug, Clone)]
 pub enum MessageContent {
     UserInput(String),
     AssistantText(String),
     ThinkingText(String),
-    ToolResult {
+    /// A tool execution — merges use + result into one visual unit.
+    ToolExecution {
         name: String,
-        preview: String,
-        full_result: Option<String>,
+        /// Short command / input summary for display (e.g. `cargo test`).
+        input: Option<String>,
+        /// Last few output lines shown inline under the header.
+        output_lines: Vec<String>,
         is_error: bool,
         duration_ms: u64,
+        /// Full output for the expand view.
+        full_result: Option<String>,
     },
     System(String),
 }
@@ -81,7 +84,7 @@ pub struct Message {
     pub content: MessageContent,
     #[allow(dead_code)] // Reserved for Phase 5 timestamp display
     pub timestamp: Instant,
-    /// Whether the tool result is collapsed (true = show preview only).
+    /// Whether the tool execution is collapsed (true = show header only).
     pub collapsed: bool,
     /// Cached rendered lines. Invalidated when content changes.
     cached_lines: RefCell<Option<Vec<Line<'static>>>>,
@@ -138,25 +141,70 @@ impl Message {
 
         let cached_lines = self.cached_lines.get_mut();
         if let Some(lines) = cached_lines.as_mut() {
-            append_plain_lines(lines, text, thinking_style());
+            append_plain_lines(lines, text, Style::default());
             return;
         }
         *cached_lines = None;
     }
 
-    /// Toggle collapsed state for tool results.
+    /// Update the last ToolExecution message with result info.
+    /// Called when ToolUseComplete arrives.
+    /// Preserves streaming output_lines — only adds full_result for expand.
+    pub fn update_tool_result(&mut self, is_error: bool, duration_ms: u64, result: &str) {
+        if let MessageContent::ToolExecution {
+            output_lines,
+            full_result,
+            is_error: ref mut e,
+            duration_ms: ref mut d,
+            ..
+        } = &mut self.content
+        {
+            // Store full result for expand view.
+            // Don't overwrite streaming output_lines — they stay as-is.
+            *full_result = if result.lines().count() > 5 {
+                Some(result.to_string())
+            } else if output_lines.is_empty() {
+                // No streaming happened, result is short — store in full_result
+                // so it still renders in the expanded section.
+                Some(result.to_string())
+            } else {
+                None
+            };
+            *e = is_error;
+            *d = duration_ms;
+            self.invalidate_cache();
+        }
+    }
+
+    /// Append a live output line to the ToolExecution message.
+    pub fn append_tool_output_line(&mut self, line: String) {
+        if let MessageContent::ToolExecution {
+            output_lines,
+            ..
+        } = &mut self.content
+        {
+            output_lines.push(line);
+            // Keep only last 5 lines
+            if output_lines.len() > 5 {
+                output_lines.remove(0);
+            }
+            self.invalidate_cache();
+        }
+    }
+
+    /// Toggle collapsed state for tool executions.
     pub fn toggle_collapsed(&mut self) {
-        if matches!(self.content, MessageContent::ToolResult { .. }) {
+        if matches!(self.content, MessageContent::ToolExecution { .. }) {
             self.collapsed = !self.collapsed;
             self.invalidate_cache();
         }
     }
 
-    /// Whether this message is a collapsible tool result (has full_result).
+    /// Whether this message is a collapsible tool execution (has full_result).
     pub fn is_collapsible(&self) -> bool {
         matches!(
             self.content,
-            MessageContent::ToolResult {
+            MessageContent::ToolExecution {
                 full_result: Some(_),
                 ..
             }
@@ -181,10 +229,11 @@ impl Message {
                 let prefix_style = Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD);
-                let text_style = Style::default().add_modifier(Modifier::BOLD);
+                let text_style = Style::default()
+                    .add_modifier(Modifier::BOLD);
                 let mut lines = vec![Line::from("")];
                 for (i, part) in text.split('\n').enumerate() {
-                    let prefix = if i == 0 { "> " } else { "  " };
+                    let prefix = if i == 0 { "\u{276F} " } else { "  " };
                     lines.push(Line::from(vec![
                         Span::styled(prefix.to_string(), prefix_style),
                         Span::styled(part.to_string(), text_style),
@@ -198,58 +247,145 @@ impl Message {
                 }
                 markdown::render_markdown(text)
             }
-            MessageContent::ThinkingText(text) => text
-                .lines()
-                .map(|l| Line::styled(l.to_string(), thinking_style()))
-                .collect(),
-            MessageContent::ToolResult {
+            MessageContent::ThinkingText(text) => {
+                if text.is_empty() {
+                    return vec![];
+                }
+                // Plain text — status bar already shows "Thinking" indicator.
+                text.lines().map(|l| Line::from(l.to_string())).collect()
+            }
+            MessageContent::ToolExecution {
                 name,
-                preview,
-                full_result,
+                input,
+                output_lines,
                 is_error,
                 duration_ms,
-            } => {
-                let (icon, color) = if *is_error {
-                    ("\u{2717} ", Color::Red)
-                } else {
-                    ("\u{2713} ", Color::Green)
-                };
-                let dur = if *duration_ms >= 1000 {
-                    format!("{:.1}s", *duration_ms as f64 / 1000.0)
-                } else {
-                    format!("{}ms", duration_ms)
-                };
-                let detail = if *is_error {
-                    format!("{name} failed ({dur}): {preview}")
-                } else {
-                    format!("{name} ({dur}, {} bytes)", preview.len())
-                };
-                let mut lines = vec![Line::from(vec![
-                    Span::styled(icon.to_string(), Style::default().fg(color)),
-                    Span::styled(detail, Style::default().fg(color)),
-                ])];
-
-                // Show full result when expanded and available
-                if !self.collapsed {
-                    if let Some(ref full) = full_result {
-                        lines.push(Line::from(""));
-                        for l in full.lines() {
-                            let style = diff_line_style(l);
-                            lines.push(Line::styled(format!("  {l}"), style));
-                        }
-                        lines.push(Line::from(""));
-                    }
-                }
-
-                lines
-            }
+                full_result,
+            } => self.render_tool_execution(
+                name,
+                input.as_deref(),
+                output_lines,
+                *is_error,
+                *duration_ms,
+                full_result.as_deref(),
+            ),
             MessageContent::System(text) => text
                 .lines()
                 .map(|l| Line::styled(l.to_string(), Style::default().fg(Color::Yellow)))
                 .collect(),
         }
     }
+
+    fn render_tool_execution(
+        &self,
+        name: &str,
+        input: Option<&str>,
+        output_lines: &[String],
+        is_error: bool,
+        duration_ms: u64,
+        full_result: Option<&str>,
+    ) -> Vec<Line<'static>> {
+        const TREE_CHAR: &str = "\u{2514}\u{2500} "; // └─
+        const MAX_INPUT_CHARS: usize = 80;
+
+        let mut lines = Vec::new();
+
+        // ── Header: ● Bash(command...) ──
+        let mut header_spans: Vec<Span<'static>> = Vec::new();
+        header_spans.push(Span::styled("● ", Style::default().fg(Color::Green)));
+        header_spans.push(Span::styled(
+            name.to_string(),
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
+        if let Some(cmd) = input {
+            let display = if cmd.len() > MAX_INPUT_CHARS {
+                format!("({}\u{2026})", &cmd[..MAX_INPUT_CHARS])
+            } else {
+                format!("({})", cmd)
+            };
+            header_spans.push(Span::styled(display, Style::default().fg(MUTED)));
+        }
+        lines.push(Line::from(header_spans));
+
+        // ── Output lines: └─ line ─
+        for line in output_lines {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(TREE_CHAR, Style::default().fg(MUTED)),
+                Span::styled(line.clone(), Style::default().fg(MUTED)),
+            ]));
+        }
+
+        // ── Duration hint: └─ (2.3s) ──
+        if duration_ms > 0 {
+            let dur = if duration_ms >= 1000 {
+                format!("{:.1}s", duration_ms as f64 / 1000.0)
+            } else {
+                format!("{}ms", duration_ms)
+            };
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(TREE_CHAR, Style::default().fg(MUTED)),
+                Span::styled(format!("({})", dur), Style::default().fg(MUTED)),
+            ]));
+        }
+
+        // ── Error indicator ──
+        if is_error && output_lines.is_empty() {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(TREE_CHAR, Style::default().fg(MUTED)),
+                Span::styled("\u{2717} failed", Style::default().fg(Color::Red)),
+            ]));
+        }
+
+        // ── Fold hint / expanded result ──
+        if let Some(full) = full_result {
+            if self.collapsed {
+                if output_lines.is_empty() {
+                    // No streaming happened — show first few lines inline.
+                    let preview_lines: Vec<&str> = full.lines().take(5).collect();
+                    let total = full.lines().count();
+                    for l in &preview_lines {
+                        let style = diff_line_style(l);
+                        lines.push(Line::from(vec![
+                            Span::raw("  "),
+                            Span::styled(TREE_CHAR, Style::default().fg(MUTED)),
+                            Span::styled(l.to_string(), style),
+                        ]));
+                    }
+                    if total > 5 {
+                        lines.push(Line::styled(
+                            format!("  + {} more lines (Ctrl+O to expand)", total - 5),
+                            Style::default().fg(MUTED),
+                        ));
+                    }
+                } else {
+                    let n = full.lines().count();
+                    lines.push(Line::styled(
+                        format!("  + {} lines (Ctrl+O to expand)", n),
+                        Style::default().fg(MUTED),
+                    ));
+                }
+            } else {
+                lines.push(Line::from(""));
+                for l in full.lines() {
+                    let style = diff_line_style(l);
+                    lines.push(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(TREE_CHAR, Style::default().fg(MUTED)),
+                        Span::styled(l.to_string(), style),
+                    ]));
+                }
+                lines.push(Line::from(""));
+            }
+        }
+
+        lines
+    }
 }
+
+// ── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -269,7 +405,7 @@ mod tests {
         assert_eq!(lines.len(), 3);
         let first: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
         let second: String = lines[2].spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(first, "> hello");
+        assert_eq!(first, "\u{276F} hello");
         assert_eq!(second, "  world");
     }
 
@@ -286,53 +422,93 @@ mod tests {
     }
 
     #[test]
-    fn tool_result_error() {
-        let msg = Message::new(MessageContent::ToolResult {
-            name: "bash".into(),
-            preview: "exit 1".into(),
+    fn tool_execution_header_shows_command() {
+        let msg = Message::new(MessageContent::ToolExecution {
+            name: "Bash".into(),
+            input: Some("cargo test -p clawed-cli".into()),
+            output_lines: vec![],
+            is_error: false,
+            duration_ms: 0,
             full_result: None,
-            is_error: true,
-            duration_ms: 120,
         });
         let lines = msg.to_lines();
         assert_eq!(lines.len(), 1);
+        let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("Bash"));
+        assert!(text.contains("cargo test"));
     }
 
     #[test]
-    fn tool_result_collapsed_is_single_line() {
-        let msg = Message::new(MessageContent::ToolResult {
-            name: "read_file".into(),
-            preview: "hello world".into(),
-            full_result: Some("hello world\nline 2".into()),
+    fn tool_execution_long_command_truncated() {
+        let long_cmd = "a".repeat(200);
+        let msg = Message::new(MessageContent::ToolExecution {
+            name: "Bash".into(),
+            input: Some(long_cmd.clone()),
+            output_lines: vec![],
             is_error: false,
-            duration_ms: 50,
+            duration_ms: 0,
+            full_result: None,
         });
-        // No separate expand hint — compact transcript.
         let lines = msg.to_lines();
-        assert_eq!(lines.len(), 1);
+        let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        // Truncated with ellipsis
+        assert!(text.contains('\u{2026}'));
     }
 
     #[test]
-    fn tool_result_expanded() {
-        let mut msg = Message::new(MessageContent::ToolResult {
-            name: "read_file".into(),
-            preview: "hello".into(),
-            full_result: Some("hello\nworld".into()),
+    fn tool_execution_shows_output_lines() {
+        let msg = Message::new(MessageContent::ToolExecution {
+            name: "Bash".into(),
+            input: Some("date".into()),
+            output_lines: vec!["2026-04-16".into(), "Thu".into()],
             is_error: false,
-            duration_ms: 1500,
+            duration_ms: 500,
+            full_result: None,
+        });
+        let lines = msg.to_lines();
+        // header + 2 output + 1 duration = 4
+        assert_eq!(lines.len(), 4);
+        let text: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("2026-04-16"));
+    }
+
+    #[test]
+    fn tool_execution_collapsed_shows_fold_hint() {
+        let msg = Message::new(MessageContent::ToolExecution {
+            name: "Read".into(),
+            input: Some("Cargo.toml".into()),
+            output_lines: vec!["line 1".into()],
+            is_error: false,
+            duration_ms: 100,
+            full_result: Some("line 1\nline 2\nline 3\nline 4\nline 5\nline 6".into()),
+        });
+        let lines = msg.to_lines();
+        let last_text: String = lines.last().unwrap().spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(last_text.contains("+ 6 lines"));
+        assert!(last_text.contains("Ctrl+O to expand"));
+    }
+
+    #[test]
+    fn tool_execution_expanded_shows_full_result() {
+        let mut msg = Message::new(MessageContent::ToolExecution {
+            name: "Read".into(),
+            input: Some("Cargo.toml".into()),
+            output_lines: vec!["line 1".into()],
+            is_error: false,
+            duration_ms: 100,
+            full_result: Some("line 1\nline 2".into()),
         });
         msg.toggle_collapsed();
-        assert!(!msg.collapsed);
         let lines = msg.to_lines();
-        // summary + blank + 2 content lines + blank = 5
-        assert!(lines.len() >= 4);
+        // header + output + duration + blank + 2 lines + blank
+        assert!(lines.len() >= 5);
     }
 
     #[test]
-    fn toggle_collapsed_only_for_tool_result() {
+    fn toggle_collapsed_only_for_tool_execution() {
         let mut msg = Message::new(MessageContent::AssistantText("hello".into()));
         msg.toggle_collapsed();
-        assert!(msg.collapsed); // unchanged — not a tool result
+        assert!(msg.collapsed); // unchanged — not a tool execution
     }
 
     #[test]
@@ -383,6 +559,13 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(line_text(&lines[0]), "thinking...");
         assert_eq!(line_text(&lines[1]), "more");
-        assert_eq!(lines[0].style.fg, Some(MUTED));
+    }
+
+    #[test]
+    fn thinking_text_is_plain() {
+        let msg = Message::new(MessageContent::ThinkingText("hello".into()));
+        let lines = msg.to_lines();
+        // Plain text — no special foreground color
+        assert_eq!(lines[0].style.fg, None);
     }
 }

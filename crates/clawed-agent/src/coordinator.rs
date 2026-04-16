@@ -524,6 +524,7 @@ mod tests {
             abort_signal: clawed_core::tool::AbortSignal::default(),
             permission_mode: clawed_core::permissions::PermissionMode::BypassAll,
             messages: vec![],
+            output_line: None,
         }
     }
 

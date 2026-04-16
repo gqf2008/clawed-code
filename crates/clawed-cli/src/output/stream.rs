@@ -175,6 +175,9 @@ pub async fn print_stream(
                     summary_len
                 );
             }
+            AgentEvent::ToolOutputLine { .. } => {
+                // Streaming output line — handled by TUI, not CLI output
+            }
         }
     }
     md.finish();

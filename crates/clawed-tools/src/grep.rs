@@ -423,6 +423,7 @@ mod tests {
             permission_mode: PermissionMode::Default,
             abort_signal: Default::default(),
             messages: vec![],
+            output_line: None,
         };
         let pattern = "a".repeat(5000);
         let input = serde_json::json!({ "pattern": pattern });
@@ -437,6 +438,7 @@ mod tests {
             permission_mode: PermissionMode::Default,
             abort_signal: Default::default(),
             messages: vec![],
+            output_line: None,
         }
     }
 

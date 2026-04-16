@@ -375,6 +375,10 @@ impl OutputRenderer {
                     agents.join(", ")
                 );
             }
+            AgentNotification::ToolOutputLine { tool_name, line, .. } => {
+                // Streaming output line — handled by TUI, not CLI output
+                tracing::debug!("[{}] {}", tool_name, line);
+            }
         }
         false
     }
