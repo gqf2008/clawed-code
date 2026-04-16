@@ -176,7 +176,7 @@ impl SlashCommand {
             "cost" => Self::Cost { window: args },
             "skills" => Self::Skills,
             "memory" => Self::Memory { sub: args },
-            "session" | "resume" => Self::Session { sub: args },
+            "session" | "sessions" | "resume" => Self::Session { sub: args },
             "diff" => Self::Diff,
             "status" => Self::Status,
             "permissions" | "perms" => Self::Permissions { mode: args },
@@ -2073,6 +2073,405 @@ mod tests {
         assert!(matches!(
             cmd.execute(&no_skills(), &no_plugins()),
             CommandResult::Stats
+        ));
+    }
+
+    // ── Missing commands added for full coverage ────────────────────
+
+    #[test]
+    fn test_parse_theme() {
+        let s = no_skills();
+        assert!(matches!(
+            SlashCommand::parse("/theme", &s).unwrap(),
+            SlashCommand::Theme { name } if name.is_empty()
+        ));
+        assert!(matches!(
+            SlashCommand::parse("/theme dark", &s).unwrap(),
+            SlashCommand::Theme { name } if name == "dark"
+        ));
+    }
+
+    #[test]
+    fn test_parse_plan() {
+        let s = no_skills();
+        assert!(matches!(
+            SlashCommand::parse("/plan", &s).unwrap(),
+            SlashCommand::Plan { args } if args.is_empty()
+        ));
+        assert!(matches!(
+            SlashCommand::parse("/plan design the API", &s).unwrap(),
+            SlashCommand::Plan { args } if args.contains("API")
+        ));
+    }
+
+    #[test]
+    fn test_parse_think() {
+        let s = no_skills();
+        assert!(matches!(
+            SlashCommand::parse("/think", &s).unwrap(),
+            SlashCommand::Think { args } if args.is_empty()
+        ));
+        assert!(matches!(
+            SlashCommand::parse("/think off", &s).unwrap(),
+            SlashCommand::Think { args } if args == "off"
+        ));
+    }
+
+    #[test]
+    fn test_parse_break_cache() {
+        assert!(matches!(
+            SlashCommand::parse("/break-cache", &no_skills()).unwrap(),
+            SlashCommand::BreakCache
+        ));
+    }
+
+    #[test]
+    fn test_execute_break_cache() {
+        let cmd = SlashCommand::parse("/break-cache", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::BreakCache
+        ));
+    }
+
+    #[test]
+    fn test_parse_summary() {
+        assert!(matches!(
+            SlashCommand::parse("/summary", &no_skills()).unwrap(),
+            SlashCommand::Summary
+        ));
+    }
+
+    #[test]
+    fn test_parse_rename() {
+        let s = no_skills();
+        assert!(matches!(
+            SlashCommand::parse("/rename v2", &s).unwrap(),
+            SlashCommand::Rename { name } if name == "v2"
+        ));
+    }
+
+    #[test]
+    fn test_parse_copy() {
+        assert!(matches!(
+            SlashCommand::parse("/copy", &no_skills()).unwrap(),
+            SlashCommand::Copy
+        ));
+    }
+
+    #[test]
+    fn test_parse_image() {
+        let s = no_skills();
+        assert!(matches!(
+            SlashCommand::parse("/image test.png", &s).unwrap(),
+            SlashCommand::Image { path } if path == "test.png"
+        ));
+    }
+
+    #[test]
+    fn test_execute_stickers() {
+        let cmd = SlashCommand::parse("/stickers", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Stickers
+        ));
+    }
+
+    #[test]
+    fn test_execute_tag_with_name() {
+        let cmd = SlashCommand::parse("/tag v1", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Tag { name } if name == "v1"
+        ));
+    }
+
+    #[test]
+    fn test_parse_sessions() {
+        assert!(matches!(
+            SlashCommand::parse("/sessions", &no_skills()).unwrap(),
+            SlashCommand::Session { sub } if sub.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_parse_resume() {
+        assert!(matches!(
+            SlashCommand::parse("/resume", &no_skills()).unwrap(),
+            SlashCommand::Session { sub } if sub.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_parse_pr_comments() {
+        assert!(matches!(
+            SlashCommand::parse("/pr-comments 42", &no_skills()).unwrap(),
+            SlashCommand::PrComments { pr_number: 42 }
+        ));
+    }
+
+    #[test]
+    fn test_parse_mcp_subcommands() {
+        let s = no_skills();
+        assert!(matches!(
+            SlashCommand::parse("/mcp", &s).unwrap(),
+            SlashCommand::Mcp { sub } if sub.is_empty()
+        ));
+        assert!(matches!(
+            SlashCommand::parse("/mcp status", &s).unwrap(),
+            SlashCommand::Mcp { sub } if sub == "status"
+        ));
+    }
+
+    #[test]
+    fn test_parse_plugin_subcommands() {
+        let s = no_skills();
+        assert!(matches!(
+            SlashCommand::parse("/plugin", &s).unwrap(),
+            SlashCommand::Plugin { sub } if sub.is_empty()
+        ));
+        assert!(matches!(
+            SlashCommand::parse("/plugin list", &s).unwrap(),
+            SlashCommand::Plugin { sub } if sub == "list"
+        ));
+    }
+
+    #[test]
+    fn test_parse_agents_subcommands() {
+        let s = no_skills();
+        assert!(matches!(
+            SlashCommand::parse("/agents", &s).unwrap(),
+            SlashCommand::Agents { sub } if sub.is_empty()
+        ));
+        assert!(matches!(
+            SlashCommand::parse("/agents list", &s).unwrap(),
+            SlashCommand::Agents { sub } if sub == "list"
+        ));
+    }
+
+    #[test]
+    fn test_parse_session_subcommands() {
+        let s = no_skills();
+        // /session save
+        assert!(matches!(
+            SlashCommand::parse("/session save", &s).unwrap(),
+            SlashCommand::Session { sub } if sub == "save"
+        ));
+        // /session delete
+        assert!(matches!(
+            SlashCommand::parse("/session delete", &s).unwrap(),
+            SlashCommand::Session { sub } if sub == "delete"
+        ));
+    }
+
+    #[test]
+    fn test_parse_memory_subcommands() {
+        let s = no_skills();
+        assert!(matches!(
+            SlashCommand::parse("/memory list", &s).unwrap(),
+            SlashCommand::Memory { sub } if sub == "list"
+        ));
+        assert!(matches!(
+            SlashCommand::parse("/memory show", &s).unwrap(),
+            SlashCommand::Memory { sub } if sub == "show"
+        ));
+    }
+
+    #[test]
+    fn test_execute_theme() {
+        let cmd = SlashCommand::parse("/theme", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Theme { name } if name.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_execute_plan() {
+        let cmd = SlashCommand::parse("/plan", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Plan { args } if args.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_execute_think() {
+        let cmd = SlashCommand::parse("/think", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Think { args } if args.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_execute_summary() {
+        let cmd = SlashCommand::parse("/summary", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Summary
+        ));
+    }
+
+    #[test]
+    fn test_execute_rename() {
+        let cmd = SlashCommand::parse("/rename v2", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Rename { name } if name == "v2"
+        ));
+    }
+
+    #[test]
+    fn test_execute_copy() {
+        let cmd = SlashCommand::parse("/copy", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Copy
+        ));
+    }
+
+    #[test]
+    fn test_execute_files() {
+        let cmd = SlashCommand::parse("/files *.rs", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Files { pattern } if pattern == "*.rs"
+        ));
+    }
+
+    #[test]
+    fn test_execute_vim() {
+        let cmd = SlashCommand::parse("/vim", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Vim { toggle } if toggle.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_execute_image() {
+        let cmd = SlashCommand::parse("/image test.png", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Image { path } if path == "test.png"
+        ));
+    }
+
+    #[test]
+    fn test_execute_release_notes() {
+        let cmd = SlashCommand::parse("/release-notes", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::ReleaseNotes
+        ));
+    }
+
+    #[test]
+    fn test_execute_pr_comments() {
+        let cmd = SlashCommand::parse("/pr-comments 42", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::PrComments { pr_number: 42 }
+        ));
+    }
+
+    #[test]
+    fn test_execute_branch() {
+        let cmd = SlashCommand::parse("/branch my-feature", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Branch { name } if name == "my-feature"
+        ));
+    }
+
+    #[test]
+    fn test_execute_plugin() {
+        let cmd = SlashCommand::parse("/plugin", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Plugin { sub } if sub.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_execute_agents() {
+        let cmd = SlashCommand::parse("/agents", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Agents { sub } if sub.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_execute_memory() {
+        let cmd = SlashCommand::parse("/memory list", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Memory { sub } if sub == "list"
+        ));
+    }
+
+    #[test]
+    fn test_execute_sessions() {
+        let cmd = SlashCommand::parse("/sessions", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Session { sub } if sub.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_execute_session_save() {
+        let cmd = SlashCommand::parse("/session save", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Session { sub } if sub == "save"
+        ));
+    }
+
+    #[test]
+    fn test_execute_session_resume() {
+        let cmd = SlashCommand::parse("/resume", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Session { sub } if sub.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_execute_cost_with_window() {
+        let cmd = SlashCommand::parse("/cost today", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::ShowCost { window } if window == "today"
+        ));
+    }
+
+    #[test]
+    fn test_execute_search_with_query() {
+        let cmd = SlashCommand::parse("/search hello world", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Search { query } if query == "hello world"
+        ));
+    }
+
+    #[test]
+    fn test_execute_history_with_page() {
+        let cmd = SlashCommand::parse("/history 3", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::History { page: 3 }
+        ));
+    }
+
+    #[test]
+    fn test_execute_feedback() {
+        let cmd = SlashCommand::parse("/feedback great tool", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Feedback { text } if text == "great tool"
         ));
     }
 }

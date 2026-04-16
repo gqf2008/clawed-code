@@ -47,7 +47,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::input::command_description;
 
 use self::messages::{Message, MessageContent};
-use self::overlay::{Overlay, OverlayAction};
+use self::overlay::{Overlay, OverlayAction, SelectionItem};
 use self::permission::PendingPermission;
 use self::status::{ToolInfo, TuiStatusState};
 
@@ -59,6 +59,11 @@ type TuiTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io:
 const MUTED: Color = Color::Rgb(140, 140, 140);
 const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const SPINNER_TICK_INTERVAL: Duration = Duration::from_millis(80);
+/// Minimum time between renders during active streaming. Prevents the event loop
+/// from spending all its CPU on rendering, leaving no time for input processing.
+const MIN_RENDER_INTERVAL: Duration = Duration::from_millis(32);
+const MAX_COMPLETION_POPUP_ITEMS: usize = 10;
 
 fn collapsed_thinking_lines(text: &str) -> Vec<Line<'static>> {
     if text.is_empty() {
@@ -86,14 +91,253 @@ fn should_clear_message_area(previous_total_visual: Option<usize>, total_visual:
     previous_total_visual.is_some_and(|previous| previous > total_visual)
 }
 
+fn completion_popup_rows_from_count(match_count: usize) -> u16 {
+    if match_count <= 1 {
+        0
+    } else {
+        match_count.min(MAX_COMPLETION_POPUP_ITEMS) as u16
+    }
+}
+
+fn completion_popup_rows(app: &App) -> u16 {
+    completion_popup_rows_from_count(app.input.completion_matches().len())
+}
+
+fn completion_popup_area(popup_slot: Rect, input_area: Rect, matches: &[&str]) -> Option<Rect> {
+    if popup_slot.width == 0 || popup_slot.height == 0 || matches.len() <= 1 {
+        return None;
+    }
+
+    let max_cmd_width = matches.iter().map(|c| c.width()).max().unwrap_or(4);
+    let desc_col = max_cmd_width + 4; // padding between cmd and desc
+    let max_desc_width = matches
+        .iter()
+        .map(|c| command_description(c).width())
+        .max()
+        .unwrap_or(20);
+    let popup_width = (desc_col + max_desc_width + 3).min(popup_slot.width as usize);
+
+    Some(Rect::new(
+        input_area.x,
+        popup_slot.y,
+        popup_width as u16,
+        popup_slot.height,
+    ))
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct LayoutSignature {
     has_overlay: bool,
     has_permission: bool,
     bottom_bar_hidden: bool,
+    completion_rows: u16,
     input_rows: u16,
     queue_rows: u16,
     task_plan_rows: u16,
+    /// Terminal width — changes cause word-wrap differences that can leave
+    /// ghost cells if not cleared.
+    term_width: u16,
+    /// Terminal height — changes shift the entire layout vertically.
+    term_height: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FooterPickerKind {
+    Model,
+    Theme,
+    Permissions,
+    Skills,
+}
+
+#[derive(Debug)]
+struct FooterPicker {
+    kind: FooterPickerKind,
+    items: Vec<SelectionItem>,
+    selected: usize,
+    scroll_offset: usize,
+}
+
+enum FooterPickerAction {
+    Consumed,
+    Dismissed,
+    Selected(String),
+    PassThrough,
+}
+
+impl FooterPicker {
+    fn visible_rows(&self) -> u16 {
+        self.items.len().min(MAX_COMPLETION_POPUP_ITEMS) as u16
+    }
+
+    fn ensure_selected_visible(&mut self) {
+        let visible_rows = usize::from(self.visible_rows());
+        if visible_rows == 0 {
+            self.scroll_offset = 0;
+            return;
+        }
+
+        if self.selected < self.scroll_offset {
+            self.scroll_offset = self.selected;
+        } else if self.selected >= self.scroll_offset + visible_rows {
+            self.scroll_offset = self.selected + 1 - visible_rows;
+        }
+    }
+
+    fn handle_key(&mut self, code: KeyCode) -> FooterPickerAction {
+        match code {
+            KeyCode::Esc => FooterPickerAction::Dismissed,
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.selected > 0 {
+                    self.selected -= 1;
+                    self.ensure_selected_visible();
+                }
+                FooterPickerAction::Consumed
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.selected + 1 < self.items.len() {
+                    self.selected += 1;
+                    self.ensure_selected_visible();
+                }
+                FooterPickerAction::Consumed
+            }
+            KeyCode::Home => {
+                self.selected = 0;
+                self.ensure_selected_visible();
+                FooterPickerAction::Consumed
+            }
+            KeyCode::End => {
+                self.selected = self.items.len().saturating_sub(1);
+                self.ensure_selected_visible();
+                FooterPickerAction::Consumed
+            }
+            KeyCode::Enter | KeyCode::Tab => self
+                .items
+                .get(self.selected)
+                .map(|item| FooterPickerAction::Selected(item.value.clone()))
+                .unwrap_or(FooterPickerAction::Dismissed),
+            KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete => {
+                FooterPickerAction::PassThrough
+            }
+            _ => FooterPickerAction::Consumed,
+        }
+    }
+}
+
+fn footer_menu_rows(app: &App) -> u16 {
+    app.footer_picker
+        .as_ref()
+        .map_or_else(|| completion_popup_rows(app), FooterPicker::visible_rows)
+}
+
+fn should_render_print_output_in_overlay(text: &str) -> bool {
+    text.lines().nth(12).is_some() || text.len() > 600
+}
+
+fn footer_picker_from_overlay(kind: FooterPickerKind, overlay: Overlay) -> Option<FooterPicker> {
+    match overlay {
+        Overlay::SelectionList {
+            items,
+            selected,
+            scroll_offset,
+            ..
+        } => Some(FooterPicker {
+            kind,
+            items,
+            selected,
+            scroll_offset,
+        }),
+        Overlay::InfoPanel { .. } => None,
+    }
+}
+
+fn build_model_picker(current_model: &str) -> FooterPicker {
+    footer_picker_from_overlay(
+        FooterPickerKind::Model,
+        overlay::build_model_overlay(current_model),
+    )
+    .expect("model overlay should be a selection list")
+}
+
+fn build_theme_picker(current_theme: &str) -> FooterPicker {
+    footer_picker_from_overlay(
+        FooterPickerKind::Theme,
+        overlay::build_theme_overlay(current_theme),
+    )
+    .expect("theme overlay should be a selection list")
+}
+
+fn build_permissions_picker(
+    current_mode: clawed_core::permissions::PermissionMode,
+) -> FooterPicker {
+    let items = vec![
+        SelectionItem {
+            label: "default".to_string(),
+            description: "Normal confirmations".to_string(),
+            value: "default".to_string(),
+            is_current: current_mode == clawed_core::permissions::PermissionMode::Default,
+        },
+        SelectionItem {
+            label: "bypass".to_string(),
+            description: "Skip confirmations".to_string(),
+            value: "bypass".to_string(),
+            is_current: current_mode == clawed_core::permissions::PermissionMode::BypassAll,
+        },
+        SelectionItem {
+            label: "acceptEdits".to_string(),
+            description: "Auto-accept edit requests".to_string(),
+            value: "acceptEdits".to_string(),
+            is_current: current_mode == clawed_core::permissions::PermissionMode::AcceptEdits,
+        },
+        SelectionItem {
+            label: "auto".to_string(),
+            description: "Automatic mode".to_string(),
+            value: "auto".to_string(),
+            is_current: current_mode == clawed_core::permissions::PermissionMode::Auto,
+        },
+        SelectionItem {
+            label: "plan".to_string(),
+            description: "Planning-first mode".to_string(),
+            value: "plan".to_string(),
+            is_current: current_mode == clawed_core::permissions::PermissionMode::Plan,
+        },
+    ];
+    let selected = items.iter().position(|item| item.is_current).unwrap_or(0);
+
+    FooterPicker {
+        kind: FooterPickerKind::Permissions,
+        items,
+        selected,
+        scroll_offset: 0,
+    }
+}
+
+fn build_skills_picker(skills: &[clawed_core::skills::SkillEntry]) -> Option<FooterPicker> {
+    let items: Vec<SelectionItem> = skills
+        .iter()
+        .filter(|skill| skill.user_invocable)
+        .map(|skill| {
+            let mut description = skill.description.clone();
+            if let Some(hint) = &skill.argument_hint {
+                if !description.is_empty() {
+                    description.push_str("  ");
+                }
+                description.push_str(hint);
+            }
+            SelectionItem {
+                label: format!("/{}", skill.name),
+                description,
+                value: skill.name.clone(),
+                is_current: false,
+            }
+        })
+        .collect();
+
+    (!items.is_empty()).then_some(FooterPicker {
+        kind: FooterPickerKind::Skills,
+        items,
+        selected: 0,
+        scroll_offset: 0,
+    })
 }
 
 fn restore_terminal_after_tui() {
@@ -157,6 +401,7 @@ struct App {
     scroll_offset: usize,
     auto_scroll: bool,
     input: InputWidget,
+    footer_picker: Option<FooterPicker>,
     status: TuiStatusState,
     task_plan: taskplan::TaskPlan,
     permission: Option<PendingPermission>,
@@ -168,6 +413,8 @@ struct App {
     /// This is only required when the layout geometry changes (footer/input/task
     /// panel height changes, overlays appear/disappear, resize events, etc.).
     needs_full_clear: bool,
+    /// Set when visible state changed and the next loop should render a new frame.
+    needs_redraw: bool,
     total_turns: u32,
     /// Latest context size from the most recent API response (not accumulated).
     context_tokens: u64,
@@ -197,6 +444,14 @@ struct App {
     cached_visible_lines_dirty: bool,
     cached_visible_line_count: Option<(u16, usize)>,
     last_rendered_message_visual_count: Option<usize>,
+    last_spinner_tick: Instant,
+    /// Instant of the last render. Used to throttle render rate during
+    /// active streaming so the event loop has time to process input events.
+    last_render_at: Instant,
+    /// Cached terminal dimensions from the last frame. Used to detect resize
+    /// in the layout signature so ghost cells are cleared after resize.
+    term_width: u16,
+    term_height: u16,
 }
 
 impl App {
@@ -206,6 +461,7 @@ impl App {
             scroll_offset: 0,
             auto_scroll: true,
             input: InputWidget::new(),
+            footer_picker: None,
             status: TuiStatusState::new(),
             task_plan: taskplan::TaskPlan::new(),
             permission: None,
@@ -214,6 +470,7 @@ impl App {
             thinking_collapsed: true,
             running: true,
             needs_full_clear: false,
+            needs_redraw: true,
             total_turns: 0,
             context_tokens: 0,
             total_output_tokens: 0,
@@ -230,6 +487,41 @@ impl App {
             cached_visible_lines_dirty: false,
             cached_visible_line_count: None,
             last_rendered_message_visual_count: None,
+            last_spinner_tick: Instant::now(),
+            last_render_at: Instant::now() - Duration::from_secs(1),
+            term_width: 0,
+            term_height: 0,
+        }
+    }
+
+    fn request_redraw(&mut self) {
+        self.needs_redraw = true;
+    }
+
+    fn set_footer_picker(&mut self, picker: FooterPicker) {
+        self.footer_picker = Some(picker);
+        self.request_redraw();
+    }
+
+    fn clear_footer_picker(&mut self) {
+        if self.footer_picker.take().is_some() {
+            self.request_redraw();
+        }
+    }
+
+    fn spinner_active(&self) -> bool {
+        self.status.is_generating || !self.status.active_tools.is_empty()
+    }
+
+    fn advance_spinner_if_due(&mut self, now: Instant) {
+        if self.spinner_active() {
+            if now.duration_since(self.last_spinner_tick) >= SPINNER_TICK_INTERVAL {
+                self.status.spinner_frame = self.status.spinner_frame.wrapping_add(1);
+                self.last_spinner_tick = now;
+                self.request_redraw();
+            }
+        } else {
+            self.last_spinner_tick = now;
         }
     }
 
@@ -254,13 +546,18 @@ impl App {
     fn invalidate_visible_lines(&mut self) {
         self.cached_visible_lines_dirty = true;
         self.cached_visible_line_count = None;
+        self.request_redraw();
     }
 
     fn replace_cached_tail(&mut self, old_len: usize, new_lines: Vec<Line<'static>>) {
         let new_start = self.cached_visible_lines.len().saturating_sub(old_len);
         self.cached_visible_lines.truncate(new_start);
         self.cached_visible_lines.extend(new_lines);
-        self.cached_visible_line_count = None;
+        // Don't invalidate cached_visible_line_count here — the visual line
+        // count estimate is still approximately correct (off by a few lines
+        // from the delta). The next full rebuild will recalculate precisely,
+        // and auto-scroll (scroll_offset=0) masks any minor drift.
+        self.request_redraw();
     }
 
     fn rebuild_visible_lines(&mut self) {
@@ -283,6 +580,8 @@ impl App {
         self.cached_visible_lines_dirty = false;
         self.cached_visible_line_count = None;
         self.last_rendered_message_visual_count = None;
+        self.footer_picker = None;
+        self.request_redraw();
     }
 
     fn push_message(&mut self, content: MessageContent) {
@@ -299,6 +598,7 @@ impl App {
         if self.auto_scroll {
             self.scroll_offset = 0;
         }
+        self.request_redraw();
     }
 
     fn layout_signature(&self) -> LayoutSignature {
@@ -308,14 +608,22 @@ impl App {
         } else {
             self.queued_inputs.len().min(5) as u16
         };
+        let completion_rows = if has_permission {
+            0
+        } else {
+            footer_menu_rows(self)
+        };
 
         LayoutSignature {
             has_overlay: self.overlay.is_some(),
             has_permission,
             bottom_bar_hidden: self.bottom_bar_hidden,
+            completion_rows,
             input_rows: self.input.visible_rows(),
             queue_rows,
             task_plan_rows: self.task_plan.render_height(),
+            term_width: self.term_width,
+            term_height: self.term_height,
         }
     }
 
@@ -326,7 +634,9 @@ impl App {
         self.status.thinking = true;
         self.status.is_generating = true;
         self.is_generating = true;
+        self.footer_picker = None;
         self.invalidate_visible_lines();
+        self.last_spinner_tick = Instant::now();
         // Discard any TextDelta/ThinkingDelta that arrive before TurnStart —
         // they belong to the previous (possibly aborted) stream.
         self.expecting_turn_start = true;
@@ -338,6 +648,7 @@ impl App {
         self.status.is_generating = false;
         self.is_generating = false;
         self.invalidate_visible_lines();
+        self.last_spinner_tick = Instant::now();
         self.expecting_turn_start = false;
         self.status.active_tools.clear();
         self.status.active_shells = 0;
@@ -697,6 +1008,7 @@ impl App {
             // Session start: update model display
             AgentNotification::SessionStart { model, .. } => {
                 self.model = model;
+                self.request_redraw();
             }
             // Background agent progress
             AgentNotification::AgentProgress { agent_id, text } => {
@@ -767,14 +1079,37 @@ impl App {
     fn handle_slash_command(&mut self, client: &ClientHandle, cmd: &str) {
         let cwd = std::env::current_dir().unwrap_or_default();
         let skills = clawed_core::skills::get_skills(&cwd);
+        match crate::commands::SlashCommand::parse(cmd, &skills) {
+            Some(crate::commands::SlashCommand::Skills) => {
+                if let Some(picker) = build_skills_picker(&skills) {
+                    self.set_footer_picker(picker);
+                } else {
+                    self.push_message(MessageContent::System(
+                        "No skills found. Add .md files to .claude/skills/".to_string(),
+                    ));
+                }
+                return;
+            }
+            Some(crate::commands::SlashCommand::Model(name)) if name.is_empty() => {
+                self.set_footer_picker(build_model_picker(&self.model));
+                return;
+            }
+            _ => {}
+        }
         let result = match crate::commands::resolve_command_result(cmd, &cwd, &skills) {
             Some(result) => result,
             None => return,
         };
+        self.clear_footer_picker();
+        self.request_redraw();
         match result {
             crate::commands::CommandResult::Print(text) => {
-                // /help output → scrollable info overlay
-                self.overlay = Some(overlay::build_info_overlay("Help", &text));
+                if should_render_print_output_in_overlay(&text) {
+                    self.overlay = Some(overlay::build_info_overlay("Command Output", &text));
+                    self.request_redraw();
+                } else {
+                    self.push_message(MessageContent::System(text));
+                }
             }
             crate::commands::CommandResult::ClearHistory => {
                 let _ = client.send_request(clawed_bus::events::AgentRequest::ClearHistory);
@@ -782,11 +1117,14 @@ impl App {
             }
             crate::commands::CommandResult::SetModel(name) => {
                 if name.is_empty() {
-                    // No args → open model picker overlay
-                    self.overlay = Some(overlay::build_model_overlay(&self.model));
+                    self.set_footer_picker(build_model_picker(&self.model));
                 } else {
                     let _ = client
-                        .send_request(clawed_bus::events::AgentRequest::SetModel { model: name });
+                        .send_request(clawed_bus::events::AgentRequest::SetModel { model: name.clone() });
+                    let display = clawed_core::model::display_name_any(
+                        &clawed_core::model::resolve_model_string(&name),
+                    );
+                    self.push_message(MessageContent::System(format!("✓ Model → {display}")));
                 }
             }
             crate::commands::CommandResult::ShowCost { .. } => {
@@ -942,6 +1280,11 @@ impl App {
 fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
+    // Cache terminal dimensions so the layout signature can detect resize
+    // and trigger a full clear to eliminate ghost cells.
+    app.term_width = area.width;
+    app.term_height = area.height;
+
     let perm_layout = app
         .permission
         .as_ref()
@@ -957,11 +1300,17 @@ fn render(frame: &mut Frame, app: &mut App) {
     let task_plan_rows = app.task_plan.render_height();
 
     let input_rows = app.input.visible_rows();
+    let completion_rows = if has_permission {
+        0
+    } else {
+        footer_menu_rows(app)
+    };
     // Footer includes a separator between input and hint bar (always, except perm).
     let footer_rows = if let Some(layout) = perm_layout {
         layout.total_rows()
     } else {
-        input_rows + 1 + bottom_bar_rows // +1 for the separator between input and hint bar
+        completion_rows + input_rows + 1 + bottom_bar_rows
+        // +1 for the separator between input and hint bar
     };
 
     // Queue items: 1 row per queued message (capped at 5), no header row.
@@ -1021,23 +1370,25 @@ fn render(frame: &mut Frame, app: &mut App) {
         .split(footer_area);
         permission::render(frame, perm_chunks[0], perm_chunks[1], perm_chunks[2], perm);
     } else {
-        // Normal: input ─── hint bar
+        // Normal: input ─ completion popup (optional) ─ hint bar
         let input_chunks = Layout::vertical([
             Constraint::Length(input_rows),      // input (1–5 rows)
+            Constraint::Length(completion_rows), // completion popup (0 when hidden)
             Constraint::Length(1),               // separator between input and hint bar
             Constraint::Length(bottom_bar_rows), // hint bar
         ])
         .split(footer_area);
 
         render_input(frame, input_chunks[0], app);
-        render_input_separator(frame, input_chunks[1]);
+        render_input_separator(frame, input_chunks[2]);
         if bottom_bar_rows > 0 {
-            bottombar::render(frame, input_chunks[2]);
+            bottombar::render(frame, input_chunks[3]);
         }
 
-        // Completion popup (rendered last so it draws on top)
-        if app.input.in_completion() {
-            render_completion_popup(frame, input_chunks[0], app);
+        if let Some(picker) = app.footer_picker.as_ref() {
+            render_footer_picker(frame, input_chunks[1], input_chunks[0], picker);
+        } else if completion_rows > 0 {
+            render_completion_popup(frame, input_chunks[1], input_chunks[0], app);
         }
     }
 
@@ -1322,14 +1673,14 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     frame.set_cursor_position((x, y));
 }
 
-fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
+fn render_completion_popup(frame: &mut Frame, popup_slot: Rect, input_area: Rect, app: &App) {
     let matches = app.input.completion_matches();
-    if matches.len() <= 1 {
+    let Some(popup_area) = completion_popup_area(popup_slot, input_area, &matches) else {
         return;
-    }
+    };
 
     let selected = app.input.completion_selected();
-    let max_items = 10.min(matches.len());
+    let max_items = usize::from(popup_area.height).min(matches.len());
 
     // Calculate visible window that keeps `selected` in view
     let scroll_offset = if selected >= max_items {
@@ -1338,21 +1689,8 @@ fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
         0
     };
 
-    // Calculate popup dimensions — two-column: "│  /cmd       Description text"
     let max_cmd_width = matches.iter().map(|c| c.width()).max().unwrap_or(4);
     let desc_col = max_cmd_width + 4; // padding between cmd and desc
-    let max_desc_width = matches
-        .iter()
-        .map(|c| command_description(c).width())
-        .max()
-        .unwrap_or(20);
-    let popup_width = (desc_col + max_desc_width + 3).min(input_area.width as usize);
-    let popup_height = max_items as u16;
-
-    // Position popup above input line, aligned to the left bar
-    let popup_y = input_area.y.saturating_sub(popup_height);
-    let popup_x = input_area.x;
-    let popup_area = Rect::new(popup_x, popup_y, popup_width as u16, popup_height);
 
     // Build lines — borderless, with left "│" margin, matching original style
     let bar_style = Style::default();
@@ -1388,9 +1726,80 @@ fn render_completion_popup(frame: &mut Frame, input_area: Rect, app: &App) {
 
     let list = List::new(items);
 
-    // Clear the area first, then render (borderless)
-    frame.render_widget(Clear, popup_area);
+    // Clear the reserved slot first so closing or narrowing the popup doesn't leave artifacts.
+    frame.render_widget(Clear, popup_slot);
     frame.render_widget(list, popup_area);
+}
+
+fn render_footer_picker(
+    frame: &mut Frame,
+    popup_slot: Rect,
+    input_area: Rect,
+    picker: &FooterPicker,
+) {
+    if popup_slot.width == 0 || popup_slot.height == 0 || picker.items.is_empty() {
+        return;
+    }
+
+    let max_label_width = picker
+        .items
+        .iter()
+        .map(|item| item.label.width())
+        .max()
+        .unwrap_or(4);
+    let desc_col = max_label_width + 4;
+    let max_desc_width = picker
+        .items
+        .iter()
+        .map(|item| item.description.width())
+        .max()
+        .unwrap_or(20);
+    let popup_width = (desc_col + max_desc_width + 3).min(popup_slot.width as usize);
+    let popup_area = Rect::new(
+        input_area.x,
+        popup_slot.y,
+        popup_width as u16,
+        popup_slot.height,
+    );
+
+    let max_items = usize::from(popup_area.height).min(picker.items.len());
+    let scroll_offset = picker.scroll_offset;
+
+    let bar_style = Style::default();
+    let items: Vec<ListItem> = picker
+        .items
+        .iter()
+        .enumerate()
+        .skip(scroll_offset)
+        .take(max_items)
+        .map(|(i, item)| {
+            let is_selected = i == picker.selected;
+            let label_style = if is_selected {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().add_modifier(Modifier::BOLD)
+            };
+            let desc_style = if is_selected {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default()
+            };
+            let prefix = if item.is_current { "• " } else { "  " };
+            let label_text = format!("{prefix}{}", item.label);
+            let padding = " ".repeat(desc_col.saturating_sub(label_text.width()));
+            ListItem::new(Line::from(vec![
+                Span::styled(" │ ", bar_style),
+                Span::styled(label_text, label_style),
+                Span::raw(padding),
+                Span::styled(item.description.clone(), desc_style),
+            ]))
+        })
+        .collect();
+
+    frame.render_widget(Clear, popup_slot);
+    frame.render_widget(List::new(items), popup_area);
 }
 
 fn render_welcome_lines(width: u16, model: &str) -> Vec<Line<'static>> {
@@ -1573,18 +1982,18 @@ pub async fn run_tui(
             }
         }
 
-        // Advance spinner whenever generating (covers thinking, text streaming, tool execution)
-        if app.status.is_generating || !app.status.active_tools.is_empty() {
-            app.status.spinner_frame = app.status.spinner_frame.wrapping_add(1);
-        }
+        // Advance the spinner on a fixed cadence, but only redraw when it actually changes.
+        app.advance_spinner_if_due(Instant::now());
 
         // Detect any layout geometry change that can leave ghost cells behind in
         // non-alternate-screen mode: overlays, permission footer, queue rows,
         // input growth/shrink, task-plan height changes, bottom bar toggles, etc.
         let layout_sig = app.layout_signature();
-        if layout_sig != app.last_layout_sig {
+        let layout_changed = layout_sig != app.last_layout_sig;
+        if layout_changed {
             app.needs_full_clear = true;
             app.last_layout_sig = layout_sig;
+            app.request_redraw();
         }
 
         // If layout changed, fully clear the terminal before drawing to eliminate
@@ -1593,10 +2002,21 @@ pub async fn run_tui(
         if app.needs_full_clear {
             terminal.clear()?;
             app.needs_full_clear = false;
+            app.request_redraw();
         }
 
-        // Render
-        terminal.draw(|frame| render(frame, &mut app))?;
+        if app.needs_redraw {
+            // Throttle renders during active streaming so the event loop has time
+            // to process input events. Layout changes always render immediately.
+            let throttled = !layout_changed
+                && app.is_generating
+                && app.last_render_at.elapsed() < MIN_RENDER_INTERVAL;
+            if !throttled {
+                terminal.draw(|frame| render(frame, &mut app))?;
+                app.last_render_at = Instant::now();
+            }
+            app.needs_redraw = false;
+        }
 
         // Keep the terminal responsive at rest, but use a tighter tick while the
         // agent is actively streaming or running tools so output feels less coarse.
@@ -1648,6 +2068,7 @@ pub async fn run_tui(
                             }
                             OverlayAction::Consumed => {}
                         }
+                        app.request_redraw();
                         continue;
                     }
 
@@ -1695,6 +2116,7 @@ pub async fn run_tui(
                             }
                             _ => {} // ignore other keys during permission prompt
                         }
+                        app.request_redraw();
                         continue;
                     }
 
@@ -1723,6 +2145,7 @@ pub async fn run_tui(
                         }
                         (KeyCode::Char('t'), KeyModifiers::CONTROL) => {
                             app.bottom_bar_hidden = !app.bottom_bar_hidden;
+                            app.request_redraw();
                             continue;
                         }
                         (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
@@ -1764,6 +2187,7 @@ pub async fn run_tui(
                             let step = if key.code == KeyCode::PageUp { 10 } else { 1 };
                             app.scroll_offset = app.scroll_offset.saturating_add(step);
                             app.auto_scroll = false;
+                            app.request_redraw();
                             continue;
                         }
                         (KeyCode::PageDown, _) | (KeyCode::Down, KeyModifiers::SHIFT) => {
@@ -1774,6 +2198,7 @@ pub async fn run_tui(
                                     app.auto_scroll = true;
                                 }
                             }
+                            app.request_redraw();
                             continue;
                         }
                         (KeyCode::Char('v'), KeyModifiers::CONTROL) => {
@@ -1796,6 +2221,42 @@ pub async fn run_tui(
                         _ => {}
                     }
 
+                    if app.footer_picker.is_some() {
+                        let action = {
+                            let picker = app
+                                .footer_picker
+                                .as_mut()
+                                .expect("footer picker should exist");
+                            picker.handle_key(key.code)
+                        };
+                        match action {
+                            FooterPickerAction::Dismissed => {
+                                app.clear_footer_picker();
+                                continue;
+                            }
+                            FooterPickerAction::Selected(value) => {
+                                let kind = app
+                                    .footer_picker
+                                    .as_ref()
+                                    .map(|picker| picker.kind)
+                                    .expect("footer picker should exist");
+                                app.clear_footer_picker();
+                                handle_footer_picker_selection(
+                                    kind, &value, &client, &engine, &mut app,
+                                )
+                                .await;
+                                continue;
+                            }
+                            FooterPickerAction::Consumed => {
+                                app.request_redraw();
+                                continue;
+                            }
+                            FooterPickerAction::PassThrough => {
+                                app.clear_footer_picker();
+                            }
+                        }
+                    }
+
                     let action = app.input.handle_key(key);
                     match action {
                         input::InputAction::Submit => {
@@ -1808,6 +2269,7 @@ pub async fn run_tui(
                                     && app.pending_images.is_empty()
                                 {
                                     app.queued_inputs.push(text);
+                                    app.request_redraw();
                                     continue;
                                 }
 
@@ -1836,6 +2298,7 @@ pub async fn run_tui(
                                         }
                                     }
                                     app.pending_images.clear();
+                                    app.request_redraw();
                                 } else {
                                     // LLM prompt: show in conversation history.
                                     let display = if app.pending_images.is_empty() {
@@ -1861,17 +2324,20 @@ pub async fn run_tui(
                             app.queued_inputs.clear();
                             app.push_message(MessageContent::System("[Aborted]".to_string()));
                         }
-                        input::InputAction::Changed | input::InputAction::None => {}
+                        input::InputAction::Changed => app.request_redraw(),
+                        input::InputAction::None => {}
                     }
                 }
                 Event::Resize(_, _) => {
                     // Full clear ensures no ghost cells after resize changes layout geometry.
                     app.needs_full_clear = true;
+                    app.request_redraw();
                 }
                 Event::Paste(text) => {
                     // Strip CR so \r\n becomes \n (insert_text handles bare \r too)
                     let text = text.replace('\r', "");
                     app.input.insert_text(&text);
+                    app.request_redraw();
                 }
                 _ => {} // Mouse, Focus -- ignored
             }
@@ -1997,6 +2463,45 @@ async fn handle_overlay_selection(
         },
         _ => {
             app.push_message(MessageContent::System(format!("Selected: {value}")));
+        }
+    }
+}
+
+async fn handle_footer_picker_selection(
+    kind: FooterPickerKind,
+    value: &str,
+    client: &ClientHandle,
+    engine: &Arc<QueryEngine>,
+    app: &mut App,
+) {
+    match kind {
+        FooterPickerKind::Model => {
+            let resolved = clawed_core::model::resolve_model_string(value);
+            let display = clawed_core::model::display_name_any(&resolved);
+            engine.state().write().await.model = resolved.clone();
+            app.model = resolved;
+            let _ = client.send_request(clawed_bus::events::AgentRequest::SetModel {
+                model: value.to_string(),
+            });
+            app.push_message(MessageContent::System(format!("✓ Model → {display}")));
+        }
+        FooterPickerKind::Theme => match crate::repl_commands::apply_theme(value) {
+            Ok(message) | Err(message) => {
+                app.push_message(MessageContent::System(overlay::strip_ansi(&message)));
+                app.needs_full_clear = true;
+            }
+        },
+        FooterPickerKind::Permissions => {
+            let new_mode = crate::config::parse_permission_mode(value);
+            engine.state().write().await.permission_mode = new_mode;
+            app.push_message(MessageContent::System(format!(
+                "Permission mode: {:?}",
+                new_mode
+            )));
+        }
+        FooterPickerKind::Skills => {
+            app.input.insert_text(&format!("/{value} "));
+            app.request_redraw();
         }
     }
 }
@@ -2374,17 +2879,22 @@ async fn handle_async_command(
             }
         }
         CommandResult::ReleaseNotes => {
-            app.push_message(MessageContent::System(format!(
+            let notes = format!(
                 "Clawed Code v{}\n\nRecent changes:\n  • Full ratatui TUI with double-buffered rendering\n  • Markdown + syntect code highlighting\n  • Multi-line input, collapsible thinking/tool results\n  • Permission prompts, session resume, image paste\n  • 55+ slash commands, 52+ tools",
                 env!("CARGO_PKG_VERSION"),
-            )));
+            );
+            app.overlay = Some(overlay::build_info_overlay("Release Notes", &notes));
         }
         CommandResult::Memory { sub } => {
             let output = crate::repl_commands::handle_memory_command_str(
                 &sub,
                 &std::env::current_dir().unwrap_or_default(),
             );
-            app.push_message(MessageContent::System(output));
+            if should_render_print_output_in_overlay(&output) {
+                app.overlay = Some(overlay::build_info_overlay("Memory", &output));
+            } else {
+                app.push_message(MessageContent::System(output));
+            }
         }
         // Commands that submit a prompt to the agent
         CommandResult::Review { prompt } => {
@@ -2521,10 +3031,7 @@ async fn handle_async_command(
         CommandResult::Permissions { mode } => {
             if mode.is_empty() {
                 let state = engine.state().read().await;
-                app.push_message(MessageContent::System(format!(
-                    "Permission mode: {:?}\n  Set with: /permissions <default|bypass|acceptEdits|plan>",
-                    state.permission_mode
-                )));
+                app.set_footer_picker(build_permissions_picker(state.permission_mode));
             } else {
                 let new_mode = crate::config::parse_permission_mode(&mode);
                 engine.state().write().await.permission_mode = new_mode;
@@ -2649,7 +3156,7 @@ async fn handle_async_command(
         }
         CommandResult::Theme { name } => {
             if name.is_empty() {
-                app.overlay = Some(overlay::build_theme_overlay(
+                app.set_footer_picker(build_theme_picker(
                     crate::theme::current_theme_name().as_str(),
                 ));
             } else {
@@ -2967,6 +3474,8 @@ mod tests {
     use super::*;
     use clawed_bus::bus::EventBus;
     use clawed_bus::events::{AgentRequest, PermissionRequest, RiskLevel};
+    use clawed_core::skills::SkillEntry;
+    use futures::FutureExt;
     use serde_json::json;
     use tempfile::TempDir;
 
@@ -2975,6 +3484,28 @@ mod tests {
             .iter()
             .map(|span| span.content.as_ref())
             .collect()
+    }
+
+    fn sample_skill(name: &str, description: &str) -> SkillEntry {
+        SkillEntry {
+            name: name.to_string(),
+            display_name: None,
+            description: description.to_string(),
+            system_prompt: "You are helpful".to_string(),
+            allowed_tools: vec![],
+            model: None,
+            when_to_use: None,
+            paths: vec![],
+            argument_names: vec![],
+            argument_hint: Some("<prompt>".to_string()),
+            version: None,
+            context: None,
+            agent: None,
+            effort: None,
+            user_invocable: true,
+            disable_model_invocation: false,
+            skill_root: None,
+        }
     }
 
     #[test]
@@ -3032,6 +3563,28 @@ mod tests {
     }
 
     #[test]
+    fn slash_help_routes_long_print_output_to_overlay() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/help");
+
+        assert!(app.messages.is_empty());
+        assert!(app.overlay.is_some());
+    }
+
+    #[test]
+    fn short_print_output_stays_in_transcript() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/tag demo");
+
+        assert!(app.overlay.is_none());
+        assert!(!app.messages.is_empty());
+    }
+
+    #[test]
     fn overlay_replaces_none() {
         let mut app = App::new("test".to_string());
         assert!(app.overlay.is_none());
@@ -3039,6 +3592,21 @@ mod tests {
         assert!(app.overlay.is_some());
         app.overlay = None;
         assert!(app.overlay.is_none());
+    }
+
+    #[test]
+    fn model_command_opens_footer_picker_instead_of_overlay() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/model");
+
+        assert!(app.overlay.is_none());
+        assert!(app.footer_picker.is_some());
+        assert_eq!(
+            app.footer_picker.as_ref().map(|picker| picker.kind),
+            Some(FooterPickerKind::Model)
+        );
     }
 
     #[test]
@@ -3052,6 +3620,124 @@ mod tests {
         let mut app = App::new("test".to_string());
         app.is_generating = true;
         assert_eq!(poll_interval(&app), ACTIVE_POLL_INTERVAL);
+    }
+
+    #[test]
+    fn completion_popup_slot_height_is_fixed_while_open() {
+        assert_eq!(completion_popup_rows_from_count(0), 0);
+        assert_eq!(completion_popup_rows_from_count(1), 0);
+        assert_eq!(completion_popup_rows_from_count(2), 2);
+        assert_eq!(completion_popup_rows_from_count(5), 5);
+        assert_eq!(
+            completion_popup_rows_from_count(20),
+            MAX_COMPLETION_POPUP_ITEMS as u16
+        );
+    }
+
+    #[test]
+    fn build_skills_picker_lists_invocable_skills() {
+        let picker =
+            build_skills_picker(&[sample_skill("review", "Review code")]).expect("skills picker");
+
+        assert_eq!(picker.kind, FooterPickerKind::Skills);
+        assert_eq!(picker.items.len(), 1);
+        assert_eq!(picker.items[0].label, "/review");
+        assert_eq!(picker.items[0].value, "review");
+    }
+
+    #[test]
+    fn footer_picker_end_keeps_selection_visible() {
+        let mut picker = FooterPicker {
+            kind: FooterPickerKind::Model,
+            items: (0..12)
+                .map(|i| SelectionItem {
+                    label: format!("item-{i}"),
+                    description: String::new(),
+                    value: i.to_string(),
+                    is_current: false,
+                })
+                .collect(),
+            selected: 0,
+            scroll_offset: 0,
+        };
+
+        assert!(matches!(picker.handle_key(KeyCode::End), FooterPickerAction::Consumed));
+        assert_eq!(picker.selected, 11);
+        assert_eq!(picker.scroll_offset, 2);
+    }
+
+    #[test]
+    fn footer_picker_arrow_left_is_consumed() {
+        let mut picker = FooterPicker {
+            kind: FooterPickerKind::Model,
+            items: vec![SelectionItem {
+                label: "item".to_string(),
+                description: String::new(),
+                value: "value".to_string(),
+                is_current: false,
+            }],
+            selected: 0,
+            scroll_offset: 0,
+        };
+
+        assert!(matches!(picker.handle_key(KeyCode::Left), FooterPickerAction::Consumed));
+    }
+
+    #[test]
+    fn footer_picker_character_input_passes_through() {
+        let mut picker = FooterPicker {
+            kind: FooterPickerKind::Model,
+            items: vec![SelectionItem {
+                label: "item".to_string(),
+                description: String::new(),
+                value: "value".to_string(),
+                is_current: false,
+            }],
+            selected: 0,
+            scroll_offset: 0,
+        };
+
+        assert!(matches!(
+            picker.handle_key(KeyCode::Char('x')),
+            FooterPickerAction::PassThrough
+        ));
+    }
+
+    #[test]
+    fn long_print_output_prefers_overlay() {
+        let long_text = (0..20)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(should_render_print_output_in_overlay(&long_text));
+        assert!(!should_render_print_output_in_overlay("short output"));
+    }
+
+    #[test]
+    fn spinner_tick_waits_for_interval() {
+        let mut app = App::new("test".to_string());
+        app.status.is_generating = true;
+        app.needs_redraw = false;
+        let start = app.last_spinner_tick;
+
+        app.advance_spinner_if_due(start + Duration::from_millis(40));
+
+        assert_eq!(app.status.spinner_frame, 0);
+        assert!(!app.needs_redraw);
+    }
+
+    #[test]
+    fn spinner_tick_marks_redraw_when_due() {
+        let mut app = App::new("test".to_string());
+        app.status.is_generating = true;
+        app.needs_redraw = false;
+        let start = app.last_spinner_tick;
+
+        app.advance_spinner_if_due(start + SPINNER_TICK_INTERVAL);
+
+        assert_eq!(app.status.spinner_frame, 1);
+        assert!(app.needs_redraw);
     }
 
     #[test]
@@ -3120,6 +3806,26 @@ mod tests {
         app.queued_inputs.clear();
         app.input.insert_text("line1\nline2");
         assert_ne!(base, app.layout_signature());
+
+        let mut completion_app = App::new("test".to_string());
+        let completion_base = completion_app.layout_signature();
+        completion_app
+            .input
+            .handle_key(crossterm::event::KeyEvent::new(
+                KeyCode::Char('/'),
+                KeyModifiers::NONE,
+            ));
+        let completion_open = completion_app.layout_signature();
+        assert_ne!(completion_base, completion_open);
+
+        completion_app
+            .input
+            .handle_key(crossterm::event::KeyEvent::new(
+                KeyCode::Char('h'),
+                KeyModifiers::NONE,
+            ));
+        assert_eq!(completion_open.completion_rows, 10);
+        assert_eq!(completion_app.layout_signature().completion_rows, 2);
     }
 
     #[test]
@@ -3140,6 +3846,76 @@ mod tests {
             description: "Bash: command=ls".to_string(),
         }));
         assert_ne!(base, app.layout_signature());
+    }
+
+    #[test]
+    fn completion_popup_stays_within_reserved_footer_slot() {
+        let input_area = Rect::new(4, 20, 50, 1);
+        let popup_slot = Rect::new(4, 21, 50, 3);
+        let matches = ["/help", "/history", "/review"];
+
+        let popup_area =
+            completion_popup_area(popup_slot, input_area, &matches).expect("popup area");
+
+        assert_eq!(popup_area.x, input_area.x);
+        assert_eq!(popup_area.y, popup_slot.y);
+        assert_eq!(popup_area.height, popup_slot.height);
+        assert!(popup_area.width <= popup_slot.width);
+        assert!(popup_area.y >= input_area.y + input_area.height);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn permissions_without_mode_open_footer_picker() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Permissions {
+                mode: String::new(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        assert!(app.overlay.is_none());
+        assert_eq!(
+            app.footer_picker.as_ref().map(|picker| picker.kind),
+            Some(FooterPickerKind::Permissions)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn skills_picker_selection_prefills_input() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_footer_picker_selection(
+            FooterPickerKind::Skills,
+            "review",
+            &client,
+            &engine,
+            &mut app,
+        )
+        .await;
+
+        assert_eq!(app.input.buffer(), "/review ");
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -3174,5 +3950,904 @@ mod tests {
             }
             _ => panic!("expected submit request"),
         }
+    }
+
+    // -- E2E-style event loop simulation tests --
+
+    /// Simulate the event loop drain-notify-render cycle to verify that
+    /// rapid streaming + input events don't cause layout corruption or
+    /// render starvation. This is an "E2E" test of the TUI event loop
+    /// without requiring a real terminal.
+    struct E2ETestEnv {
+        app: App,
+        notify_tx: tokio::sync::mpsc::Sender<AgentNotification>,
+        notify_rx: tokio::sync::mpsc::Receiver<AgentNotification>,
+        render_count: usize,
+    }
+
+    impl E2ETestEnv {
+        fn new() -> Self {
+            let (notify_tx, notify_rx) = tokio::sync::mpsc::channel(256);
+            Self {
+                app: App::new("test-model".to_string()),
+                notify_tx,
+                notify_rx,
+                render_count: 0,
+            }
+        }
+
+        /// Run one iteration of the event loop: drain notifications,
+        /// advance spinner, check layout, render if needed.
+        fn tick(&mut self) {
+            // Drain all pending notifications
+            while let Ok(notification) = self.notify_rx.try_recv() {
+                let turn_complete = matches!(
+                    notification,
+                    AgentNotification::TurnComplete { .. }
+                );
+                let merged = self.app.handle_notification(notification);
+                // In simulation, we don't actually submit to a real client
+                if merged.is_some() {
+                    self.app.push_message(MessageContent::UserInput(
+                        merged.unwrap(),
+                    ));
+                    self.app.mark_generating();
+                }
+                if turn_complete
+                    && self.app.pending_workflow.is_none()
+                    && !self.app.expecting_turn_start
+                {
+                    // Drain queue in simulation
+                    if let Some(merged) = self.app.take_queued_inputs() {
+                        self.app.push_message(MessageContent::UserInput(merged));
+                    }
+                }
+            }
+
+            // Advance spinner
+            self.app.advance_spinner_if_due(Instant::now());
+
+            // Detect layout changes
+            let layout_sig = self.app.layout_signature();
+            let layout_changed = layout_sig != self.app.last_layout_sig;
+            if layout_changed {
+                self.app.needs_full_clear = true;
+                self.app.last_layout_sig = layout_sig;
+                self.app.request_redraw();
+            }
+
+            // Clear if needed
+            if self.app.needs_full_clear {
+                self.app.needs_full_clear = false;
+                self.app.request_redraw();
+            }
+
+            // Render if needed — use the preserved layout_changed flag
+            if self.app.needs_redraw {
+                let throttled = !layout_changed
+                    && self.app.is_generating
+                    && self.app.last_render_at.elapsed() < MIN_RENDER_INTERVAL;
+                if !throttled {
+                    // Simulate render: rebuild visible lines
+                    self.app.rebuild_visible_lines();
+                    self.app.last_render_at = Instant::now();
+                    self.render_count += 1;
+                }
+                self.app.needs_redraw = false;
+            }
+        }
+
+        fn send_turn_start(&self) {
+            let _ = self.notify_tx.try_send(AgentNotification::TurnStart {
+                turn: self.app.total_turns + 1,
+            });
+        }
+
+        fn send_text_deltas(&self, deltas: &[&str]) {
+            for delta in deltas {
+                let _ = self
+                    .notify_tx
+                    .try_send(AgentNotification::TextDelta {
+                        text: delta.to_string(),
+                    });
+            }
+        }
+
+        fn send_turn_complete(&self) {
+            let _ = self.notify_tx.try_send(AgentNotification::TurnComplete {
+                turn: self.app.total_turns + 1,
+                stop_reason: "end_turn".to_string(),
+                usage: clawed_bus::events::UsageInfo {
+                    input_tokens: 100,
+                    output_tokens: 50,
+                    cache_read_tokens: 0,
+                    cache_creation_tokens: 0,
+                },
+            });
+        }
+    }
+
+    #[test]
+    fn e2e_rapid_streaming_does_not_corrupt_layout() {
+        let mut env = E2ETestEnv::new();
+
+        // Start a turn
+        env.send_turn_start();
+        env.tick();
+
+        // Send 200 small deltas simulating rapid LLM streaming
+        let deltas: Vec<&str> = (0..200)
+            .map(|i| {
+                if i % 10 == 0 {
+                    "**bold** "
+                } else if i % 5 == 0 {
+                    "`code` "
+                } else {
+                    "word "
+                }
+            })
+            .collect();
+        env.send_text_deltas(&deltas);
+
+        // Process all ticks
+        for _ in 0..50 {
+            env.tick();
+        }
+
+        // Layout should be consistent: signature should match last known
+        let sig = env.app.layout_signature();
+        assert_eq!(sig, env.app.last_layout_sig);
+
+        // The cached visible lines should be valid (not dirty after last tick)
+        assert!(!env.app.cached_visible_lines_dirty);
+
+        // Message count should reflect all deltas
+        assert!(!env.app.messages.is_empty());
+    }
+
+    #[test]
+    fn e2e_streaming_then_input_queue_works() {
+        let mut env = E2ETestEnv::new();
+
+        // Start generating
+        env.app.mark_generating();
+        env.send_turn_start();
+        env.tick();
+
+        // Stream some text
+        env.send_text_deltas(&["hello ", "world"]);
+        env.tick();
+
+        // Verify generating state
+        assert!(env.app.is_generating);
+
+        // Complete the turn
+        env.send_turn_complete();
+        env.tick();
+
+        // After turn complete, generating should be false
+        assert!(!env.app.is_generating);
+
+        // Text should be in the messages
+        let has_text = env.app.messages.iter().any(|m| {
+            if let MessageContent::AssistantText(ref t) = m.content {
+                t.contains("hello") || t.contains("world")
+            } else {
+                false
+            }
+        });
+        assert!(has_text, "streamed text should appear in messages");
+    }
+
+    #[test]
+    fn e2e_layout_signature_tracks_terminal_resize() {
+        let mut env = E2ETestEnv::new();
+
+        // Initial state
+        env.app.term_width = 80;
+        env.app.term_height = 24;
+        let initial_sig = env.app.layout_signature();
+
+        // Simulate terminal resize
+        env.app.term_width = 120;
+        env.app.term_height = 40;
+        let new_sig = env.app.layout_signature();
+
+        // Signature should differ
+        assert_ne!(initial_sig, new_sig);
+        assert_eq!(new_sig.term_width, 120);
+        assert_eq!(new_sig.term_height, 40);
+    }
+
+    #[test]
+    fn e2e_overlay_toggle_causes_layout_change() {
+        let mut env = E2ETestEnv::new();
+
+        let base = env.app.layout_signature();
+        assert!(!base.has_overlay);
+
+        // Open overlay
+        env.app.overlay = Some(overlay::build_model_overlay("test"));
+        let with_overlay = env.app.layout_signature();
+        assert!(with_overlay.has_overlay);
+        assert_ne!(base, with_overlay);
+
+        // Close overlay
+        env.app.overlay = None;
+        let after_close = env.app.layout_signature();
+        assert!(!after_close.has_overlay);
+        // After close, signature should match base
+        assert_eq!(base, after_close);
+    }
+
+    #[test]
+    fn e2e_render_throttle_during_streaming() {
+        let mut app = App::new("test-model".to_string());
+
+        // Set stable layout so no layout change triggers
+        app.term_width = 80;
+        app.term_height = 24;
+        app.last_layout_sig = app.layout_signature();
+
+        // Mark generating so throttle applies
+        app.mark_generating();
+
+        // First render — should happen (last_render_at is > 32ms ago)
+        app.needs_redraw = true;
+        let _before_renders = app.last_render_at;
+        // Simulate one tick of the event loop render logic
+        {
+            let layout_changed = false; // layout is stable
+            let throttled = !layout_changed
+                && app.is_generating
+                && app.last_render_at.elapsed() < MIN_RENDER_INTERVAL;
+            assert!(
+                !throttled,
+                "first render should NOT be throttled (elapsed > 32ms)"
+            );
+        }
+
+        // Perform the render
+        app.last_render_at = Instant::now();
+        let first_render_at = app.last_render_at;
+
+        // Immediately request another render — should be throttled
+        app.needs_redraw = true;
+        {
+            let layout_changed = false;
+            let throttled = !layout_changed
+                && app.is_generating
+                && app.last_render_at.elapsed() < MIN_RENDER_INTERVAL;
+            assert!(
+                throttled,
+                "second render SHOULD be throttled (elapsed < 32ms)"
+            );
+        }
+
+        // Verify the first render time is recent
+        assert!(first_render_at.elapsed() < Duration::from_millis(10));
+    }
+
+    #[test]
+    fn e2e_layout_change_bypasses_throttle() {
+        let mut env = E2ETestEnv::new();
+
+        env.app.mark_generating();
+        env.send_turn_start();
+        env.app.term_width = 80;
+        env.app.term_height = 24;
+        env.app.last_layout_sig = env.app.layout_signature();
+        env.tick();
+
+        // Force initial render
+        env.app.needs_redraw = true;
+        env.tick();
+        let initial_renders = env.render_count;
+
+        // Now change layout (open overlay) — should bypass throttle
+        env.app.overlay = Some(overlay::build_model_overlay("test"));
+        env.app.needs_redraw = true;
+        env.tick();
+
+        // Should have rendered despite throttle (layout changed)
+        assert!(
+            env.render_count > initial_renders,
+            "layout change should bypass render throttle"
+        );
+    }
+
+    // -- E2E: slash command routing tests --
+
+    #[test]
+    fn e2e_slash_command_think_toggles_thinking() {
+        let (mut bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/think");
+        // Think sends SetThinking request, not pending_command
+        match bus.recv_request().now_or_never() {
+            Some(Some(clawed_bus::events::AgentRequest::SetThinking { mode })) => {
+                assert_eq!(mode, "on");
+            }
+            other => panic!("expected SetThinking request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn e2e_slash_command_breakcache_sets_request() {
+        let (mut bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/break-cache");
+        // BreakCache sends BreakCache request directly, not pending_command
+        match bus.recv_request().now_or_never() {
+            Some(Some(clawed_bus::events::AgentRequest::BreakCache)) => {}
+            other => panic!("expected BreakCache request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn e2e_slash_command_env_opens_overlay() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/env");
+        assert!(app.overlay.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_effort_valid() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/effort high");
+        assert!(app.messages.len() == 1);
+        if let MessageContent::System(ref text) = app.messages[0].content {
+            assert!(text.contains("high"));
+        } else {
+            panic!("expected system message");
+        }
+    }
+
+    #[test]
+    fn e2e_slash_command_effort_invalid() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/effort ultra");
+        assert!(app.messages.len() == 1);
+        if let MessageContent::System(ref text) = app.messages[0].content {
+            assert!(text.contains("Invalid"));
+        } else {
+            panic!("expected system message");
+        }
+    }
+
+    #[test]
+    fn e2e_slash_command_effort_empty_shows_help() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/effort");
+        assert!(app.messages.len() == 1);
+        if let MessageContent::System(ref text) = app.messages[0].content {
+            assert!(text.contains("Current effort: auto"));
+        } else {
+            panic!("expected system message");
+        }
+    }
+
+    #[test]
+    fn e2e_slash_command_tag_with_name() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/tag v1.0");
+        assert!(app.messages.len() == 1);
+        if let MessageContent::System(ref text) = app.messages[0].content {
+            assert!(text.contains("v1.0"));
+        } else {
+            panic!("expected system message");
+        }
+    }
+
+    #[test]
+    fn e2e_slash_command_tag_empty_shows_usage() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/tag");
+        assert!(app.messages.len() == 1);
+        if let MessageContent::System(ref text) = app.messages[0].content {
+            assert!(text.contains("Usage"));
+        } else {
+            panic!("expected system message");
+        }
+    }
+
+    #[test]
+    fn e2e_slash_command_stickers_shows_url() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/stickers");
+        assert!(app.messages.len() == 1);
+        if let MessageContent::System(ref text) = app.messages[0].content {
+            assert!(text.contains("stickermule"));
+        } else {
+            panic!("expected system message");
+        }
+    }
+
+    #[test]
+    fn e2e_slash_command_exit_stops_running() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+        assert!(app.running);
+
+        app.handle_slash_command(&client, "/exit");
+        assert!(!app.running);
+    }
+
+    #[test]
+    fn e2e_slash_command_cost_opens_overlay() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/cost");
+        assert!(app.overlay.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_status_opens_overlay() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/status");
+        assert!(app.overlay.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_clear_clears_messages() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+        app.push_message(MessageContent::System("hello".to_string()));
+        assert_eq!(app.messages.len(), 1);
+
+        app.handle_slash_command(&client, "/clear");
+        assert!(app.messages.is_empty());
+    }
+
+    #[test]
+    fn e2e_slash_command_model_opens_footer_picker() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test-model".to_string());
+
+        app.handle_slash_command(&client, "/model");
+        assert!(app.footer_picker.is_some());
+        assert_eq!(
+            app.footer_picker.as_ref().map(|p| p.kind),
+            Some(FooterPickerKind::Model)
+        );
+    }
+
+    #[test]
+    fn e2e_slash_command_model_set_closes_picker() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test-model".to_string());
+
+        app.handle_slash_command(&client, "/model sonnet");
+        // Picker should be cleared after setting model
+        assert!(app.footer_picker.is_none());
+    }
+
+    #[test]
+    fn e2e_slash_command_compact_sends_request() {
+        let (mut bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/compact summarize the code");
+        // Compact sends Compact request directly, not pending_command
+        match bus.recv_request().now_or_never() {
+            Some(Some(clawed_bus::events::AgentRequest::Compact { ref instructions })) => {
+                assert!(instructions.as_ref().is_some_and(|i| i.contains("summarize")));
+            }
+            other => panic!("expected Compact request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn e2e_slash_command_review_sends_to_engine() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/review check for bugs");
+        assert!(app.pending_command.is_some());
+        if let Some(
+            crate::commands::CommandResult::Review { ref prompt },
+        ) = app.pending_command
+        {
+            assert!(prompt.contains("bugs"));
+        } else {
+            panic!("expected Review command result");
+        }
+    }
+
+    #[test]
+    fn e2e_slash_command_bug_sends_to_engine() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/bug why is this crashing");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_pr_sends_to_engine() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/pr review this PR");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_unknown_stays_unknown() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/foobar");
+        // Unknown commands should not crash or produce unexpected behavior
+    }
+
+    #[test]
+    fn e2e_slash_command_mcp_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/mcp");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_vim_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/vim");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_permissions_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/permissions");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_config_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/config");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_doctor_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/doctor");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_init_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/init");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_login_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/login");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_logout_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/logout");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_theme_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/theme");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_agents_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/agents");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_plan_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/plan");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_sessions_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/sessions");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_resume_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/resume");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_memory_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/memory list");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_pr_comments_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/pr-comments 123");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_branch_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/branch my-feature");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_search_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/search hello");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_history_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/history");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_undo_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/undo");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_retry_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/retry");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_copy_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/copy");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_share_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/share");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_rename_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/rename v2");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_summary_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/summary");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_export_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/export");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_context_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/context");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_fast_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/fast");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_rewind_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/rewind 3");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_add_dir_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/add-dir .");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_files_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/files *.rs");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_image_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/image test.png");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_feedback_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/feedback this is great");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_stats_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/stats");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_release_notes_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/release-notes");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_reload_context_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/reload-context");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_diff_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/diff");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_commit_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/commit fix: typo");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_commit_push_pr_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/commit-push-pr");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_slash_command_plugin_goes_to_pending() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/plugin");
+        assert!(app.pending_command.is_some());
     }
 }

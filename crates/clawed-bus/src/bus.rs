@@ -36,6 +36,11 @@ use crate::events::{
     RiskLevel,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TryRecvNotificationError {
+    Lagged,
+}
+
 // ── Lock helper ──────────────────────────────────────────────────────────────
 
 /// Lock a `std::sync::Mutex`, recovering from poisoning.
@@ -689,11 +694,15 @@ impl ClientHandle {
     ///
     /// Returns `Ok(Some(event))` if a message is available,
     /// `Ok(None)` if no messages are pending,
-    /// or `Err(())` if the receiver fell behind (messages were skipped).
-    pub fn try_recv_notification(&mut self) -> Result<Option<AgentNotification>, ()> {
+    /// or `Err(TryRecvNotificationError::Lagged)` if the receiver fell behind.
+    pub fn try_recv_notification(
+        &mut self,
+    ) -> Result<Option<AgentNotification>, TryRecvNotificationError> {
         match self.notify_rx.try_recv() {
             Ok(event) => Ok(Some(event)),
-            Err(broadcast::error::TryRecvError::Lagged(_)) => Err(()),
+            Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                Err(TryRecvNotificationError::Lagged)
+            }
             Err(broadcast::error::TryRecvError::Empty | broadcast::error::TryRecvError::Closed) => {
                 Ok(None)
             }

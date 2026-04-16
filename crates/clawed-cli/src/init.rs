@@ -152,6 +152,31 @@ pub(crate) fn discover_mcp_instructions(cwd: &std::path::Path) -> Vec<(String, S
 }
 
 #[cfg(test)]
+fn project_only_mcp_instructions(cwd: &std::path::Path) -> Vec<(String, String)> {
+    let config_paths: Vec<_> = clawed_tools::mcp::discover_mcp_configs(cwd)
+        .into_iter()
+        .filter(|path| path.starts_with(cwd))
+        .collect();
+    let mut instructions = Vec::new();
+
+    for path in config_paths {
+        if let Ok(configs) = clawed_tools::mcp::load_mcp_configs(&path) {
+            for cfg in configs {
+                let instruction = format!(
+                    "MCP server '{}': command=`{} {}`",
+                    cfg.name,
+                    cfg.command,
+                    cfg.args.join(" "),
+                );
+                instructions.push((cfg.name, instruction));
+            }
+        }
+    }
+
+    instructions
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -194,17 +219,14 @@ mod tests {
 
     #[test]
     fn test_discover_mcp_instructions_empty() {
-        let tmp = std::env::temp_dir().join("claude_test_no_mcp");
-        let _ = std::fs::create_dir_all(&tmp);
-        let result = discover_mcp_instructions(&tmp);
+        let tmp = tempfile::tempdir().unwrap();
+        let result = project_only_mcp_instructions(tmp.path());
         assert!(result.is_empty());
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn test_discover_mcp_instructions_with_config() {
-        let tmp = std::env::temp_dir().join("claude_test_mcp_disc");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = tempfile::tempdir().unwrap();
         let mcp_json = r#"{
             "mcpServers": {
                 "my-server": {
@@ -213,11 +235,10 @@ mod tests {
                 }
             }
         }"#;
-        std::fs::write(tmp.join(".mcp.json"), mcp_json).unwrap();
-        let result = discover_mcp_instructions(&tmp);
+        std::fs::write(tmp.path().join(".mcp.json"), mcp_json).unwrap();
+        let result = project_only_mcp_instructions(tmp.path());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].0, "my-server");
         assert!(result[0].1.contains("npx"));
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

@@ -82,10 +82,6 @@ impl InputWidget {
 
     /// Cursor row and column for rendering (0-indexed, viewport-relative).
     pub fn cursor_position(&self) -> (usize, usize) {
-        if self.completion.is_some() {
-            let text = self.display_text();
-            return (0, text.width());
-        }
         let (row, col) = self.cursor_line_col();
         (row.saturating_sub(self.scroll_offset), col)
     }
@@ -99,7 +95,7 @@ impl InputWidget {
         }
 
         let action = match key.code {
-            // Submit on plain Enter (no modifier), or accept completion.
+            // Accept slash completion on Enter when a menu is open; otherwise submit.
             KeyCode::Enter if key.modifiers == KeyModifiers::NONE => {
                 if let Some(ref comp) = self.completion {
                     let idx = comp.matches[comp.selected];
@@ -344,20 +340,11 @@ impl InputWidget {
     }
 
     pub fn display_width(&self) -> usize {
-        if let Some(ref comp) = self.completion {
-            let idx = comp.matches[comp.selected];
-            SLASH_COMMANDS[idx].width()
-        } else {
-            self.textarea.text().width()
-        }
+        self.textarea.text().width()
     }
 
     pub fn display_text(&self) -> &str {
-        if let Some(ref comp) = self.completion {
-            SLASH_COMMANDS[comp.matches[comp.selected]]
-        } else {
-            self.textarea.text()
-        }
+        self.textarea.text()
     }
 
     pub fn display_cursor_col(&self) -> usize {
@@ -366,9 +353,6 @@ impl InputWidget {
 
     /// Get display lines for multi-line rendering (viewport-windowed).
     pub fn display_lines(&self) -> Vec<&str> {
-        if self.completion.is_some() {
-            return vec![self.display_text()];
-        }
         let all_lines: Vec<&str> = self.textarea.text().split('\n').collect();
         let end = (self.scroll_offset + MAX_INPUT_ROWS).min(all_lines.len());
         all_lines[self.scroll_offset..end].to_vec()
@@ -678,6 +662,40 @@ mod tests {
             w.buffer().starts_with('/'),
             "Tab should fill in the selected command"
         );
+    }
+
+    #[test]
+    fn test_enter_accepts_slash_command_completion() {
+        let mut w = InputWidget::new();
+        for c in "/cost".chars() {
+            w.handle_key(key(KeyCode::Char(c)));
+        }
+
+        assert!(w.in_completion());
+        assert_eq!(w.display_text(), "/cost");
+        assert!(matches!(
+            w.handle_key(key(KeyCode::Enter)),
+            InputAction::Changed
+        ));
+        assert_eq!(w.buffer(), "/cost");
+        assert!(!w.in_completion());
+
+        assert!(matches!(
+            w.handle_key(key(KeyCode::Enter)),
+            InputAction::Submit
+        ));
+    }
+
+    #[test]
+    fn test_completion_does_not_replace_input_display_text() {
+        let mut w = InputWidget::new();
+        for c in "/co".chars() {
+            w.handle_key(key(KeyCode::Char(c)));
+        }
+
+        assert!(w.in_completion());
+        assert_eq!(w.display_text(), "/co");
+        assert_eq!(w.display_lines(), vec!["/co"]);
     }
 
     #[test]
