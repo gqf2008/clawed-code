@@ -65,16 +65,9 @@ const SPINNER_TICK_INTERVAL: Duration = Duration::from_millis(80);
 const MIN_RENDER_INTERVAL: Duration = Duration::from_millis(32);
 const MAX_COMPLETION_POPUP_ITEMS: usize = 10;
 
-fn collapsed_thinking_lines(text: &str) -> Vec<Line<'static>> {
-    if text.is_empty() {
-        return vec![];
-    }
-
-    let line_count = text.lines().count();
-    vec![Line::styled(
-        format!("▶ thinking ({line_count} lines, Ctrl+O to expand)"),
-        Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
-    )]
+fn collapsed_thinking_lines(_text: &str) -> Vec<Line<'static>> {
+    // Thinking tracking lives in the status bar — keep transcript clean.
+    vec![]
 }
 
 fn plain_text_lines(text: &str) -> Vec<Line<'static>> {
@@ -759,7 +752,8 @@ impl App {
                         started: Instant::now(),
                     },
                 );
-                self.push_message(MessageContent::ToolUseStart { name: tool_name });
+                // Skip pushing ToolUseStart message — tool tracking lives in
+                // the status bar, keeping the transcript compact.
             }
             AgentNotification::ToolUseComplete {
                 tool_name,
@@ -810,11 +804,8 @@ impl App {
                 if !self.expecting_turn_start {
                     self.mark_done();
                 }
-                self.push_message(MessageContent::TurnDivider {
-                    turn,
-                    input_tokens: usage.input_tokens,
-                    output_tokens: usage.output_tokens,
-                });
+                // Skip TurnDivider — token/turn info lives in the status bar,
+                // keeping the transcript clean like the original Claude Code.
                 // Drain queue: merge all pending inputs and submit as one message.
                 // Only drain when NOT expecting a new turn (if expecting_turn_start,
                 // the direct submit already happened at the call site).
@@ -825,7 +816,7 @@ impl App {
                     return self.take_queued_inputs();
                 }
             }
-            AgentNotification::TurnStart { turn } => {
+            AgentNotification::TurnStart { .. } => {
                 // Re-assert is_generating in case a stale TurnComplete from a
                 // previous (aborted) stream arrived between mark_generating()
                 // and this TurnStart, resetting is_generating prematurely.
@@ -834,9 +825,8 @@ impl App {
                 // We now have a confirmed new turn — allow TextDelta through.
                 self.expecting_turn_start = false;
                 self.status.thinking = true;
-                self.push_message(MessageContent::System(format!(
-                    "\u{2500}\u{2500} turn {turn} \u{2500}\u{2500}"
-                )));
+                // Skip turn separator — keeping transcript clean like the
+                // original Claude Code.
             }
             AgentNotification::AgentSpawned { agent_id, name, .. } => {
                 let label = name.unwrap_or_else(|| agent_id.chars().take(8).collect::<String>());
@@ -3448,8 +3438,8 @@ async fn replay_session_messages(engine: &Arc<QueryEngine>, app: &mut App) {
                         ContentBlock::Thinking { thinking } => {
                             app.push_message(MessageContent::ThinkingText(thinking.clone()));
                         }
-                        ContentBlock::ToolUse { name, .. } => {
-                            app.push_message(MessageContent::ToolUseStart { name: name.clone() });
+                        ContentBlock::ToolUse { .. } => {
+                            // Skip — tool tracking lives in the status bar.
                         }
                         _ => {}
                     }
@@ -3764,16 +3754,16 @@ mod tests {
     }
 
     #[test]
-    fn cached_visible_lines_track_collapsed_thinking_append() {
+    fn collapsed_thinking_shows_no_lines() {
         let mut app = App::new("test".to_string());
         app.thinking_collapsed = true;
         app.push_message(MessageContent::ThinkingText("one".to_string()));
 
         app.append_thinking_text("\ntwo");
 
+        // Thinking tracking lives in status bar — transcript shows nothing.
         assert!(!app.cached_visible_lines_dirty);
-        assert_eq!(app.cached_visible_lines.len(), 1);
-        assert!(line_text(&app.cached_visible_lines[0]).contains("2 lines"));
+        assert_eq!(app.cached_visible_lines.len(), 0);
     }
 
     #[test]

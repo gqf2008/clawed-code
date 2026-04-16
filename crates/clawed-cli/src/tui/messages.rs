@@ -65,20 +65,12 @@ pub enum MessageContent {
     UserInput(String),
     AssistantText(String),
     ThinkingText(String),
-    ToolUseStart {
-        name: String,
-    },
     ToolResult {
         name: String,
         preview: String,
         full_result: Option<String>,
         is_error: bool,
         duration_ms: u64,
-    },
-    TurnDivider {
-        turn: u32,
-        input_tokens: u64,
-        output_tokens: u64,
     },
     System(String),
 }
@@ -210,13 +202,6 @@ impl Message {
                 .lines()
                 .map(|l| Line::styled(l.to_string(), thinking_style()))
                 .collect(),
-            MessageContent::ToolUseStart { name } => vec![
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled("\u{2699} ".to_string(), Style::default().fg(Color::Blue)),
-                    Span::styled(name.clone(), Style::default().fg(Color::Blue)),
-                ]),
-            ],
             MessageContent::ToolResult {
                 name,
                 preview,
@@ -254,26 +239,9 @@ impl Message {
                         }
                         lines.push(Line::from(""));
                     }
-                } else if full_result.is_some() {
-                    // Show collapse hint
-                    lines.push(Line::styled(
-                        "  \u{25B6} Ctrl+E to expand".to_string(),
-                        Style::default().fg(MUTED),
-                    ));
                 }
 
                 lines
-            }
-            MessageContent::TurnDivider {
-                turn,
-                input_tokens,
-                output_tokens,
-            } => {
-                let text = format!("\u{2500}\u{2500} Turn {turn} \u{2502} {input_tokens}\u{2191} {output_tokens}\u{2193} \u{2500}\u{2500}");
-                vec![
-                    Line::from(""),
-                    Line::styled(text, Style::default().fg(Color::Magenta)),
-                ]
             }
             MessageContent::System(text) => text
                 .lines()
@@ -331,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_result_collapsed_has_hint() {
+    fn tool_result_collapsed_is_single_line() {
         let msg = Message::new(MessageContent::ToolResult {
             name: "read_file".into(),
             preview: "hello world".into(),
@@ -339,12 +307,9 @@ mod tests {
             is_error: false,
             duration_ms: 50,
         });
-        // Default collapsed = true, should show hint
+        // No separate expand hint — compact transcript.
         let lines = msg.to_lines();
-        assert!(lines.len() >= 2);
-        let hint_line = &lines[1];
-        let text: String = hint_line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(text.contains("Ctrl+E"));
+        assert_eq!(lines.len(), 1);
     }
 
     #[test]

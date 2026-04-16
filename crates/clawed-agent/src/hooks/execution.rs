@@ -77,6 +77,7 @@ fn glob_to_regex(glob: &str) -> String {
                 if let Some(close) = chars[i + 1..].iter().position(|&c| c == ']') {
                     // Valid character class — pass through verbatim
                     re.push('[');
+                    #[allow(clippy::needless_range_loop)]
                     for j in (i + 1)..=(i + 1 + close) {
                         re.push(chars[j]);
                     }

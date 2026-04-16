@@ -711,7 +711,7 @@ pub async fn run(
                                             text.len()
                                         ),
                                         Err(e) => {
-                                            eprintln!("{}Copy failed: {}\x1b[0m", theme::c_err(), e)
+                                            eprintln!("{}Copy failed: {}\x1b[0m", theme::c_err(), e);
                                         }
                                     }
                                 } else {
@@ -763,7 +763,7 @@ pub async fn run(
                                         md.len()
                                     ),
                                     Err(e) => {
-                                        eprintln!("{}Export failed: {e}\x1b[0m", theme::c_err())
+                                        eprintln!("{}Export failed: {e}\x1b[0m", theme::c_err());
                                     }
                                 }
                             }

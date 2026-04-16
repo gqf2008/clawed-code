@@ -5,11 +5,8 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use ratatui::{
-    layout::Rect,
     style::{Color, Style},
-    text::{Line, Span},
-    widgets::Paragraph,
-    Frame,
+    text::Span,
 };
 
 pub struct ToolInfo {
@@ -132,12 +129,6 @@ pub fn build_spans(state: &TuiStatusState) -> Vec<Span<'static>> {
     }
 
     spans
-}
-
-/// Render the status bar into the given area (standalone, for fallback use).
-pub fn render(frame: &mut Frame, area: Rect, state: &TuiStatusState) {
-    let spans = build_spans(state);
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 #[cfg(test)]

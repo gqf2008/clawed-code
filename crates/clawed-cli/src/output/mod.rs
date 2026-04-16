@@ -140,7 +140,10 @@ pub async fn run_task_interactive(engine: &QueryEngine, task: &str) -> anyhow::R
 
     let result = run_task(engine, task, |event| match event {
         TaskProgress::TurnStart { turn } if turn > 0 => {
-            eprintln!("\x1b[2m── turn {} ──\x1b[0m", turn);
+            // Skip turn separators in interactive output — turn info
+            // lives in the status bar, keeping the transcript clean
+            // like the original Claude Code.
+            let _ = turn;
         }
         TaskProgress::Text(t) => {
             print!("{}", t);

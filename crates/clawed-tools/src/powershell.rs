@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use clawed_core::tool::{Tool, ToolCategory, ToolContext, ToolResult};
 use serde_json::{json, Value};
 
+#[cfg(target_os = "windows")]
 use crate::bash::{check_dangerous, truncate_output};
 
 pub struct PowerShellTool;
