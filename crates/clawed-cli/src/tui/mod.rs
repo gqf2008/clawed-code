@@ -1531,13 +1531,11 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         info_parts.push(format!("\u{1F4E5}{}", app.queued_inputs.len()));
     }
 
-    // --- Right side: dynamic status spans (elapsed, spinner, tools, shells, agents) ---
+    // --- Dynamic status spans (spinner, elapsed, tools, shells, agents) — leftmost ---
     let status_spans = status::build_spans(&app.status);
-
-    // Both sides are left-aligned: measure total to truncate info if needed.
     let status_w: usize = status_spans.iter().map(|s| s.content.width()).sum();
 
-    // Scroll indicator on the left when scrolled up.
+    // Build spans: status first (Thinking/elapsed leftmost), then info.
     let mut spans: Vec<Span> = Vec::new();
     let mut left_used = 0usize;
 
@@ -1547,15 +1545,21 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         spans.push(Span::styled(s, hi));
     }
 
-    // Info text, truncated so info + status fit within terminal width.
+    // Status spans go first so Thinking is visible on the left.
+    if status_w > 0 {
+        spans.extend(status_spans);
+        left_used += status_w;
+    }
+
+    // Info text follows, truncated so everything fits within terminal width.
     if !info_parts.is_empty() {
         let info = format!(" {} ", info_parts.join(" \u{2502} "));
-        let available = width.saturating_sub(left_used + status_w);
+        let available = width.saturating_sub(left_used);
         let info = if info.width() > available {
             let mut t = String::new();
             for ch in info.chars() {
                 if t.width() + 1 >= available {
-                    t.push('…');
+                    t.push('\u{2026}');
                     break;
                 }
                 t.push(ch);
@@ -1565,11 +1569,6 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
             info
         };
         spans.push(Span::styled(info, dim));
-    }
-
-    // Dynamic status follows immediately (left-aligned).
-    if status_w > 0 {
-        spans.extend(status_spans);
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
