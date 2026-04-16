@@ -900,7 +900,7 @@ pub async fn run(
                                 }
                             }
                             CommandResult::Stickers => {
-                                let url = "https://www.stickermule.com/claudecode";
+                                let url = "https://claude.ai/stickers";
                                 println!("Opening sticker page: {url}");
                                 let _ = opener::open(url);
                             }

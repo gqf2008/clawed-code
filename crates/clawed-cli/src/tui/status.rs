@@ -70,25 +70,28 @@ pub fn build_spans(state: &TuiStatusState) -> Vec<Span<'static>> {
     let mins = elapsed.as_secs() / 60;
     let secs = elapsed.as_secs() % 60;
 
-    let mut spans: Vec<Span<'static>> = vec![Span::styled(format!("{mins:02}:{secs:02}"), dim)];
+    let mut spans: Vec<Span<'static>> = Vec::new();
 
-    // Show spinner whenever generating — label changes based on phase:
+    // Show spinner first whenever generating — label changes based on phase:
     //   "thinking"   — extended thinking or between submit and first TextDelta
-    //   tool name    — tool is running (shown separately below with timing)
+    //   "running"    — tool is running
     //   "generating" — streaming text back, or waiting for next response after tools
     if state.is_generating {
         const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let ch = SPINNER[state.spinner_frame % SPINNER.len()];
         let label = if state.thinking {
-            "thinking"
+            "Thinking"
         } else if !state.active_tools.is_empty() {
-            "running"
+            "Running"
         } else {
-            "generating"
+            "Generating"
         };
-        spans.push(Span::raw("  "));
         spans.push(Span::styled(format!("{ch} {label}"), tool_style));
     }
+
+    // Elapsed time after spinner
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled(format!("{mins:02}:{secs:02}"), dim));
 
     let tool_count = state.active_tools.len();
     if tool_count > 0 {

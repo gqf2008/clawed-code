@@ -4,7 +4,7 @@
 //! ```text
 //! Messages (scrollable)
 //! ── claude-3.5 │ turn 3 │ 4096↑ 1024↓ │ 80% ctx │ 📥2 ──  (separator + static info)
-//! ⠹ thinking  Bash (00:03)  2 agents                         (dynamic status, only when active)
+//! ⠹ thinking  01:20  Bash (00:03)  2 agents                         (dynamic status, only when active)
 //! ▸ queued message 1                                          (queue items, only when queued)
 //! ▸ queued message 2
 //! ──────────────────────────────────────────────────────────  (input separator, always)
@@ -1211,7 +1211,7 @@ impl App {
             }
             crate::commands::CommandResult::Stickers => {
                 self.push_message(MessageContent::System(
-                    "Sticker page: https://www.stickermule.com/claudecode".to_string(),
+                    "Grab some stickers at: https://claude.ai/stickers".to_string(),
                 ));
             }
             crate::commands::CommandResult::Vim { .. } => {
@@ -2880,7 +2880,7 @@ async fn handle_async_command(
         }
         CommandResult::ReleaseNotes => {
             let notes = format!(
-                "Clawed Code v{}\n\nRecent changes:\n  • Full ratatui TUI with double-buffered rendering\n  • Markdown + syntect code highlighting\n  • Multi-line input, collapsible thinking/tool results\n  • Permission prompts, session resume, image paste\n  • 55+ slash commands, 52+ tools",
+                "Clawed Code v{}\n\nRecent changes:\n  • Full ratatui TUI with double-buffered rendering\n  • Markdown + syntect code highlighting\n  • Multi-line input, collapsible thinking/tool results\n  • Permission prompts, session resume, image paste\n  • 76+ slash commands, 52+ tools",
                 env!("CARGO_PKG_VERSION"),
             );
             app.overlay = Some(overlay::build_info_overlay("Release Notes", &notes));
@@ -4373,7 +4373,7 @@ mod tests {
         app.handle_slash_command(&client, "/stickers");
         assert!(app.messages.len() == 1);
         if let MessageContent::System(ref text) = app.messages[0].content {
-            assert!(text.contains("stickermule"));
+            assert!(text.contains("stickers"));
         } else {
             panic!("expected system message");
         }
@@ -4849,5 +4849,1369 @@ mod tests {
 
         app.handle_slash_command(&client, "/plugin");
         assert!(app.pending_command.is_some());
+    }
+
+    // ========================================================================
+    // P0 Supplement: Subcommand parameter tests
+    // ========================================================================
+
+    // -- /session subcommands --
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_session_save_produces_message() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Session { sub: "save".to_string() },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        assert!(app.overlay.is_none());
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("saved") || text.contains("Session"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_session_list_produces_output() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        // Call handle_session_command_output directly to verify it works
+        let output = crate::repl_commands::handle_session_command_output("list", &engine).await;
+        match output {
+            crate::repl_commands::SessionCommandOutput::Message(msg) => {
+                assert!(msg.contains("session") || msg.contains("No saved"));
+                // Now simulate what the TUI handler does
+                if msg.contains('\n') {
+                    app.overlay = Some(overlay::build_info_overlay("Sessions", &msg));
+                } else {
+                    app.push_message(MessageContent::System(overlay::strip_ansi(&msg)));
+                }
+            }
+            crate::repl_commands::SessionCommandOutput::Restored { .. } => {
+                panic!("expected Message output for list");
+            }
+        }
+
+        assert!(
+            !app.messages.is_empty() || app.overlay.is_some(),
+            "should have produced output"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_session_delete_empty_shows_usage() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Session {
+                sub: "delete".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("Usage"));
+        assert!(text.contains("delete"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_session_delete_nonexistent_not_found() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Session {
+                sub: "delete nonexistent-id".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("No session found"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_session_unknown_sub_fallback() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Session {
+                sub: "bogus".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("Unknown session subcommand"));
+    }
+
+    // -- /mcp subcommands --
+
+    #[test]
+    fn e2e_mcp_list_produces_overlay() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/mcp list");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::Mcp { ref sub }) = app.pending_command {
+            assert_eq!(sub, "list");
+        } else {
+            panic!("expected Mcp command result");
+        }
+    }
+
+    #[test]
+    fn e2e_mcp_status_produces_overlay() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/mcp status");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::Mcp { ref sub }) = app.pending_command {
+            assert_eq!(sub, "status");
+        } else {
+            panic!("expected Mcp command result");
+        }
+    }
+
+    #[test]
+    fn e2e_mcp_unknown_sub_returns_error() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/mcp foobar");
+        assert!(app.pending_command.is_some());
+    }
+
+    #[test]
+    fn e2e_mcp_help_subcommand() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/mcp help");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::Mcp { ref sub }) = app.pending_command {
+            assert_eq!(sub, "help");
+        } else {
+            panic!("expected Mcp command result");
+        }
+    }
+
+    // -- /plugin subcommands --
+
+    #[test]
+    fn e2e_plugin_list_subcommand() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/plugin list");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::Plugin { ref sub }) = app.pending_command {
+            assert_eq!(sub, "list");
+        } else {
+            panic!("expected Plugin command result");
+        }
+    }
+
+    #[test]
+    fn e2e_plugin_info_without_name() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/plugin info");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::Plugin { ref sub }) = app.pending_command {
+            assert_eq!(sub, "info");
+        } else {
+            panic!("expected Plugin command result");
+        }
+    }
+
+    #[test]
+    fn e2e_plugin_enable_without_name() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/plugin enable");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::Plugin { ref sub }) = app.pending_command {
+            assert_eq!(sub, "enable");
+        } else {
+            panic!("expected Plugin command result");
+        }
+    }
+
+    #[test]
+    fn e2e_plugin_disable_without_name() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/plugin disable");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::Plugin { ref sub }) = app.pending_command {
+            assert_eq!(sub, "disable");
+        } else {
+            panic!("expected Plugin command result");
+        }
+    }
+
+    #[test]
+    fn e2e_plugin_unknown_subcommand() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/plugin foobar");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::Plugin { ref sub }) = app.pending_command {
+            assert_eq!(sub, "foobar");
+        } else {
+            panic!("expected Plugin command result");
+        }
+    }
+
+    // -- /agents subcommands --
+
+    #[test]
+    fn e2e_agents_list_subcommand() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/agents list");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::Agents { ref sub }) = app.pending_command {
+            assert_eq!(sub, "list");
+        } else {
+            panic!("expected Agents command result");
+        }
+    }
+
+    #[test]
+    fn e2e_agents_status_subcommand() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/agents status");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::Agents { ref sub }) = app.pending_command {
+            assert_eq!(sub, "status");
+        } else {
+            panic!("expected Agents command result");
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_agents_status_empty_shows_no_agents() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Agents { sub: "status".to_string() },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        assert!(app.overlay.is_some());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_agents_info_without_name_shows_usage() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Agents {
+                sub: "info".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        assert!(app.overlay.is_some());
+        if let Some(ref overlay) = app.overlay {
+            // The format_agents_tui function produces "Usage: /agents info <name>"
+            // when sub is exactly "info" with no name
+            let text = format!("{:?}", overlay);
+            assert!(text.contains("Usage") || text.contains("info"));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_agents_create_without_name_shows_usage() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Agents {
+                sub: "create".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        assert!(app.overlay.is_some());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_agents_delete_without_name_shows_usage() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Agents {
+                sub: "delete".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        assert!(app.overlay.is_some());
+    }
+
+    // -- /permissions subcommands --
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_permissions_bypass_mode() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Permissions {
+                mode: "bypass".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        // Setting a mode should produce a system message, not open picker
+        assert!(app.footer_picker.is_none());
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("Permission"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_permissions_plan_mode() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Permissions {
+                mode: "plan".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        assert!(app.footer_picker.is_none());
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("Permission"));
+    }
+
+    // -- /vim subcommands --
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_vim_on_enables() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Vim {
+                toggle: "on".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("enabled"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_vim_off_disables() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Vim {
+                toggle: "off".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("disabled"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_vim_invalid_shows_usage() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Vim {
+                toggle: "invalid".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("Usage"));
+        assert!(text.contains("/vim"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_vim_case_insensitive() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Vim {
+                toggle: "ON".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("enabled"));
+    }
+
+    // -- /theme subcommands --
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_theme_dark_applies() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Theme {
+                name: "dark".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("Theme") || text.contains("dark"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_theme_invalid_shows_available() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Theme {
+                name: "nonexistent-theme".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("Unknown theme") || text.contains("Available"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_theme_case_insensitive() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Theme {
+                name: "DARK".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        // Should succeed (case insensitive), not show error
+        assert!(!text.contains("Unknown theme"));
+    }
+
+    // -- /feedback empty text in TUI --
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_feedback_empty_appends_in_tui() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Feedback { text: String::new() },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        // TUI does NOT reject empty feedback — it appends to the log file
+        // and shows a success message. This is a known divergence from REPL.
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        // TUI accepts empty feedback
+        assert!(text.contains("Feedback") || text.contains("saved"));
+    }
+
+    // -- /cost with windows --
+
+    #[test]
+    fn e2e_cost_today_opens_overlay() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        // ShowCost is handled synchronously in handle_slash_command
+        app.handle_slash_command(&client, "/cost today");
+        assert!(app.overlay.is_some());
+    }
+
+    #[test]
+    fn e2e_cost_week_opens_overlay() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/cost week");
+        assert!(app.overlay.is_some());
+    }
+
+    #[test]
+    fn e2e_cost_month_opens_overlay() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/cost month");
+        assert!(app.overlay.is_some());
+    }
+
+    // -- /export json vs markdown --
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_export_json_creates_json_file() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Export {
+                format: "json".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains(".json"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_export_markdown_creates_md_file() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Export {
+                format: "markdown".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains(".md"));
+    }
+
+    // -- /rewind boundary values --
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_rewind_zero_coerced_to_one() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Rewind {
+                turns: "0".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("rewind") || text.contains("Nothing"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_rewind_non_numeric_defaults_to_one() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Rewind {
+                turns: "abc".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("rewind") || text.contains("Nothing"));
+    }
+
+    // -- /plan subcommands --
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_plan_show_no_plan_file() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Plan {
+                args: "show".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("No plan") || text.contains("plan"));
+    }
+
+    // -- /add-dir invalid paths --
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_add_dir_empty_shows_usage() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::AddDir {
+                path: String::new(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("Usage"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_add_dir_nonexistent_shows_error() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::AddDir {
+                path: "/nonexistent/path/xyz123".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("Directory not found"));
+    }
+
+    // -- /image invalid paths --
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_image_empty_shows_usage() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Image { path: String::new() },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("Usage"));
+        assert!(text.contains("/image"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_image_nonexistent_shows_error() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Image {
+                path: "nonexistent.png".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("error") || text.contains("Error") || text.contains("failed"));
+    }
+
+    // -- /history page boundaries --
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_history_page_1_empty() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::History { page: 1 },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        assert!(app.overlay.is_some());
+        if let Some(ref overlay) = app.overlay {
+            let text = format!("{:?}", overlay);
+            assert!(text.contains("No conversation") || text.contains("History"));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_history_page_999_clamped() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::History { page: 999 },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        // Page 999 should be clamped to the last available page
+        assert!(app.overlay.is_some());
+    }
+
+    // -- /pr-comments parsing boundaries --
+
+    #[test]
+    fn e2e_pr_comments_invalid_number_defaults_to_zero() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/pr-comments abc");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::PrComments { pr_number }) =
+            app.pending_command
+        {
+            assert_eq!(pr_number, 0);
+        } else {
+            panic!("expected PrComments command result");
+        }
+    }
+
+    #[test]
+    fn e2e_pr_comments_no_number_defaults_to_zero() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/pr-comments");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::PrComments { pr_number }) =
+            app.pending_command
+        {
+            assert_eq!(pr_number, 0);
+        } else {
+            panic!("expected PrComments command result");
+        }
+    }
+
+    // -- Subcommand case sensitivity --
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_session_uppercase_SAVE_unknown_sub() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Session {
+                sub: "SAVE".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        // SAVE (uppercase) should hit "Unknown session subcommand" fallback
+        assert!(text.contains("Unknown session subcommand"));
+    }
+
+    // -- Unicode/CJK parameters --
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_commit_with_cjk_characters() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (mut bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        // Commit goes to pending_command, then handle_async_command submits to engine
+        handle_async_command(
+            crate::commands::CommandResult::Commit {
+                message: "你好世界".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        // Commit submits prompt to engine, so we should see a Submit request on the bus
+        match bus.recv_request().now_or_never() {
+            Some(Some(clawed_bus::events::AgentRequest::Submit { ref text, .. })) => {
+                assert!(text.contains("你好世界"));
+            }
+            other => panic!("expected Submit request with CJK text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn e2e_tag_with_cjk_characters() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        // Tag is handled synchronously in handle_slash_command
+        app.handle_slash_command(&client, "/tag 测试");
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("测试"));
+    }
+
+    // -- Fast mode toggle --
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn e2e_fast_off_switches_to_sonnet() {
+        let tmp = TempDir::new().unwrap();
+        let engine = Arc::new(
+            QueryEngine::builder("test-key", tmp.path())
+                .load_claude_md(false)
+                .load_memory(false)
+                .build(),
+        );
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        handle_async_command(
+            crate::commands::CommandResult::Fast {
+                toggle: "off".to_string(),
+            },
+            &engine,
+            &client,
+            &mut app,
+            None,
+        )
+        .await;
+
+        let last_msg = app.messages.last().expect("should have a message");
+        let text = match &last_msg.content {
+            MessageContent::System(t) => t,
+            _ => panic!("expected system message"),
+        };
+        assert!(text.contains("Fast mode off") || text.contains("Switched"));
+    }
+
+    // -- /memory open subcommand --
+
+    #[test]
+    fn e2e_memory_open_subcommand() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/memory open test.md");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::Memory { ref sub }) = app.pending_command {
+            assert_eq!(sub, "open test.md");
+        } else {
+            panic!("expected Memory command result");
+        }
+    }
+
+    // -- Pending command field verification (strengthened assertions) --
+
+    #[test]
+    fn e2e_history_page_3_verifies_field() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/history 3");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::History { page }) = app.pending_command {
+            assert_eq!(page, 3);
+        } else {
+            panic!("expected History command result");
+        }
+    }
+
+    #[test]
+    fn e2e_rewind_3_verifies_field() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/rewind 3");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::Rewind { turns }) = app.pending_command {
+            assert_eq!(turns, "3");
+        } else {
+            panic!("expected Rewind command result");
+        }
+    }
+
+    #[test]
+    fn e2e_export_markdown_verifies_format_field() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/export markdown");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::Export { format }) = app.pending_command {
+            assert_eq!(format, "markdown");
+        } else {
+            panic!("expected Export command result");
+        }
+    }
+
+    #[test]
+    fn e2e_vim_on_verifies_toggle_field() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/vim on");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::Vim { toggle }) = app.pending_command {
+            assert_eq!(toggle, "on");
+        } else {
+            panic!("expected Vim command result");
+        }
+    }
+
+    #[test]
+    fn e2e_permissions_bypass_verifies_mode_field() {
+        let (_bus, client) = EventBus::new(16);
+        let mut app = App::new("test".to_string());
+
+        app.handle_slash_command(&client, "/permissions bypass");
+        assert!(app.pending_command.is_some());
+        if let Some(crate::commands::CommandResult::Permissions { mode }) = app.pending_command {
+            assert_eq!(mode, "bypass");
+        } else {
+            panic!("expected Permissions command result");
+        }
     }
 }

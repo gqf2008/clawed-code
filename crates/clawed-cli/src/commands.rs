@@ -347,7 +347,7 @@ impl SlashCommand {
             Self::History { page } => CommandResult::History { page: *page },
             Self::Retry => CommandResult::Retry,
             Self::Version => {
-                CommandResult::Print(format!("claude-code-rs v{}", env!("CARGO_PKG_VERSION")))
+                CommandResult::Print(format!("clawed v{}", env!("CARGO_PKG_VERSION")))
             }
             Self::Login => CommandResult::Login,
             Self::Logout => CommandResult::Logout,
@@ -665,7 +665,7 @@ const HELP_TEXT_BASE: &str = "\
   /init              Initialize CLAUDE.md for the project
 
 \x1b[1mConfiguration\x1b[0m
-  /model <name>      Switch model (aliases: sonnet, opus, haiku, best)
+  /model <name>      Switch model (sonnet|opus|haiku|best)
   /fast [off]        Toggle fast/cheap model (haiku)
   /think [on|off|N]  Toggle extended thinking (N = token budget)
   /effort [level]    Set effort (low|medium|high|max|auto)
@@ -702,7 +702,7 @@ const HELP_TEXT_BASE: &str = "\
 \x1b[1mSystem\x1b[0m
   /doctor            Check environment health
   /skills            List available skills
-  /agents            Manage agent definitions
+  /agents            Manage agent definitions (list|status|info|create|delete)
   /add-dir <path>    Add context directory at runtime
   /files [pattern]   List files in current directory
   /image <path>      Attach an image to the next message (PNG/JPEG/GIF/WebP)
@@ -1034,7 +1034,7 @@ mod tests {
     fn test_execute_version() {
         let cmd = SlashCommand::Version;
         match cmd.execute(&no_skills(), &no_plugins()) {
-            CommandResult::Print(text) => assert!(text.contains("claude-code-rs")),
+            CommandResult::Print(text) => assert!(text.contains("clawed")),
             _ => panic!("expected Print"),
         }
     }
