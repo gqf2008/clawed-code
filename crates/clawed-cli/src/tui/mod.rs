@@ -1696,9 +1696,11 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         ));
     }
 
-    if app.status.context_pct > 0.0 {
-        info_parts.push(format!("{:.0}% ctx", app.status.context_pct));
-    }
+    let ctx_text = if app.status.context_pct > 0.0 {
+        Some(format!("{:.0}% ctx", app.status.context_pct))
+    } else {
+        None
+    };
 
     if !app.queued_inputs.is_empty() {
         info_parts.push(format!("\u{1F4E5}{}", app.queued_inputs.len()));
@@ -1742,6 +1744,21 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
             info
         };
         spans.push(Span::styled(info, dim));
+    }
+
+    // Context usage percentage with color-coded urgency.
+    if let Some(ctx) = ctx_text {
+        let ctx_pct = app.status.context_pct;
+        let ctx_style = if ctx_pct >= 80.0 {
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+        } else if ctx_pct >= 60.0 {
+            Style::default().fg(Color::Yellow)
+        } else {
+            dim
+        };
+        let prefix = if info_parts.is_empty() { " " } else { " \u{2502} " };
+        let s = format!("{prefix}{ctx}");
+        spans.push(Span::styled(s, ctx_style));
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
