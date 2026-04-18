@@ -2062,7 +2062,7 @@ fn render_welcome_lines(width: u16, model: &str, permission_mode: &str) -> Vec<L
         format!("{}{}{}", " ".repeat(left), s, " ".repeat(right))
     };
 
-    vec![
+    let mut welcome = vec![
         Line::from(""),
         Line::styled(top, border_style),
         Line::from(vec![
@@ -2075,15 +2075,15 @@ fn render_welcome_lines(width: u16, model: &str, permission_mode: &str) -> Vec<L
             Span::styled(center(&model_line), model_style),
             Span::styled(" \u{2502}", border_style),
         ]),
-        if !perm_line.is_empty() {
-            Line::from(vec![
-                Span::styled("\u{2502} ", border_style),
-                Span::styled(center(&perm_line), Style::default().fg(Color::Yellow)),
-                Span::styled(" \u{2502}", border_style),
-            ])
-        } else {
-            Line::from("")
-        },
+    ];
+    if !perm_line.is_empty() {
+        welcome.push(Line::from(vec![
+            Span::styled("\u{2502} ", border_style),
+            Span::styled(center(&perm_line), Style::default().fg(Color::Yellow)),
+            Span::styled(" \u{2502}", border_style),
+        ]));
+    }
+    welcome.extend(vec![
         Line::from(vec![
             Span::styled("\u{2502} ", border_style),
             Span::styled(center(hints), hint_style),
@@ -2096,7 +2096,8 @@ fn render_welcome_lines(width: u16, model: &str, permission_mode: &str) -> Vec<L
         ]),
         Line::styled(bot, border_style),
         Line::from(""),
-    ]
+    ]);
+    welcome
 }
 
 // -- Public entry point -------------------------------------------------------

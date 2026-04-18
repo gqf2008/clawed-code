@@ -80,6 +80,21 @@ pub enum MessageContent {
     System(String),
 }
 
+/// Rendering context for a tool execution message.
+/// Bundles all parameters that affect visual layout so
+/// `render_tool_execution` doesn't take 9+ positional args.
+struct ToolRenderCtx<'a> {
+    name: &'a str,
+    input: Option<&'a str>,
+    output_lines: &'a [String],
+    is_error: bool,
+    duration_ms: u64,
+    full_result: Option<&'a str>,
+    depth: u32,
+    has_sibling_after: bool,
+    live_duration_ms: Option<u64>,
+}
+
 /// A single message with timestamp and line cache.
 #[derive(Debug, Clone)]
 pub struct Message {
@@ -278,17 +293,17 @@ impl Message {
                 duration_ms,
                 full_result,
                 depth,
-            } => self.render_tool_execution(
+            } => self.render_tool_execution(&ToolRenderCtx {
                 name,
-                input.as_deref(),
+                input: input.as_deref(),
                 output_lines,
-                *is_error,
-                *duration_ms,
-                full_result.as_deref(),
-                *depth,
+                is_error: *is_error,
+                duration_ms: *duration_ms,
+                full_result: full_result.as_deref(),
+                depth: *depth,
                 has_sibling_after,
                 live_duration_ms,
-            ),
+            }),
             MessageContent::System(text) => text
                 .lines()
                 .map(|l| Line::styled(l.to_string(), Style::default().fg(Color::Yellow)))
@@ -296,34 +311,23 @@ impl Message {
         }
     }
 
-    fn render_tool_execution(
-        &self,
-        name: &str,
-        input: Option<&str>,
-        output_lines: &[String],
-        is_error: bool,
-        duration_ms: u64,
-        full_result: Option<&str>,
-        depth: u32,
-        has_sibling_after: bool,
-        live_duration_ms: Option<u64>,
-    ) -> Vec<Line<'static>> {
-        debug_assert!(depth <= 2, "unexpected tool depth: {depth}");
+    fn render_tool_execution(&self, ctx: &ToolRenderCtx<'_>) -> Vec<Line<'static>> {
+        debug_assert!(ctx.depth <= 2, "unexpected tool depth: {}", ctx.depth);
         const MAX_INPUT_CHARS: usize = 80;
 
         let mut lines = Vec::new();
 
         // ── Tree indent based on depth ──
-        let indent = "  ".repeat(depth as usize);
-        let child_prefix = if depth > 0 {
-            if has_sibling_after { "├─ " } else { "└─ " }
+        let indent = "  ".repeat(ctx.depth as usize);
+        let child_prefix = if ctx.depth > 0 {
+            if ctx.has_sibling_after { "├─ " } else { "└─ " }
         } else {
             ""
         };
-        let output_indent = if depth > 0 && has_sibling_after {
-            format!("{}│ ", "  ".repeat(depth as usize))
+        let output_indent = if ctx.depth > 0 && ctx.has_sibling_after {
+            format!("{}│ ", "  ".repeat(ctx.depth as usize))
         } else {
-            "  ".repeat(depth as usize + 1)
+            "  ".repeat(ctx.depth as usize + 1)
         };
 
         // ── Header: ● Bash(command...) or   └─ Bash(command...) ──
@@ -332,13 +336,13 @@ impl Message {
             format!("{indent}{child_prefix}"),
             Style::default().fg(MUTED),
         ));
-        let bullet_color = if is_error { Color::Red } else { Color::Green };
+        let bullet_color = if ctx.is_error { Color::Red } else { Color::Green };
         header_spans.push(Span::styled("● ", Style::default().fg(bullet_color)));
         header_spans.push(Span::styled(
-            name.to_string(),
+            ctx.name.to_string(),
             Style::default().add_modifier(Modifier::BOLD),
         ));
-        if let Some(cmd) = input {
+        if let Some(cmd) = ctx.input {
             let display = if cmd.len() > MAX_INPUT_CHARS {
                 format!("({}\u{2026})", &cmd[..MAX_INPUT_CHARS])
             } else {
@@ -349,7 +353,7 @@ impl Message {
         lines.push(Line::from(header_spans));
 
         // ── Output lines ──
-        for line in output_lines {
+        for line in ctx.output_lines {
             lines.push(Line::styled(
                 format!("{output_indent}{}", line),
                 Style::default().fg(MUTED),
@@ -357,10 +361,10 @@ impl Message {
         }
 
         // ── Duration hint (completed or live) ──
-        let effective_dur = if duration_ms > 0 {
-            Some(duration_ms)
+        let effective_dur = if ctx.duration_ms > 0 {
+            Some(ctx.duration_ms)
         } else {
-            live_duration_ms
+            ctx.live_duration_ms
         };
         if let Some(d) = effective_dur {
             let dur = if d >= 1000 {
@@ -368,7 +372,7 @@ impl Message {
             } else {
                 format!("{}ms", d)
             };
-            let marker = if duration_ms > 0 && !is_error { "✓ " } else { "" };
+            let marker = if ctx.duration_ms > 0 && !ctx.is_error { "✓ " } else { "" };
             lines.push(Line::styled(
                 format!("{output_indent}{marker}({})", dur),
                 Style::default().fg(MUTED),
@@ -376,7 +380,7 @@ impl Message {
         }
 
         // ── Error indicator ──
-        if is_error {
+        if ctx.is_error {
             lines.push(Line::styled(
                 format!("{output_indent}✗ failed"),
                 Style::default().fg(Color::Red),
@@ -384,9 +388,9 @@ impl Message {
         }
 
         // ── Fold hint / expanded result ──
-        if let Some(full) = full_result {
+        if let Some(full) = ctx.full_result {
             if self.collapsed {
-                if output_lines.is_empty() {
+                if ctx.output_lines.is_empty() {
                     // No streaming happened — show first few lines inline.
                     let preview_lines: Vec<&str> = full.lines().take(5).collect();
                     let total = full.lines().count();
