@@ -89,20 +89,18 @@ impl QueryEngine {
     /// rough estimation for messages added since.  Falls back to the simple
     /// fixed threshold for legacy callers that set a custom `compact_threshold`.
     pub async fn should_auto_compact(&self) -> bool {
-        if self.compact_threshold == 0 {
-            return false;
-        }
         let s = self.state.read().await;
         let current_tokens =
-            clawed_core::token_estimation::token_count_with_estimation(&s.messages)
-                + clawed_core::token_estimation::estimate_system_tokens(&self.config.system_prompt);
+            clawed_core::token_estimation::token_count_with_estimation(&s.messages);
         drop(s);
 
         let ac = self.auto_compact.lock().await;
         if self.context_window > 0 {
             ac.should_auto_compact(current_tokens, self.context_window)
-        } else {
+        } else if self.compact_threshold > 0 {
             current_tokens >= self.compact_threshold
+        } else {
+            false
         }
     }
 
@@ -123,8 +121,7 @@ impl QueryEngine {
             return None;
         }
         let s = self.state.read().await;
-        let current = clawed_core::token_estimation::token_count_with_estimation(&s.messages)
-            + clawed_core::token_estimation::estimate_system_tokens(&self.config.system_prompt);
+        let current = clawed_core::token_estimation::token_count_with_estimation(&s.messages);
         let pct = (current as f64 / self.context_window as f64 * 100.0).min(100.0) as u8;
         Some(pct)
     }

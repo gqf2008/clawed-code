@@ -143,12 +143,14 @@ pub fn estimate_tool_definition_tokens(tool_count: usize) -> u64 {
 
 // ── Hybrid counting ─────────────────────────────────────────────────────────
 
-/// Get total token count from a [`Usage`] struct (input + output + cache).
+/// Get total token count from a [`Usage`] struct (input + output).
+///
+/// **Note:** Do NOT add `cache_creation_input_tokens` or `cache_read_input_tokens`
+/// on top of `input_tokens`. For the Anthropic API, `input_tokens` is the *total*
+/// input count which already includes both cached and cache-creating tokens.
+/// The cache fields are breakdowns/subsets, not additional tokens.
 pub fn token_count_from_usage(usage: &Usage) -> u64 {
-    usage.input_tokens
-        + usage.output_tokens
-        + usage.cache_creation_input_tokens.unwrap_or(0)
-        + usage.cache_read_input_tokens.unwrap_or(0)
+    usage.input_tokens + usage.output_tokens
 }
 
 /// Canonical context-size measurement: use the last API response's real token
@@ -327,7 +329,8 @@ mod tests {
             cache_creation_input_tokens: Some(10),
             cache_read_input_tokens: Some(5),
         };
-        assert_eq!(token_count_from_usage(&usage), 165);
+        // input_tokens already includes cache tokens; they must not be double-counted.
+        assert_eq!(token_count_from_usage(&usage), 150);
     }
 
     #[test]

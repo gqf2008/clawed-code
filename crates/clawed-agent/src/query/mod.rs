@@ -610,8 +610,7 @@ pub fn query_stream_with_injection(
                     // boundary and compact before next API call to avoid hitting
                     // context limits mid-conversation.
                     if let Some(ref ac_state) = config.auto_compact_state {
-                        let current_tokens = clawed_core::token_estimation::token_count_with_estimation(&messages)
-                            + clawed_core::token_estimation::estimate_system_tokens(&config.system_prompt);
+                        let current_tokens = clawed_core::token_estimation::token_count_with_estimation(&messages);
                         let should_compact = {
                             let ac = ac_state.lock().await;
                             ac.should_auto_compact(current_tokens, config.context_window)
@@ -645,7 +644,6 @@ pub fn query_stream_with_injection(
                             #[allow(unused_variables)]
                             let current_tokens = if pre_trunc + pre_cleared > 0 {
                                 clawed_core::token_estimation::token_count_with_estimation(&messages)
-                                    + clawed_core::token_estimation::estimate_system_tokens(&config.system_prompt)
                             } else {
                                 current_tokens
                             };
@@ -660,8 +658,7 @@ pub fn query_stream_with_injection(
                                         content: vec![ContentBlock::Text { text: context_msg }],
                                     })];
                                     // Re-estimate tokens so warning system stays accurate
-                                    let new_tokens = clawed_core::token_estimation::token_count_with_estimation(&messages)
-                                        + clawed_core::token_estimation::estimate_system_tokens(&config.system_prompt);
+                                    let new_tokens = clawed_core::token_estimation::token_count_with_estimation(&messages);
                                     {
                                         let mut s = state.write().await;
                                         s.messages = messages.clone();
@@ -705,9 +702,17 @@ pub fn query_stream_with_injection(
                 }
 
                 StopReason::MaxTokens => {
-                    // Strategy 1: Escalate max_tokens to model's upper limit
+                    // Strategy 1: Escalate max_tokens to model's upper limit,
+                    // but cap so input + output doesn't exceed the context window.
                     if effective_max_tokens < escalated_max_tokens {
-                        effective_max_tokens = escalated_max_tokens;
+                        let max_allowed = if config.context_window > 0 {
+                            let input_tokens = usage.as_ref().map(|u| u.input_tokens).unwrap_or(0);
+                            (config.context_window.saturating_sub(input_tokens) as u32)
+                                .max(effective_max_tokens)
+                        } else {
+                            escalated_max_tokens
+                        };
+                        effective_max_tokens = escalated_max_tokens.min(max_allowed);
                         yield AgentEvent::TextDelta(format!(
                             "\n\x1b[33m[Output truncated — escalating max_tokens to {}K]\x1b[0m\n",
                             escalated_max_tokens / 1000
