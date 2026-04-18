@@ -314,7 +314,11 @@ impl Message {
 
         // ── Tree indent based on depth ──
         let indent = "  ".repeat(depth as usize);
-        let child_prefix = if depth > 0 { "└─ " } else { "" };
+        let child_prefix = if depth > 0 {
+            if has_sibling_after { "├─ " } else { "└─ " }
+        } else {
+            ""
+        };
         let output_indent = if depth > 0 && has_sibling_after {
             format!("{}│ ", "  ".repeat(depth as usize))
         } else {
