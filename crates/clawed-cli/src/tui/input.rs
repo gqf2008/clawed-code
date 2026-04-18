@@ -75,9 +75,9 @@ impl InputWidget {
         self.textarea.line_count()
     }
 
-    /// Number of visible rows (capped at `MAX_INPUT_ROWS`).
+    /// Number of visible rows (fixed at `MAX_INPUT_ROWS`).
     pub fn visible_rows(&self) -> u16 {
-        self.line_count().clamp(1, MAX_INPUT_ROWS) as u16
+        MAX_INPUT_ROWS as u16
     }
 
     /// Cursor row and column for rendering (0-indexed, viewport-relative).
@@ -731,7 +731,7 @@ mod tests {
         }
         assert_eq!(w.buffer(), "line1\nline2");
         assert_eq!(w.line_count(), 2);
-        assert_eq!(w.visible_rows(), 2);
+        assert_eq!(w.visible_rows(), MAX_INPUT_ROWS as u16);
     }
 
     #[test]

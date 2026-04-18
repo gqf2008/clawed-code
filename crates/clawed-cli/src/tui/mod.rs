@@ -4235,7 +4235,7 @@ mod tests {
         assert_ne!(base, app.layout_signature());
 
         app.queued_inputs.clear();
-        app.input.insert_text("line1\nline2");
+        app.task_plan.add_task("agent-1".to_string(), "Task".to_string());
         assert_ne!(base, app.layout_signature());
 
         let mut completion_app = App::new("test".to_string());
