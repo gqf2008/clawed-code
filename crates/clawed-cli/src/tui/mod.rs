@@ -623,15 +623,60 @@ impl App {
         }
 
         let mut lines = Vec::new();
-        for index in 0..self.messages.len() {
-            if index > 0 {
-                let prev = &self.messages[index - 1].content;
-                let curr = &self.messages[index].content;
-                if Self::needs_separator(prev, curr) {
-                    lines.push(Line::from(""));
+        let mut index = 0;
+        while index < self.messages.len() {
+            // Collapse long runs of consecutive System messages.
+            if matches!(self.messages[index].content, MessageContent::System(_)) {
+                let start = index;
+                while index < self.messages.len()
+                    && matches!(self.messages[index].content, MessageContent::System(_))
+                {
+                    index += 1;
                 }
+                let count = index - start;
+                if count > 2 {
+                    if start > 0
+                        && Self::needs_separator(
+                            &self.messages[start - 1].content,
+                            &self.messages[start].content,
+                        )
+                    {
+                        lines.push(Line::from(""));
+                    }
+                    lines.extend(self.visible_message_lines_at(start));
+                    lines.push(Line::styled(
+                        format!("+ {} system messages", count - 2),
+                        Style::default().fg(MUTED),
+                    ));
+                    if count > 1 {
+                        lines.extend(self.visible_message_lines_at(index - 1));
+                    }
+                    continue;
+                }
+                for j in start..index {
+                    if j > start
+                        && Self::needs_separator(
+                            &self.messages[j - 1].content,
+                            &self.messages[j].content,
+                        )
+                    {
+                        lines.push(Line::from(""));
+                    }
+                    lines.extend(self.visible_message_lines_at(j));
+                }
+                continue;
+            }
+
+            if index > 0
+                && Self::needs_separator(
+                    &self.messages[index - 1].content,
+                    &self.messages[index].content,
+                )
+            {
+                lines.push(Line::from(""));
             }
             lines.extend(self.visible_message_lines_at(index));
+            index += 1;
         }
         self.cached_visible_lines = lines;
         self.cached_visible_lines_dirty = false;
