@@ -980,6 +980,10 @@ pub async fn run(
                                     }
                                 }
                             }
+                            CommandResult::Chrome { sub } => {
+                                let args: Vec<&str> = sub.split_whitespace().collect();
+                                println!("{}", crate::chrome::handle_chrome_command(&args));
+                            }
                             CommandResult::Stats => {
                                 handle_stats_command(&engine, session_start).await;
                             }

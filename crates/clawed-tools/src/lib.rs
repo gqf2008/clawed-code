@@ -75,6 +75,8 @@ pub mod attribution;
 
 // ── Internal utilities (not tools) ──────────────────────────────────────────
 pub mod path_util;
+pub mod remote_trigger;
+pub mod teleport;
 
 use clawed_core::tool::{DynTool, Tool};
 use std::collections::HashMap;
@@ -298,6 +300,11 @@ impl ToolRegistry {
 
         // Workflow scripting (always included)
         registry.register(workflow::WorkflowTool);
+
+        // Remote trigger (CCR API) — requires OAuth auth
+        registry.register(remote_trigger::RemoteTriggerTool);
+        // Teleport is a library module (not a standalone tool), so no registration here.
+        // Individual teleport operations are composed by the agent or CLI as needed.
 
         // MCP resource tools require a manager — use register_mcp() to add them
         registry

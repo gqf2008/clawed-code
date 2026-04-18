@@ -152,6 +152,10 @@ pub enum SlashCommand {
     },
     /// Show detailed session statistics.
     Stats,
+    /// Chrome extension integration.
+    Chrome {
+        sub: String,
+    },
     Exit,
     Unknown(String),
 }
@@ -235,6 +239,7 @@ impl SlashCommand {
             "release-notes" | "changelog" => Self::ReleaseNotes,
             "feedback" => Self::Feedback { text: args },
             "stats" | "usage" => Self::Stats,
+            "chrome" => Self::Chrome { sub: args },
             "exit" | "quit" => Self::Exit,
             name => {
                 // Check if it matches a loaded skill
@@ -404,6 +409,7 @@ impl SlashCommand {
                 }
             }
             Self::Stats => CommandResult::Stats,
+            Self::Chrome { sub } => CommandResult::Chrome { sub: sub.clone() },
             Self::Exit => CommandResult::Exit,
             Self::Unknown(cmd) => {
                 CommandResult::Print(format!("Unknown command: /{}. Type /help.", cmd))
@@ -535,6 +541,10 @@ pub enum CommandResult {
     RunPluginCommand {
         name: String,
         prompt: String,
+    },
+    /// Chrome extension integration (/chrome [install|uninstall|status]).
+    Chrome {
+        sub: String,
     },
     /// Agent definitions management (/agents list, info, create, delete).
     Agents {

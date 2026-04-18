@@ -1429,6 +1429,7 @@ impl App {
             | crate::commands::CommandResult::Files { .. }
             | crate::commands::CommandResult::Session { .. }
             | crate::commands::CommandResult::Stats
+            | crate::commands::CommandResult::Chrome { .. }
             | crate::commands::CommandResult::Image { .. }
             | crate::commands::CommandResult::Feedback { .. }
             | crate::commands::CommandResult::ReleaseNotes
@@ -3002,6 +3003,11 @@ async fn handle_async_command(
                 elapsed, state.model,
             );
             app.overlay = Some(overlay::build_info_overlay("Statistics", &info));
+        }
+        CommandResult::Chrome { sub } => {
+            let args: Vec<&str> = sub.split_whitespace().collect();
+            let text = crate::chrome::handle_chrome_command(&args);
+            app.push_message(MessageContent::System(text));
         }
         CommandResult::Files { pattern } => {
             let cwd = std::env::current_dir().unwrap_or_default();
