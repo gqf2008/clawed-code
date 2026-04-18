@@ -1610,7 +1610,7 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let (all_lines, cached_visual_count): (Vec<Line<'static>>, Option<usize>) =
         if app.messages.is_empty() {
-            (render_welcome_lines(area.width, &app.model), None)
+            (render_welcome_lines(area.width, &app.model, &app.permission_mode), None)
         } else {
             app.rebuild_visible_lines();
             let cached_visual_count = app
@@ -2017,9 +2017,14 @@ fn render_footer_picker(
     frame.render_widget(List::new(items), popup_area);
 }
 
-fn render_welcome_lines(width: u16, model: &str) -> Vec<Line<'static>> {
+fn render_welcome_lines(width: u16, model: &str, permission_mode: &str) -> Vec<Line<'static>> {
     let title = format!("Clawed Code v{}", env!("CARGO_PKG_VERSION"));
     let model_line = format!("Model: {model}");
+    let perm_line = if permission_mode.is_empty() || permission_mode == "default" {
+        String::new()
+    } else {
+        format!("Permissions: {permission_mode}")
+    };
     let hints = "Tab: complete  \u{2191}\u{2193}: history  Ctrl+C: abort/quit  /help: commands";
     let tip = "Tip: Use /compact to free context  \u{2022}  Ctrl+V to paste images";
 
@@ -2034,6 +2039,7 @@ fn render_welcome_lines(width: u16, model: &str) -> Vec<Line<'static>> {
     let inner_width = title
         .width()
         .max(model_line.width())
+        .max(perm_line.width())
         .max(hints.width())
         .max(tip.width())
         .min((width as usize).saturating_sub(4));
@@ -2060,6 +2066,15 @@ fn render_welcome_lines(width: u16, model: &str) -> Vec<Line<'static>> {
             Span::styled(center(&model_line), model_style),
             Span::styled(" \u{2502}", border_style),
         ]),
+        if !perm_line.is_empty() {
+            Line::from(vec![
+                Span::styled("\u{2502} ", border_style),
+                Span::styled(center(&perm_line), Style::default().fg(Color::Yellow)),
+                Span::styled(" \u{2502}", border_style),
+            ])
+        } else {
+            Line::from("")
+        },
         Line::from(vec![
             Span::styled("\u{2502} ", border_style),
             Span::styled(center(hints), hint_style),
@@ -3737,7 +3752,7 @@ mod tests {
 
     #[test]
     fn welcome_lines_are_nonempty() {
-        let lines = render_welcome_lines(80, "claude-sonnet-4-20250514");
+        let lines = render_welcome_lines(80, "claude-sonnet-4-20250514", "bypass");
         assert!(!lines.is_empty());
     }
 
