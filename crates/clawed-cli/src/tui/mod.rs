@@ -1748,6 +1748,12 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     let is_empty = app.input.buffer().is_empty();
     let (has_above, has_below) = app.input.scroll_indicators();
 
+    let placeholder = if app.is_generating {
+        "Claude is thinking..."
+    } else {
+        "Message Claude..."
+    };
+
     let lines: Vec<Line> = display_lines
         .iter()
         .enumerate()
@@ -1755,7 +1761,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
             if i == 0 {
                 let mut spans = vec![Span::styled("> ", prompt_style)];
                 if is_empty {
-                    spans.push(Span::styled("Message Claude...", ghost_style));
+                    spans.push(Span::styled(placeholder.to_string(), ghost_style));
                 } else {
                     spans.push(Span::styled((*line_text).to_string(), text_style));
                 }
