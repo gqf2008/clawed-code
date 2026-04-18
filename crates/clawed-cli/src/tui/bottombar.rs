@@ -23,7 +23,7 @@ const GENERATING_HINTS: &[(&str, &str)] = &[
     ("Ctrl+C", "abort"),
 ];
 
-pub fn render(frame: &mut Frame, area: Rect, is_generating: bool) {
+pub fn render(frame: &mut Frame, area: Rect, is_generating: bool, permission_mode: &str) {
     let hints: &[(&str, &str)] = if is_generating {
         GENERATING_HINTS
     } else {
@@ -41,5 +41,15 @@ pub fn render(frame: &mut Frame, area: Rect, is_generating: bool) {
         spans.push(Span::styled((*key).to_string(), key_style));
         spans.push(Span::styled(format!(": {desc}"), desc_style));
     }
+
+    // Show permission mode when not generating and not default.
+    if !is_generating && !permission_mode.is_empty() && permission_mode != "default" {
+        spans.push(Span::styled(" │ ", sep));
+        spans.push(Span::styled(
+            format!("permissions: {permission_mode}"),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }

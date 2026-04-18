@@ -483,6 +483,9 @@ struct App {
     /// in the layout signature so ghost cells are cleared after resize.
     term_width: u16,
     term_height: u16,
+    /// Current permission mode label (e.g. "bypass", "default").
+    /// Updated when user changes it via /permissions.
+    permission_mode: String,
 }
 
 impl App {
@@ -522,6 +525,7 @@ impl App {
             last_render_at: Instant::now() - Duration::from_secs(1),
             term_width: 0,
             term_height: 0,
+            permission_mode: String::new(),
         }
     }
 
@@ -571,7 +575,16 @@ impl App {
             }
         }
 
-        msg.to_lines()
+        // Determine tree sibling continuity for tool executions.
+        let has_sibling_after = if let MessageContent::ToolExecution { depth: d1, .. } = &msg.content {
+            self.messages.get(index + 1).map_or(false, |next| {
+                matches!(&next.content, MessageContent::ToolExecution { depth: d2, .. } if *d2 == *d1)
+            })
+        } else {
+            false
+        };
+
+        msg.to_lines_with_context(has_sibling_after)
     }
 
     fn invalidate_visible_lines(&mut self) {
@@ -1461,7 +1474,7 @@ fn render(frame: &mut Frame, app: &mut App) {
         render_input(frame, input_chunks[0], app);
         render_input_separator(frame, input_chunks[2]);
         if bottom_bar_rows > 0 {
-            bottombar::render(frame, input_chunks[3], app.is_generating);
+            bottombar::render(frame, input_chunks[3], app.is_generating, &app.permission_mode);
         }
 
         if let Some(picker) = app.footer_picker.as_ref() {
@@ -1948,6 +1961,7 @@ pub async fn run_tui(
 ) -> anyhow::Result<()> {
     let model = { engine.state().read().await.model.clone() };
     let mut app = App::new(model);
+    app.permission_mode = format!("{:?}", engine.state().read().await.permission_mode).to_lowercase();
 
     // Load history into input widget
     if let Some(hist_path) = crate::input::history_file_path() {
@@ -2572,6 +2586,7 @@ async fn handle_footer_picker_selection(
         FooterPickerKind::Permissions => {
             let new_mode = crate::config::parse_permission_mode(value);
             engine.state().write().await.permission_mode = new_mode;
+            app.permission_mode = format!("{:?}", new_mode).to_lowercase();
             app.push_message(MessageContent::System(format!(
                 "Permission mode: {:?}",
                 new_mode
@@ -3113,6 +3128,7 @@ async fn handle_async_command(
             } else {
                 let new_mode = crate::config::parse_permission_mode(&mode);
                 engine.state().write().await.permission_mode = new_mode;
+                app.permission_mode = format!("{:?}", new_mode).to_lowercase();
                 app.push_message(MessageContent::System(format!(
                     "Permission mode: {:?}",
                     new_mode
