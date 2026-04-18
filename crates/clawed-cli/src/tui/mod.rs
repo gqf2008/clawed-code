@@ -1519,6 +1519,24 @@ fn render(frame: &mut Frame, app: &mut App) {
 
     render_messages(frame, msg_area, app);
 
+    // Notify user that new content is arriving while they are scrolled up.
+    if !app.auto_scroll && app.is_generating && msg_area.height > 0 {
+        let hint = " ↓ new messages ";
+        let hint_width = hint.width() as u16;
+        let x = msg_area.x + msg_area.width.saturating_sub(hint_width);
+        let y = msg_area.y + msg_area.height - 1;
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                hint.to_string(),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ))
+            .alignment(ratatui::layout::Alignment::Right),
+            Rect::new(x, y, hint_width, 1),
+        );
+    }
+
     if task_plan_rows > 0 {
         taskplan::render(frame, task_area, &app.task_plan);
     }
