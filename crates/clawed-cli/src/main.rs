@@ -299,7 +299,12 @@ async fn run() -> anyhow::Result<()> {
         .with_env_filter(filter)
         .init();
 
-    let settings = config::load_settings()?;
+    let cwd = match cli.cwd {
+        Some(ref dir) => std::path::PathBuf::from(dir),
+        None => std::env::current_dir()?,
+    };
+
+    let settings = clawed_core::config::Settings::load_merged(&cwd).settings;
 
     // Initialize terminal theme from settings
     {
@@ -322,11 +327,6 @@ async fn run() -> anyhow::Result<()> {
 
     // Inject env vars from settings.json before auth resolution (single-threaded init)
     let _env_backup = settings.apply_env();
-
-    let cwd = match cli.cwd {
-        Some(ref dir) => std::path::PathBuf::from(dir),
-        None => std::env::current_dir()?,
-    };
 
     // ── Handle --init: create CLAUDE.md and settings ────────────────────────
     if cli.init {

@@ -1,9 +1,4 @@
-use clawed_core::config::Settings;
 use clawed_core::permissions::PermissionMode;
-
-pub fn load_settings() -> anyhow::Result<Settings> {
-    Settings::load()
-}
 
 pub fn parse_permission_mode(mode: &str) -> PermissionMode {
     match mode {

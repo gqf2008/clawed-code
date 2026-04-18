@@ -92,10 +92,13 @@ pub struct Message {
 
 impl Message {
     pub fn new(content: MessageContent) -> Self {
+        // Tool executions default to expanded so live output is visible
+        // during the tool's execution; other content types start collapsed.
+        let collapsed = !matches!(content, MessageContent::ToolExecution { .. });
         Self {
             content,
             timestamp: Instant::now(),
-            collapsed: true,
+            collapsed,
             cached_lines: RefCell::new(None),
         }
     }
@@ -474,7 +477,7 @@ mod tests {
 
     #[test]
     fn tool_execution_collapsed_shows_fold_hint() {
-        let msg = Message::new(MessageContent::ToolExecution {
+        let mut msg = Message::new(MessageContent::ToolExecution {
             name: "Read".into(),
             input: Some("Cargo.toml".into()),
             output_lines: vec!["line 1".into()],
@@ -482,6 +485,7 @@ mod tests {
             duration_ms: 100,
             full_result: Some("line 1\nline 2\nline 3\nline 4\nline 5\nline 6".into()),
         });
+        msg.collapsed = true;
         let lines = msg.to_lines();
         let last_text: String = lines.last().unwrap().spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(last_text.contains("+ 6 lines"));
@@ -490,7 +494,7 @@ mod tests {
 
     #[test]
     fn tool_execution_expanded_shows_full_result() {
-        let mut msg = Message::new(MessageContent::ToolExecution {
+        let msg = Message::new(MessageContent::ToolExecution {
             name: "Read".into(),
             input: Some("Cargo.toml".into()),
             output_lines: vec!["line 1".into()],
@@ -498,7 +502,7 @@ mod tests {
             duration_ms: 100,
             full_result: Some("line 1\nline 2".into()),
         });
-        msg.toggle_collapsed();
+        // ToolExecution defaults to expanded (collapsed = false)
         let lines = msg.to_lines();
         // header + output + duration + blank + 2 lines + blank
         assert!(lines.len() >= 5);

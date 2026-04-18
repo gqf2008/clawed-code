@@ -816,6 +816,7 @@ impl App {
                         *inp = input_str;
                     }
                     msg.invalidate_cache();
+                    self.invalidate_visible_lines();
                 }
             }
             AgentNotification::ToolUseComplete {
@@ -855,6 +856,7 @@ impl App {
                 };
                 if let Some(msg) = msg {
                     msg.update_tool_result(is_error, duration_ms, &result);
+                    self.invalidate_visible_lines();
                 }
             }
             AgentNotification::ToolOutputLine { tool_name, line, .. } => {
@@ -874,6 +876,7 @@ impl App {
                 };
                 if let Some(msg) = msg {
                     msg.append_tool_output_line(line);
+                    self.invalidate_visible_lines();
                 }
             }
             AgentNotification::TurnComplete { turn, usage, .. } => {
@@ -2107,14 +2110,14 @@ pub async fn run_tui(
                         )));
                     }
 
-                    // Esc while LLM is generating always aborts immediately,
-                    // even if an overlay is open (close overlay + abort together).
-                    if key.code == KeyCode::Esc && app.is_generating {
+                    // Esc while LLM is generating aborts the current task,
+                    // but only when no overlay or permission prompt is open
+                    // (those handle Esc themselves first).
+                    if key.code == KeyCode::Esc && app.is_generating && app.overlay.is_none() && app.permission.is_none() {
                         let _ = client.abort();
                         app.mark_done();
                         app.pending_workflow = None;
                         app.queued_inputs.clear();
-                        app.overlay = None;
                         app.push_message(MessageContent::System("[Aborted]".to_string()));
                         continue;
                     }
