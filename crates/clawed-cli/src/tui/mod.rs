@@ -634,7 +634,9 @@ impl App {
                     index += 1;
                 }
                 let count = index - start;
-                if count > 2 {
+                let has_important = (start..index)
+                    .any(|i| Self::system_msg_is_important(&self.messages[i].content));
+                if count > 2 && !has_important {
                     if start > 0
                         && Self::needs_separator(
                             &self.messages[start - 1].content,
@@ -696,6 +698,21 @@ impl App {
             // Everything else gets a separator on type change.
             _ => std::mem::discriminant(prev) != std::mem::discriminant(curr),
         }
+    }
+
+    /// Whether a System message contains important information that should
+    /// not be collapsed (errors, warnings, terminations, context alerts).
+    fn system_msg_is_important(content: &MessageContent) -> bool {
+        let MessageContent::System(text) = content else {
+            return false;
+        };
+        let lower = text.to_lowercase();
+        lower.contains("error")
+            || lower.contains("terminated")
+            || lower.contains("warning")
+            || lower.contains("context")
+            || text.contains('\u{2717}') // ✗
+            || text.contains('\u{26A0}') // ⚠
     }
 
     fn clear_messages(&mut self) {
@@ -1519,24 +1536,6 @@ fn render(frame: &mut Frame, app: &mut App) {
 
     render_messages(frame, msg_area, app);
 
-    // Notify user that new content is arriving while they are scrolled up.
-    if !app.auto_scroll && app.is_generating && msg_area.height > 0 {
-        let hint = " ↓ new messages ";
-        let hint_width = hint.width() as u16;
-        let x = msg_area.x + msg_area.width.saturating_sub(hint_width);
-        let y = msg_area.y + msg_area.height - 1;
-        frame.render_widget(
-            Paragraph::new(Span::styled(
-                hint.to_string(),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ))
-            .alignment(ratatui::layout::Alignment::Right),
-            Rect::new(x, y, hint_width, 1),
-        );
-    }
-
     if task_plan_rows > 0 {
         taskplan::render(frame, task_area, &app.task_plan);
     }
@@ -1779,6 +1778,16 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         let prefix = if info_parts.is_empty() { " " } else { " \u{2502} " };
         let s = format!("{prefix}{ctx}");
         spans.push(Span::styled(s, ctx_style));
+    }
+
+    // New-messages badge when user is scrolled up during generation.
+    if !app.auto_scroll && app.is_generating {
+        spans.push(Span::styled(
+            "  \u{2193} new".to_string(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);

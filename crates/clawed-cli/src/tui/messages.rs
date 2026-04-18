@@ -308,6 +308,7 @@ impl Message {
         has_sibling_after: bool,
         live_duration_ms: Option<u64>,
     ) -> Vec<Line<'static>> {
+        debug_assert!(depth <= 2, "unexpected tool depth: {depth}");
         const MAX_INPUT_CHARS: usize = 80;
 
         let mut lines = Vec::new();
