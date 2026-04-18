@@ -712,10 +712,12 @@ impl App {
         let new_start = self.cached_visible_lines.len().saturating_sub(old_len);
         self.cached_visible_lines.truncate(new_start);
         self.cached_visible_lines.extend(new_lines);
-        // Don't invalidate cached_visible_line_count here — the visual line
-        // count estimate is still approximately correct (off by a few lines
-        // from the delta). The next full rebuild will recalculate precisely,
-        // and auto-scroll (scroll_offset=0) masks any minor drift.
+        // Invalidate the cached visual line count: the delta may change the
+        // wrapped line count by more than "a few lines" (e.g. a long paragraph
+        // with no newlines can have many wrapped visual lines). Stale counts
+        // cause incorrect scroll offsets which makes output appear in the
+        // wrong place (including overlapping the input area).
+        self.cached_visible_line_count = None;
         self.request_redraw();
     }
 
@@ -830,10 +832,15 @@ impl App {
 
     fn push_message(&mut self, content: MessageContent) {
         let msg = Message::new(content);
-        if self.cached_visible_lines_dirty {
-            self.messages.push(msg);
-        } else {
-            self.messages.push(msg);
+        let prev_content = self.messages.last().map(|m| &m.content);
+        let needs_sep = prev_content
+            .map(|prev| Self::needs_separator(prev, &msg.content))
+            .unwrap_or(false);
+        self.messages.push(msg);
+        if !self.cached_visible_lines_dirty {
+            if needs_sep {
+                self.cached_visible_lines.push(Line::from(""));
+            }
             let last_index = self.messages.len().saturating_sub(1);
             self.cached_visible_lines
                 .extend(self.visible_message_lines_at(last_index));
