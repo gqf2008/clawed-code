@@ -584,7 +584,18 @@ impl App {
             false
         };
 
-        msg.to_lines_with_context(has_sibling_after)
+        // Live duration for running tools (duration_ms == 0 means still active).
+        let live_duration_ms = if let MessageContent::ToolExecution { name, duration_ms, .. } = &msg.content {
+            if *duration_ms == 0 {
+                self.status.active_tools.get(name).map(|t| t.started.elapsed().as_millis() as u64)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        msg.to_lines_with_context(has_sibling_after, live_duration_ms)
     }
 
     fn invalidate_visible_lines(&mut self) {

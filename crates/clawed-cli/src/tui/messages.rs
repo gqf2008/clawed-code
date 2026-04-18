@@ -220,21 +220,26 @@ impl Message {
     /// Results are cached; subsequent calls return the cached version.
     /// Pass `has_sibling_after=true` when the next message is a sibling tool
     /// so tree branches render `│` connectors.
-    pub fn to_lines_with_context(&self, has_sibling_after: bool) -> Vec<Line<'static>> {
-        if !has_sibling_after {
+    /// Pass `live_duration_ms` for running tools to show elapsed time inline.
+    pub fn to_lines_with_context(
+        &self,
+        has_sibling_after: bool,
+        live_duration_ms: Option<u64>,
+    ) -> Vec<Line<'static>> {
+        if !has_sibling_after && live_duration_ms.is_none() {
             if let Some(ref cached) = *self.cached_lines.borrow() {
                 return cached.clone();
             }
         }
 
-        let lines = self.render_lines(has_sibling_after);
-        if !has_sibling_after {
+        let lines = self.render_lines(has_sibling_after, live_duration_ms);
+        if !has_sibling_after && live_duration_ms.is_none() {
             *self.cached_lines.borrow_mut() = Some(lines.clone());
         }
         lines
     }
 
-    fn render_lines(&self, has_sibling_after: bool) -> Vec<Line<'static>> {
+    fn render_lines(&self, has_sibling_after: bool, live_duration_ms: Option<u64>) -> Vec<Line<'static>> {
         match &self.content {
             MessageContent::UserInput(text) => {
                 let prefix_style = Style::default()
@@ -282,6 +287,7 @@ impl Message {
                 full_result.as_deref(),
                 *depth,
                 has_sibling_after,
+                live_duration_ms,
             ),
             MessageContent::System(text) => text
                 .lines()
@@ -300,6 +306,7 @@ impl Message {
         full_result: Option<&str>,
         depth: u32,
         has_sibling_after: bool,
+        live_duration_ms: Option<u64>,
     ) -> Vec<Line<'static>> {
         const MAX_INPUT_CHARS: usize = 80;
 
@@ -343,12 +350,17 @@ impl Message {
             ));
         }
 
-        // ── Duration hint ──
-        if duration_ms > 0 {
-            let dur = if duration_ms >= 1000 {
-                format!("{:.1}s", duration_ms as f64 / 1000.0)
+        // ── Duration hint (completed or live) ──
+        let effective_dur = if duration_ms > 0 {
+            Some(duration_ms)
+        } else {
+            live_duration_ms
+        };
+        if let Some(d) = effective_dur {
+            let dur = if d >= 1000 {
+                format!("{:.1}s", d as f64 / 1000.0)
             } else {
-                format!("{}ms", duration_ms)
+                format!("{}ms", d)
             };
             lines.push(Line::styled(
                 format!("{output_indent}({})", dur),
@@ -411,14 +423,14 @@ mod tests {
     #[test]
     fn user_input_has_prompt() {
         let msg = Message::new(MessageContent::UserInput("hello".into()));
-        let lines = msg.to_lines_with_context(false);
+        let lines = msg.to_lines_with_context(false, None);
         assert!(lines.len() >= 2); // blank + prompt line
     }
 
     #[test]
     fn multiline_user_input_renders_multiple_lines() {
         let msg = Message::new(MessageContent::UserInput("hello\nworld".into()));
-        let lines = msg.to_lines_with_context(false);
+        let lines = msg.to_lines_with_context(false, None);
         assert_eq!(lines.len(), 3);
         let first: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
         let second: String = lines[2].spans.iter().map(|s| s.content.as_ref()).collect();
@@ -429,13 +441,13 @@ mod tests {
     #[test]
     fn empty_assistant_text() {
         let msg = Message::new(MessageContent::AssistantText(String::new()));
-        assert!(msg.to_lines_with_context(false).is_empty());
+        assert!(msg.to_lines_with_context(false, None).is_empty());
     }
 
     #[test]
     fn multiline_assistant_text() {
         let msg = Message::new(MessageContent::AssistantText("a\nb\nc".into()));
-        assert_eq!(msg.to_lines_with_context(false).len(), 3);
+        assert_eq!(msg.to_lines_with_context(false, None).len(), 3);
     }
 
     #[test]
@@ -449,7 +461,7 @@ mod tests {
             full_result: None,
             depth: 0,
         });
-        let lines = msg.to_lines_with_context(false);
+        let lines = msg.to_lines_with_context(false, None);
         assert_eq!(lines.len(), 1);
         let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(text.contains("Bash"));
@@ -468,7 +480,7 @@ mod tests {
             full_result: None,
             depth: 0,
         });
-        let lines = msg.to_lines_with_context(false);
+        let lines = msg.to_lines_with_context(false, None);
         let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         // Truncated with ellipsis
         assert!(text.contains('\u{2026}'));
@@ -485,7 +497,7 @@ mod tests {
             full_result: None,
             depth: 0,
         });
-        let lines = msg.to_lines_with_context(false);
+        let lines = msg.to_lines_with_context(false, None);
         // header + 2 output + 1 duration = 4
         assert_eq!(lines.len(), 4);
         let text: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
@@ -504,7 +516,7 @@ mod tests {
             depth: 0,
         });
         msg.collapsed = true;
-        let lines = msg.to_lines_with_context(false);
+        let lines = msg.to_lines_with_context(false, None);
         let last_text: String = lines.last().unwrap().spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(last_text.contains("+ 6 more lines"));
         assert!(last_text.contains("Ctrl+O to expand"));
@@ -522,7 +534,7 @@ mod tests {
             depth: 0,
         });
         // ToolExecution defaults to expanded (collapsed = false)
-        let lines = msg.to_lines_with_context(false);
+        let lines = msg.to_lines_with_context(false, None);
         // header + output + duration + blank + 2 lines + blank
         assert!(lines.len() >= 5);
     }
@@ -547,24 +559,24 @@ mod tests {
     #[test]
     fn cache_invalidation() {
         let msg = Message::new(MessageContent::AssistantText("hello".into()));
-        let lines1 = msg.to_lines_with_context(false);
+        let lines1 = msg.to_lines_with_context(false, None);
         assert_eq!(lines1.len(), 1);
         // Cache hit — same result
-        let lines2 = msg.to_lines_with_context(false);
+        let lines2 = msg.to_lines_with_context(false, None);
         assert_eq!(lines2.len(), 1);
         // Invalidate and verify it re-renders
         msg.invalidate_cache();
-        let lines3 = msg.to_lines_with_context(false);
+        let lines3 = msg.to_lines_with_context(false, None);
         assert_eq!(lines3.len(), 1);
     }
 
     #[test]
     fn append_assistant_text_extends_plain_cache() {
         let mut msg = Message::new(MessageContent::AssistantText("hello".into()));
-        assert_eq!(msg.to_lines_with_context(false).len(), 1);
+        assert_eq!(msg.to_lines_with_context(false, None).len(), 1);
 
         msg.append_assistant_text(" world\nnext");
-        let lines = msg.to_lines_with_context(false);
+        let lines = msg.to_lines_with_context(false, None);
 
         assert_eq!(lines.len(), 2);
         assert_eq!(line_text(&lines[0]), "hello world");
@@ -574,10 +586,10 @@ mod tests {
     #[test]
     fn append_thinking_text_extends_cache() {
         let mut msg = Message::new(MessageContent::ThinkingText("thinking".into()));
-        assert_eq!(msg.to_lines_with_context(false).len(), 1);
+        assert_eq!(msg.to_lines_with_context(false, None).len(), 1);
 
         msg.append_thinking_text("...\nmore");
-        let lines = msg.to_lines_with_context(false);
+        let lines = msg.to_lines_with_context(false, None);
 
         assert_eq!(lines.len(), 2);
         assert_eq!(line_text(&lines[0]), "thinking...");
@@ -587,7 +599,7 @@ mod tests {
     #[test]
     fn thinking_text_is_plain() {
         let msg = Message::new(MessageContent::ThinkingText("hello".into()));
-        let lines = msg.to_lines_with_context(false);
+        let lines = msg.to_lines_with_context(false, None);
         // Plain text — no special foreground color
         assert_eq!(lines[0].style.fg, None);
     }
