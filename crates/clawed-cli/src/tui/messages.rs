@@ -367,8 +367,9 @@ impl Message {
             } else {
                 format!("{}ms", d)
             };
+            let marker = if duration_ms > 0 && !is_error { "✓ " } else { "" };
             lines.push(Line::styled(
-                format!("{output_indent}({})", dur),
+                format!("{output_indent}{marker}({})", dur),
                 Style::default().fg(MUTED),
             ));
         }
