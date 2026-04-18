@@ -274,6 +274,8 @@ fn build_hint_line() -> Line<'static> {
     Line::from(vec![
         Span::styled("Tab", Style::default().fg(Color::Cyan)),
         Span::styled(": select  ", Style::default().fg(MUTED)),
+        Span::styled("Shift+Tab", Style::default().fg(Color::Cyan)),
+        Span::styled(": prev  ", Style::default().fg(MUTED)),
         Span::styled("Enter", Style::default().fg(Color::Cyan)),
         Span::styled(": confirm  ", Style::default().fg(MUTED)),
         Span::styled("Esc", Style::default().fg(Color::Cyan)),
