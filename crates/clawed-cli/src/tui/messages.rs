@@ -161,7 +161,26 @@ impl Message {
 
         let cached_lines = self.cached_lines.get_mut();
         if let Some(lines) = cached_lines.as_mut() {
-            append_plain_lines(lines, text, Style::default());
+            let style = Style::default().fg(MUTED).add_modifier(Modifier::ITALIC);
+            // Mimic str::lines() behavior: split on '\n', omit trailing empty segment.
+            let mut parts: Vec<&str> = text.split('\n').collect();
+            if parts.last() == Some(&"") {
+                parts.pop();
+            }
+            let mut iter = parts.into_iter();
+            let Some(first) = iter.next() else {
+                return;
+            };
+            if let Some(last_line) = lines.last_mut() {
+                let mut merged = line_text(last_line);
+                merged.push_str(first);
+                *last_line = Line::styled(merged, style);
+            } else {
+                lines.push(Line::styled(format!("│ {first}"), style));
+            }
+            for part in iter {
+                lines.push(Line::styled(format!("│ {part}"), style));
+            }
             return;
         }
         *cached_lines = None;
@@ -282,8 +301,17 @@ impl Message {
                 if text.is_empty() {
                     return vec![];
                 }
-                // Plain text — status bar already shows "Thinking" indicator.
-                text.lines().map(|l| Line::from(l.to_string())).collect()
+                // Visual distinction: muted italic with a pipe prefix.
+                text.lines()
+                    .map(|l| {
+                        Line::styled(
+                            format!("│ {l}"),
+                            Style::default()
+                                .fg(MUTED)
+                                .add_modifier(Modifier::ITALIC),
+                        )
+                    })
+                    .collect()
             }
             MessageContent::ToolExecution {
                 name,
@@ -603,15 +631,29 @@ mod tests {
         let lines = msg.to_lines_with_context(false, None);
 
         assert_eq!(lines.len(), 2);
-        assert_eq!(line_text(&lines[0]), "thinking...");
-        assert_eq!(line_text(&lines[1]), "more");
+        // Thinking lines now carry a "│ " prefix.
+        assert_eq!(line_text(&lines[0]), "│ thinking...");
+        assert_eq!(line_text(&lines[1]), "│ more");
     }
 
     #[test]
-    fn thinking_text_is_plain() {
+    fn thinking_text_has_muted_italic_style() {
         let msg = Message::new(MessageContent::ThinkingText("hello".into()));
         let lines = msg.to_lines_with_context(false, None);
-        // Plain text — no special foreground color
-        assert_eq!(lines[0].style.fg, None);
+        assert_eq!(lines[0].style.fg, Some(MUTED));
+        assert!(lines[0].style.add_modifier.contains(Modifier::ITALIC));
+        assert!(line_text(&lines[0]).starts_with('│'));
+    }
+
+    #[test]
+    fn append_thinking_text_newlines_match_lines_behavior() {
+        let mut msg = Message::new(MessageContent::ThinkingText("a".into()));
+        // Append text that ends with a newline — should match str::lines() behavior.
+        msg.append_thinking_text("\nb\n");
+        let lines = msg.to_lines_with_context(false, None);
+        // "a\nb\n".lines() → ["a", "b"]
+        assert_eq!(lines.len(), 2);
+        assert_eq!(line_text(&lines[0]), "│ a");
+        assert_eq!(line_text(&lines[1]), "│ b");
     }
 }

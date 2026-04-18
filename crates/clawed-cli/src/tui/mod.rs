@@ -98,8 +98,110 @@ fn plain_text_lines(text: &str) -> Vec<Line<'static>> {
     }
 
     text.lines()
-        .map(|line| Line::from(line.to_string()))
+        .map(|line| Line::from(parse_inline_spans(line)))
         .collect()
+}
+
+/// Parse lightweight inline markdown for streaming text:
+/// `**bold**`, `*italic*`, `` `code` ``.
+fn parse_inline_spans(line: &str) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut current = String::new();
+    let mut chars = line.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '*' && chars.peek() == Some(&'*') {
+            chars.next(); // consume second '*'
+            if !current.is_empty() {
+                spans.push(Span::raw(std::mem::take(&mut current)));
+            }
+            let mut bold_text = String::new();
+            let mut found_close = false;
+            while let Some(c) = chars.next() {
+                if c == '*' && chars.peek() == Some(&'*') {
+                    chars.next();
+                    found_close = true;
+                    break;
+                }
+                bold_text.push(c);
+            }
+            if found_close && !bold_text.is_empty() {
+                spans.push(Span::styled(
+                    bold_text,
+                    Style::default().add_modifier(Modifier::BOLD),
+                ));
+            } else {
+                current.push_str("**");
+                current.push_str(&bold_text);
+            }
+        } else if ch == '*' {
+            if !current.is_empty() {
+                spans.push(Span::raw(std::mem::take(&mut current)));
+            }
+            let mut italic_text = String::new();
+            let mut found_close = false;
+            while let Some(c) = chars.next() {
+                if c == '*' {
+                    found_close = true;
+                    break;
+                }
+                italic_text.push(c);
+            }
+            if found_close && !italic_text.is_empty() {
+                spans.push(Span::styled(
+                    italic_text,
+                    Style::default().add_modifier(Modifier::ITALIC),
+                ));
+            } else {
+                current.push('*');
+                current.push_str(&italic_text);
+            }
+        } else if ch == '`' {
+            // Check if this is a code block marker (3+ backticks)
+            let mut backtick_count = 1;
+            while chars.peek() == Some(&'`') {
+                chars.next();
+                backtick_count += 1;
+            }
+            if backtick_count >= 3 {
+                current.push_str(&"`".repeat(backtick_count));
+                continue;
+            }
+            if backtick_count == 2 {
+                current.push_str("``");
+                continue;
+            }
+            if !current.is_empty() {
+                spans.push(Span::raw(std::mem::take(&mut current)));
+            }
+            let mut code_text = String::new();
+            let mut found_close = false;
+            while let Some(c) = chars.next() {
+                if c == '`' {
+                    found_close = true;
+                    break;
+                }
+                code_text.push(c);
+            }
+            if found_close && !code_text.is_empty() {
+                spans.push(Span::styled(
+                    code_text,
+                    Style::default()
+                        .bg(Color::Rgb(45, 45, 45))
+                        .fg(Color::Rgb(220, 220, 220)),
+                ));
+            } else {
+                current.push('`');
+                current.push_str(&code_text);
+            }
+        } else {
+            current.push(ch);
+        }
+    }
+    if !current.is_empty() {
+        spans.push(Span::raw(current));
+    }
+    spans
 }
 
 /// Extract a short display string from tool input JSON for the header line.
@@ -1557,11 +1659,19 @@ fn render(frame: &mut Frame, app: &mut App) {
         // fixed 3-line footer.
         let perm_chunks = Layout::vertical([
             Constraint::Length(layout.desc_rows),
+            Constraint::Length(layout.detail_rows),
             Constraint::Length(layout.button_rows),
             Constraint::Length(layout.hint_rows),
         ])
         .split(footer_area);
-        permission::render(frame, perm_chunks[0], perm_chunks[1], perm_chunks[2], perm);
+        permission::render(
+            frame,
+            perm_chunks[0],
+            perm_chunks[1],
+            perm_chunks[2],
+            perm_chunks[3],
+            perm,
+        );
     } else {
         // Normal: input ─ completion popup (optional) ─ hint bar
         let input_chunks = Layout::vertical([
@@ -4047,17 +4157,61 @@ mod tests {
     }
 
     #[test]
-    fn streaming_assistant_renders_raw_markdown_until_done() {
+    fn streaming_assistant_renders_inline_markdown_until_done() {
         let mut app = App::new("test".to_string());
         app.is_generating = true;
         app.push_message(MessageContent::AssistantText("**bold**".to_string()));
 
-        assert_eq!(line_text(&app.cached_visible_lines[0]), "**bold**");
+        // Streaming: lightweight inline parsing strips the markers.
+        assert_eq!(line_text(&app.cached_visible_lines[0]), "bold");
 
         app.mark_done();
         app.rebuild_visible_lines();
 
+        // Done: full markdown renderer also produces "bold".
         assert_eq!(line_text(&app.cached_visible_lines[0]), "bold");
+    }
+
+    #[test]
+    fn parse_inline_spans_bold_italic_code() {
+        let spans = parse_inline_spans("**bold** and *italic* and `code`");
+        assert_eq!(spans.len(), 5);
+        assert_eq!(spans[0].content, "bold");
+        assert!(spans[0].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(spans[1].content, " and ");
+        assert_eq!(spans[2].content, "italic");
+        assert!(spans[2].style.add_modifier.contains(Modifier::ITALIC));
+        assert_eq!(spans[3].content, " and ");
+        assert_eq!(spans[4].content, "code");
+        assert_eq!(spans[4].style.bg, Some(Color::Rgb(45, 45, 45)));
+    }
+
+    #[test]
+    fn parse_inline_spans_leaves_unclosed_as_plain() {
+        let spans = parse_inline_spans("**unclosed bold");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content, "**unclosed bold");
+    }
+
+    #[test]
+    fn parse_inline_spans_plain_text_unchanged() {
+        let spans = parse_inline_spans("hello world");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content, "hello world");
+    }
+
+    #[test]
+    fn parse_inline_spans_skips_code_blocks() {
+        let spans = parse_inline_spans("```rust fn main() {} ```");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content, "```rust fn main() {} ```");
+    }
+
+    #[test]
+    fn parse_inline_spans_double_backtick_is_plain() {
+        let spans = parse_inline_spans("``not code``");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content, "``not code``");
     }
 
     #[test]

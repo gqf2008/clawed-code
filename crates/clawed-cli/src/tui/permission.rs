@@ -51,13 +51,14 @@ pub struct PendingPermission {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PermissionLayout {
     pub desc_rows: u16,
+    pub detail_rows: u16,
     pub button_rows: u16,
     pub hint_rows: u16,
 }
 
 impl PermissionLayout {
     pub const fn total_rows(self) -> u16 {
-        self.desc_rows + self.button_rows + self.hint_rows
+        self.desc_rows + self.detail_rows + self.button_rows + self.hint_rows
     }
 }
 
@@ -97,12 +98,17 @@ impl PendingPermission {
 
 /// Render the permission prompt into the given areas.
 ///
-/// `desc_area` — 1+ row area for the description line
-/// `btn_area`  — 1+ row area for the button row
-/// `hint_area` — 1+ row area for the hint text (optional, may be zero-height)
+/// `desc_area`   — 1+ row area for the description line
+/// `detail_area` — 1+ row area for raw tool input JSON
+/// `btn_area`    — 1+ row area for the button row
+/// `hint_area`   — 1+ row area for the hint text (optional, may be zero-height)
 pub fn layout_for(width: u16, perm: &PendingPermission) -> PermissionLayout {
     let width = width.max(1);
     let desc_rows = Paragraph::new(build_description_line(perm))
+        .wrap(Wrap { trim: false })
+        .line_count(width)
+        .max(1) as u16;
+    let detail_rows = Paragraph::new(build_detail_lines(perm))
         .wrap(Wrap { trim: false })
         .line_count(width)
         .max(1) as u16;
@@ -116,6 +122,7 @@ pub fn layout_for(width: u16, perm: &PendingPermission) -> PermissionLayout {
 
     PermissionLayout {
         desc_rows,
+        detail_rows,
         button_rows,
         hint_rows,
     }
@@ -124,6 +131,7 @@ pub fn layout_for(width: u16, perm: &PendingPermission) -> PermissionLayout {
 pub fn render(
     frame: &mut Frame,
     desc_area: Rect,
+    detail_area: Rect,
     btn_area: Rect,
     hint_area: Rect,
     perm: &PendingPermission,
@@ -133,6 +141,11 @@ pub fn render(
     frame.render_widget(
         Paragraph::new(build_description_line(perm)).wrap(Wrap { trim: false }),
         desc_area,
+    );
+
+    frame.render_widget(
+        Paragraph::new(build_detail_lines(perm)).wrap(Wrap { trim: false }),
+        detail_area,
     );
 
     // --- Button row ---
@@ -270,6 +283,32 @@ fn build_button(
     (Span::styled(text, style), width)
 }
 
+fn build_detail_lines(perm: &PendingPermission) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+
+    // Header
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled(
+            "Input:",
+            Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    let json_str = match serde_json::to_string_pretty(&perm.request.input) {
+        Ok(s) => s,
+        Err(_) => perm.request.input.to_string(),
+    };
+
+    for line in json_str.lines() {
+        lines.push(Line::styled(
+            format!("    {line}"),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    lines
+}
+
 fn build_hint_line() -> Line<'static> {
     Line::from(vec![
         Span::styled("Tab", Style::default().fg(Color::Cyan)),
@@ -287,6 +326,13 @@ fn build_hint_line() -> Line<'static> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
 
     fn sample_request(risk: RiskLevel) -> PermissionRequest {
         PermissionRequest {
@@ -370,7 +416,21 @@ mod tests {
         let p = PendingPermission::new(sample_request(RiskLevel::Medium));
         let wide = layout_for(120, &p);
         let narrow = layout_for(18, &p);
-        assert_eq!(wide.total_rows(), 3);
-        assert!(narrow.total_rows() > 3);
+        // desc + detail (JSON input) + buttons + hints
+        assert_eq!(wide.total_rows(), 7);
+        assert!(narrow.total_rows() > wide.total_rows());
+    }
+
+    #[test]
+    fn detail_lines_include_formatted_input_json() {
+        let p = PendingPermission::new(sample_request(RiskLevel::Low));
+        let lines = build_detail_lines(&p);
+        assert!(!lines.is_empty());
+        let header = line_text(&lines[0]);
+        assert!(header.contains("Input"));
+        // At least one JSON line should contain the command key
+        let body: String = lines[1..].iter().map(line_text).collect::<Vec<_>>().join("\n");
+        assert!(body.contains("command"));
+        assert!(body.contains("rm -rf /tmp/foo"));
     }
 }
