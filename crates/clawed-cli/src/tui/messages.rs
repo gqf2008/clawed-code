@@ -327,7 +327,8 @@ impl Message {
             format!("{indent}{child_prefix}"),
             Style::default().fg(MUTED),
         ));
-        header_spans.push(Span::styled("● ", Style::default().fg(Color::Green)));
+        let bullet_color = if is_error { Color::Red } else { Color::Green };
+        header_spans.push(Span::styled("● ", Style::default().fg(bullet_color)));
         header_spans.push(Span::styled(
             name.to_string(),
             Style::default().add_modifier(Modifier::BOLD),
@@ -369,7 +370,7 @@ impl Message {
         }
 
         // ── Error indicator ──
-        if is_error && output_lines.is_empty() {
+        if is_error {
             lines.push(Line::styled(
                 format!("{output_indent}✗ failed"),
                 Style::default().fg(Color::Red),
