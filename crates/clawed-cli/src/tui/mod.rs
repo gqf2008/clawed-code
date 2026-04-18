@@ -758,6 +758,7 @@ impl App {
     fn mark_generating(&mut self) {
         self.status.thinking = true;
         self.status.is_generating = true;
+        self.status.generating_since = Some(Instant::now());
         self.is_generating = true;
         self.footer_picker = None;
         self.invalidate_visible_lines();
@@ -771,6 +772,7 @@ impl App {
     fn mark_done(&mut self) {
         self.status.thinking = false;
         self.status.is_generating = false;
+        self.status.generating_since = None;
         self.is_generating = false;
         self.invalidate_visible_lines();
         self.last_spinner_tick = Instant::now();

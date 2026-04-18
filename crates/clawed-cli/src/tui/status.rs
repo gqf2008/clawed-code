@@ -27,6 +27,8 @@ pub struct TuiStatusState {
     pub spinner_frame: usize,
     /// Context window usage percentage (0.0–100.0), updated from SessionStatus.
     pub context_pct: f64,
+    /// When the current generation phase started (for stall detection).
+    pub generating_since: Option<Instant>,
 }
 
 impl TuiStatusState {
@@ -40,6 +42,7 @@ impl TuiStatusState {
             session_start: Instant::now(),
             spinner_frame: 0,
             context_pct: 0.0,
+            generating_since: None,
         }
     }
 
@@ -83,7 +86,20 @@ pub fn build_spans(state: &TuiStatusState) -> Vec<Span<'static>> {
         } else {
             "Generating"
         };
-        spans.push(Span::styled(format!("{ch} {label}"), tool_style));
+        // Stall detection: yellow after 30s, red after 60s.
+        let spinner_style = if let Some(since) = state.generating_since {
+            let elapsed = since.elapsed().as_secs();
+            if elapsed >= 60 {
+                Style::default().fg(Color::Red)
+            } else if elapsed >= 30 {
+                Style::default().fg(Color::Yellow)
+            } else {
+                tool_style
+            }
+        } else {
+            tool_style
+        };
+        spans.push(Span::styled(format!("{ch} {label}"), spinner_style));
     }
 
     // Elapsed time after spinner
