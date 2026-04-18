@@ -288,7 +288,6 @@ impl Message {
         duration_ms: u64,
         full_result: Option<&str>,
     ) -> Vec<Line<'static>> {
-        const TREE_CHAR: &str = "\u{2514}\u{2500} "; // └─
         const MAX_INPUT_CHARS: usize = 80;
 
         let mut lines = Vec::new();
@@ -310,36 +309,33 @@ impl Message {
         }
         lines.push(Line::from(header_spans));
 
-        // ── Output lines: └─ line ─
+        // ── Output lines (simple indent, no tree char) ──
         for line in output_lines {
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(TREE_CHAR, Style::default().fg(MUTED)),
-                Span::styled(line.clone(), Style::default().fg(MUTED)),
-            ]));
+            lines.push(Line::styled(
+                format!("  {}", line),
+                Style::default().fg(MUTED),
+            ));
         }
 
-        // ── Duration hint: └─ (2.3s) ──
+        // ── Duration hint ──
         if duration_ms > 0 {
             let dur = if duration_ms >= 1000 {
                 format!("{:.1}s", duration_ms as f64 / 1000.0)
             } else {
                 format!("{}ms", duration_ms)
             };
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(TREE_CHAR, Style::default().fg(MUTED)),
-                Span::styled(format!("({})", dur), Style::default().fg(MUTED)),
-            ]));
+            lines.push(Line::styled(
+                format!("  ({})", dur),
+                Style::default().fg(MUTED),
+            ));
         }
 
         // ── Error indicator ──
         if is_error && output_lines.is_empty() {
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(TREE_CHAR, Style::default().fg(MUTED)),
-                Span::styled("\u{2717} failed", Style::default().fg(Color::Red)),
-            ]));
+            lines.push(Line::styled(
+                "  ✗ failed",
+                Style::default().fg(Color::Red),
+            ));
         }
 
         // ── Fold hint / expanded result ──
@@ -351,11 +347,7 @@ impl Message {
                     let total = full.lines().count();
                     for l in &preview_lines {
                         let style = diff_line_style(l);
-                        lines.push(Line::from(vec![
-                            Span::raw("  "),
-                            Span::styled(TREE_CHAR, Style::default().fg(MUTED)),
-                            Span::styled(l.to_string(), style),
-                        ]));
+                        lines.push(Line::styled(format!("  {}", l), style));
                     }
                     if total > 5 {
                         lines.push(Line::styled(
@@ -374,11 +366,7 @@ impl Message {
                 lines.push(Line::from(""));
                 for l in full.lines() {
                     let style = diff_line_style(l);
-                    lines.push(Line::from(vec![
-                        Span::raw("  "),
-                        Span::styled(TREE_CHAR, Style::default().fg(MUTED)),
-                        Span::styled(l.to_string(), style),
-                    ]));
+                    lines.push(Line::styled(format!("  {}", l), style));
                 }
                 lines.push(Line::from(""));
             }
