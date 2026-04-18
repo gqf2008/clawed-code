@@ -620,12 +620,35 @@ impl App {
             return;
         }
 
-        let lines = (0..self.messages.len())
-            .flat_map(|index| self.visible_message_lines_at(index))
-            .collect();
+        let mut lines = Vec::new();
+        for index in 0..self.messages.len() {
+            if index > 0 {
+                let prev = &self.messages[index - 1].content;
+                let curr = &self.messages[index].content;
+                if Self::needs_separator(prev, curr) {
+                    lines.push(Line::from(""));
+                }
+            }
+            lines.extend(self.visible_message_lines_at(index));
+        }
         self.cached_visible_lines = lines;
         self.cached_visible_lines_dirty = false;
         self.cached_visible_line_count = None;
+    }
+
+    /// Returns true when two consecutive messages should be visually separated
+    /// by a blank line in the TUI message list.
+    fn needs_separator(prev: &MessageContent, curr: &MessageContent) -> bool {
+        use MessageContent::*;
+        match (prev, curr) {
+            // Assistant text blocks flow together naturally.
+            (AssistantText(_), AssistantText(_)) => false,
+            (AssistantText(_), ThinkingText(_)) => false,
+            (ThinkingText(_), AssistantText(_)) => false,
+            (ThinkingText(_), ThinkingText(_)) => false,
+            // Everything else gets a separator on type change.
+            _ => std::mem::discriminant(prev) != std::mem::discriminant(curr),
+        }
     }
 
     fn clear_messages(&mut self) {
