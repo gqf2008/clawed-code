@@ -272,8 +272,9 @@ async fn run() -> anyhow::Result<()> {
                     .as_deref()
                     .map(|p| {
                         let trimmed = p.trim().replace('\n', " ");
-                        if trimmed.len() > 60 {
-                            format!("{}…", &trimmed[..60])
+                        if trimmed.chars().count() > 60 {
+                            let truncated: String = trimmed.chars().take(60).collect();
+                            format!("{}…", truncated)
                         } else {
                             trimmed
                         }
@@ -521,8 +522,11 @@ async fn run() -> anyhow::Result<()> {
     if let Some(prompt) = cli.prompt {
         // Combine explicit prompt with any piped stdin
         let full_prompt = if !stdin_is_tty {
-            let mut stdin_buf = String::new();
-            std::io::Read::read_to_string(&mut std::io::stdin(), &mut stdin_buf)?;
+            let stdin_buf = tokio::task::spawn_blocking(|| {
+                let mut buf = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+                Ok::<String, std::io::Error>(buf)
+            }).await??;
             if stdin_buf.is_empty() {
                 prompt
             } else {
@@ -579,8 +583,11 @@ async fn run() -> anyhow::Result<()> {
         run_with_timeout(task, cli.timeout).await?;
     } else if !stdin_is_tty {
         // Stdin-only mode: read from pipe with no explicit prompt
-        let mut stdin_buf = String::new();
-        std::io::Read::read_to_string(&mut std::io::stdin(), &mut stdin_buf)?;
+        let stdin_buf = tokio::task::spawn_blocking(|| {
+            let mut buf = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+            Ok::<String, std::io::Error>(buf)
+        }).await??;
         let stdin_buf = stdin_buf.trim().to_string();
         if !stdin_buf.is_empty() {
             let task = async {

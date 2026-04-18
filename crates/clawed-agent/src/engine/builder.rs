@@ -249,10 +249,10 @@ impl QueryEngineBuilder {
                 // Register as builtin in McpManager for call routing
                 let mgr = mcp_manager.clone();
                 let srv = cu_server.clone();
-                tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(async {
-                        mgr.write().await.register_builtin(srv).await;
-                    });
+                // Use futures::executor::block_on to avoid nesting tokio block_on
+                // inside a synchronous builder (which can deadlock on some schedulers).
+                futures::executor::block_on(async {
+                    mgr.write().await.register_builtin(srv).await;
                 });
                 tracing::info!("Computer Use: {tool_count} tools registered");
             }

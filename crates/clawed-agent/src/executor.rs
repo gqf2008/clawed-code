@@ -59,7 +59,7 @@ impl ToolExecutor {
 
     /// Set the channel for streaming tool output lines during execution.
     pub fn set_output_tx(&self, tx: tokio::sync::mpsc::UnboundedSender<(String, String, String)>) {
-        *self.output_tx.write().unwrap() = Some(Arc::new(tx));
+        *self.output_tx.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(tx));
     }
 
     /// Set the session ID for audit logging.
@@ -296,7 +296,7 @@ impl ToolExecutor {
         // If the executor has an output_tx channel, create a callback that sends
         // (tool_use_id, tool_name, line) so the query loop can yield ToolOutputLine events.
         let mut ctx = context.clone();
-        if let Some(tx) = self.output_tx.read().unwrap().as_ref() {
+        if let Some(tx) = self.output_tx.read().unwrap_or_else(|poisoned| poisoned.into_inner()).as_ref() {
             let id = tool_use_id.to_string();
             let tname = tool_name.to_string();
             let tx = Arc::clone(tx);

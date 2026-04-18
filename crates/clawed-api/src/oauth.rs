@@ -48,11 +48,11 @@ impl OAuthToken {
     #[must_use]
     pub fn expires_within_secs(&self, buffer_secs: u64) -> bool {
         if let Some(expires_at) = self.expires_at {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            now + buffer_secs >= expires_at
+            let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+                // Clock appears to be before UNIX epoch — treat as expired to be safe.
+                return true;
+            };
+            now.as_secs() + buffer_secs >= expires_at
         } else {
             false
         }
@@ -74,9 +74,17 @@ impl OAuthToken {
 // ---------------------------------------------------------------------------
 
 /// Generate a random code verifier (43-128 chars, URL-safe).
+///
+/// RFC 7636 requires the verifier be 43-128 chars from `[A-Za-z0-9-._~]`.
 fn generate_code_verifier() -> String {
-    let bytes: Vec<u8> = (0..32).map(|_| rand::random::<u8>()).collect();
-    URL_SAFE_NO_PAD.encode(&bytes)
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+    // Generate 64 chars — well within the 43-128 range and more entropy than 32 bytes base64.
+    (0..64)
+        .map(|_| {
+            let idx = (rand::random::<u8>() as usize) % CHARSET.len();
+            CHARSET[idx] as char
+        })
+        .collect()
 }
 
 /// Derive the S256 code challenge from a verifier.
@@ -101,9 +109,10 @@ impl OAuthFlow {
     }
 
     /// Build the authorization URL the user should open in a browser.
-    /// Returns `(url, code_verifier)`.
+    /// Returns `(url, code_verifier, state)`.
+    /// The `state` must be stored and verified in the callback to prevent CSRF.
     #[must_use]
-    pub fn build_auth_url(&self) -> (String, String) {
+    pub fn build_auth_url(&self) -> (String, String, String) {
         let verifier = generate_code_verifier();
         let challenge = code_challenge(&verifier);
 
@@ -121,7 +130,7 @@ impl OAuthFlow {
             urlencoding::encode(&state),
         );
 
-        (url, verifier)
+        (url, verifier, state)
     }
 
     /// Exchange an authorization code for tokens.
@@ -180,7 +189,7 @@ impl OAuthFlow {
     /// Full interactive authorize: open browser, start local callback server,
     /// wait for redirect, exchange code. Returns the obtained token.
     pub async fn authorize(&self) -> anyhow::Result<OAuthToken> {
-        let (url, verifier) = self.build_auth_url();
+        let (url, verifier, state) = self.build_auth_url();
 
         // Start a local TCP listener on the redirect port
         let redirect = self.redirect_uri();
@@ -195,7 +204,7 @@ impl OAuthFlow {
         // Wait for the callback (timeout after 5 min)
         let code = tokio::time::timeout(
             std::time::Duration::from_secs(300),
-            wait_for_code(&listener),
+            wait_for_code(&listener, &state),
         )
         .await
         .map_err(|_| anyhow::anyhow!("OAuth authorization timed out (5 min)"))??;
@@ -215,14 +224,34 @@ impl OAuthFlow {
 // Token storage (file-based)
 // ---------------------------------------------------------------------------
 
-/// Save token to `~/.claude/oauth_token.json`.
+/// Save token to `~/.claude/oauth_token.json` with restricted permissions (0o600).
 pub fn save_token(token: &OAuthToken) -> anyhow::Result<()> {
     let path = token_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(token)?;
-    std::fs::write(&path, json)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| anyhow::anyhow!("Failed to open token file: {e}"))?;
+        use std::io::Write;
+        file.write_all(json.as_bytes())
+            .map_err(|e| anyhow::anyhow!("Failed to write token file: {e}"))?;
+    }
+    #[cfg(not(unix))]
+    {
+        // On Windows we fall back to a plain write. The token file is stored in
+        // the user's profile directory, which is private by default on modern
+        // Windows, but ideally we would set an explicit ACL here.
+        std::fs::write(&path, json)?;
+    }
     Ok(())
 }
 
@@ -296,12 +325,11 @@ struct TokenResponse {
 
 impl TokenResponse {
     fn into_token(self) -> OAuthToken {
-        let expires_at = self.expires_in.map(|secs| {
+        let expires_at = self.expires_in.and_then(|secs| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-                + secs
+                .map(|d| d.as_secs() + secs)
+                .ok()
         });
         OAuthToken {
             access_token: self.access_token,
@@ -329,7 +357,11 @@ fn extract_port(uri: &str) -> Option<u16> {
 
 /// Wait for an HTTP GET containing `code` query param, tolerating preflight
 /// and extraneous connections (e.g. browser favicon fetches).
-async fn wait_for_code(listener: &tokio::net::TcpListener) -> anyhow::Result<String> {
+/// Validates the `state` parameter to prevent CSRF attacks.
+async fn wait_for_code(
+    listener: &tokio::net::TcpListener,
+    expected_state: &str,
+) -> anyhow::Result<String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     // Accept up to 10 connections — some may be preflights or favicon requests
@@ -346,17 +378,37 @@ async fn wait_for_code(listener: &tokio::net::TcpListener) -> anyhow::Result<Str
         let request = String::from_utf8_lossy(&buf[..n]);
         let path = request.split_whitespace().nth(1).unwrap_or("");
 
-        // Check if this request contains the code parameter
-        let code = path.split('?').nth(1).and_then(|qs| {
-            qs.split('&').find_map(|pair| {
-                let (key, val) = pair.split_once('=')?;
-                if key == "code" {
-                    Some(val.to_string())
-                } else {
-                    None
+        // Parse query parameters
+        let mut code = None;
+        let mut state = None;
+        if let Some(qs) = path.split('?').nth(1) {
+            for pair in qs.split('&') {
+                if let Some((key, val)) = pair.split_once('=') {
+                    let decoded = urlencoding::decode(val).unwrap_or_else(|_| val.into());
+                    match key {
+                        "code" => code = Some(decoded.to_string()),
+                        "state" => state = Some(decoded.to_string()),
+                        _ => {}
+                    }
                 }
-            })
-        });
+            }
+        }
+
+        // Validate state to prevent CSRF
+        if let Some(ref received_state) = state {
+            if received_state != expected_state {
+                let response = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.flush().await;
+                anyhow::bail!("CSRF protection: state parameter mismatch");
+            }
+        } else {
+            // No state parameter — could be a preflight, just continue
+            let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+            let _ = stream.write_all(response.as_bytes()).await;
+            let _ = stream.flush().await;
+            continue;
+        }
 
         if let Some(code) = code {
             let body = "<html><body><h2>✓ Authorization successful!</h2><p>You can close this tab.</p></body></html>";
@@ -411,13 +463,14 @@ mod tests {
             redirect_uri: None,
         };
         let flow = OAuthFlow::new(config);
-        let (url, verifier) = flow.build_auth_url();
+        let (url, verifier, state) = flow.build_auth_url();
         assert!(url.starts_with("https://auth.example.com/authorize?"));
         assert!(url.contains("response_type=code"));
         assert!(url.contains("client_id=my-client"));
         assert!(url.contains("code_challenge="));
         assert!(url.contains("code_challenge_method=S256"));
         assert!(!verifier.is_empty());
+        assert!(!state.is_empty());
     }
 
     #[test]

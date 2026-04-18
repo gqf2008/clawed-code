@@ -251,31 +251,34 @@ async fn flush_buffer(buffer: &mut Vec<QueuedEntry>, state: &Arc<Mutex<WriteQueu
         }
     }
 
-    // Write each file
+    // Write each file (offload blocking I/O to a dedicated thread pool)
     let entry_count = by_file.values().map(|v| v.len()).sum::<usize>();
 
-    for (path, lines) in &by_file {
-        // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
+    let by_file_for_blocking = by_file;
+    let _ = tokio::task::spawn_blocking(move || {
+        for (path, lines) in by_file_for_blocking {
+            // Ensure parent directory exists
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
 
-        match std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-        {
-            Ok(mut file) => {
-                let combined: String = lines.join("");
-                if let Err(e) = file.write_all(combined.as_bytes()) {
-                    warn!("WriteQueue: failed to write to {}: {}", path.display(), e);
+            match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                Ok(mut file) => {
+                    let combined: String = lines.join("");
+                    if let Err(e) = file.write_all(combined.as_bytes()) {
+                        warn!("WriteQueue: failed to write to {}: {}", path.display(), e);
+                    }
+                }
+                Err(e) => {
+                    warn!("WriteQueue: failed to open {}: {}", path.display(), e);
                 }
             }
-            Err(e) => {
-                warn!("WriteQueue: failed to open {}: {}", path.display(), e);
-            }
         }
-    }
+    }).await;
 
     // Update stats
     {

@@ -257,10 +257,9 @@ impl Settings {
                 debug!("Injecting env from settings: {key}={display_val}");
                 let old = std::env::var(key).ok();
                 previous.push((key.clone(), old));
-                // SAFETY: must be called single-threaded during init
-                unsafe {
-                    std::env::set_var(key, value);
-                }
+                // NOTE: In Rust 2021 edition this is safe; in 2024 edition it becomes
+                // `unsafe`. Callers must ensure this runs single-threaded during init.
+                std::env::set_var(key, value);
             }
         }
         previous

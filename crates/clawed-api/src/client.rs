@@ -34,7 +34,13 @@ impl ApiClient {
             // Title-case headers (e.g. Content-Type) for maximum proxy compatibility
             .http1_title_case_headers()
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Failed to build custom HTTP client ({}), falling back to default",
+                    e
+                );
+                reqwest::Client::new()
+            });
         Self {
             http,
             api_key: api_key.into(),

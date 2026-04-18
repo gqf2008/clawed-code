@@ -4,7 +4,6 @@
 //! traversal attacks (e.g. `../../../etc/passwd`).
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 /// Maximum tool output size in bytes (30 KB).
 pub const MAX_TOOL_OUTPUT_SIZE: usize = 30 * 1024;
@@ -13,14 +12,15 @@ pub const MAX_TOOL_OUTPUT_SIZE: usize = 30 * 1024;
 pub const MAX_TOOL_OUTPUT_LINES: usize = 2000;
 
 /// Cache for find_project_root results — avoids repeated git process spawns.
-static PROJECT_ROOT_CACHE: Mutex<Option<(PathBuf, Option<PathBuf>)>> = Mutex::new(None);
+static PROJECT_ROOT_CACHE: std::sync::Mutex<Option<(PathBuf, Option<PathBuf>)>> = std::sync::Mutex::new(None);
 
 /// Resolve a user-supplied file path relative to cwd.
 ///
 /// Returns the resolved path. Does NOT require the file to exist (for write/create operations).
 /// Validates that the resolved path does not escape the project root (git root or cwd).
+/// Also checks symlinks for existing files to prevent symlink-based path traversal.
 pub fn resolve_path(file_path: &str, cwd: &Path) -> anyhow::Result<PathBuf> {
-    resolve_path_inner(file_path, cwd, false)
+    resolve_path_inner(file_path, cwd, true)
 }
 
 /// Like `resolve_path`, but additionally checks symlink targets for existing files.
@@ -87,14 +87,16 @@ fn normalize_path(path: &Path) -> PathBuf {
 
 /// Find the git root directory (cached per cwd to avoid repeated process spawns).
 fn find_project_root(cwd: &Path) -> Option<PathBuf> {
-    // Check cache first
-    if let Ok(guard) = PROJECT_ROOT_CACHE.lock() {
-        if let Some((cached_cwd, cached_root)) = guard.as_ref() {
-            if cached_cwd == cwd {
-                return cached_root.clone();
-            }
+    // Check cache first (recover from poison so the cache remains usable)
+    let guard = PROJECT_ROOT_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some((cached_cwd, cached_root)) = guard.as_ref() {
+        if cached_cwd == cwd {
+            return cached_root.clone();
         }
     }
+    drop(guard);
 
     let result = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
@@ -111,10 +113,11 @@ fn find_project_root(cwd: &Path) -> Option<PathBuf> {
             }
         });
 
-    // Update cache
-    if let Ok(mut guard) = PROJECT_ROOT_CACHE.lock() {
-        *guard = Some((cwd.to_path_buf(), result.clone()));
-    }
+    // Update cache (recover from poison)
+    let mut guard = PROJECT_ROOT_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    *guard = Some((cwd.to_path_buf(), result.clone()));
 
     result
 }
