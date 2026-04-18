@@ -297,10 +297,40 @@ async fn run() -> anyhow::Result<()> {
     } else {
         EnvFilter::new("warn")
     };
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(filter)
-        .init();
+
+    if use_tui {
+        // In TUI mode stderr writes corrupt the alternate screen, so redirect
+        // tracing logs to a file instead.
+        let log_dir = dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(".claude")
+            .join("logs");
+        let _ = std::fs::create_dir_all(&log_dir);
+        let log_path = log_dir.join("clawed.log");
+        let log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .unwrap_or_else(|e| {
+                eprintln!("Warning: failed to open log file {}: {}", log_path.display(), e);
+                std::process::exit(1);
+            });
+        tracing_subscriber::fmt()
+            .with_writer(move || {
+                log_file
+                    .try_clone()
+                    .unwrap_or_else(|e| {
+                        panic!("failed to clone log file handle: {}", e);
+                    })
+            })
+            .with_env_filter(filter)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_env_filter(filter)
+            .init();
+    }
 
     let cwd = match cli.cwd {
         Some(ref dir) => std::path::PathBuf::from(dir),
