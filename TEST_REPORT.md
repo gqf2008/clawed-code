@@ -1,9 +1,11 @@
 # Clawed Code 完整测试报告
 
-**测试日期**: 2026-04-16
+**测试日期**: 2026-04-18
 **测试环境**: macOS Darwin 25.3.0, Rust workspace (11 crates)
 **测试命令**: `cargo test -p clawed-cli`
-**测试结果**: **555 passed; 0 failed; 0 ignored; 0 filtered out; finished in 0.29s**
+**测试结果**: **646 passed; 0 failed; 0 ignored; 0 filtered out; finished in 0.90s**
+
+> 注：本次更新新增了 9 个 TUI E2E 测试（`crates/clawed-cli/src/tui/mod.rs`），验证 `ux/claude-inspired-improvements` branch 的 UX 渲染改进。详见 `E2E_TEST_REPORT.md`。
 
 ---
 

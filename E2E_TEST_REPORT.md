@@ -11,13 +11,16 @@
 
 | Metric | Value |
 |--------|-------|
-| E2E Tests | **22** |
-| Passed | **22** |
+| E2E Tests (CLI) | **22** |
+| E2E Tests (TUI) | **9** |
+| Passed | **31** |
 | Failed | **0** |
-| Unit Tests (clawed-cli) | **615** |
-| Total Tests (clawed-cli) | **637** |
+| Unit Tests (clawed-cli) | **624** |
+| Total Tests (clawed-cli) | **646** |
 
-All E2E tests execute the compiled `clawed` binary in a subprocess with temporary directories and isolated `$HOME` to avoid side effects on developer environments.
+CLI E2E tests execute the compiled `clawed` binary in a subprocess with temporary directories and isolated `$HOME` to avoid side effects on developer environments.
+
+TUI E2E tests use the simulated `E2ETestEnv` event loop (drain notifications → advance spinner → render) to verify rendering behavior without requiring a real terminal.
 
 ---
 
@@ -131,6 +134,28 @@ Verifies that various flags can be combined with early-exit commands without pan
 |------|---------|-----------|
 | `e2e_no_args_starts_interactive_but_aborts_without_tty` | (no args) | exits within 2s (no hang) |
 | `e2e_empty_prompt_arg` | `""` (empty string arg) | exits within 2s (no hang) |
+
+**Result:** PASS
+
+---
+
+## TUI E2E Tests (9 tests)
+
+**Location:** `crates/clawed-cli/src/tui/mod.rs` (test module)  
+**Framework:** Simulated `E2ETestEnv` event loop + `cached_visible_lines` assertions  
+**Scope:** UX rendering behaviors introduced in `ux/claude-inspired-improvements`
+
+| Test | Assertion |
+|------|-----------|
+| `e2e_tool_tree_renders_depth_connector` | depth=1 tools render `└─` tree prefix |
+| `e2e_tool_error_shows_red_failed` | error tools show `✗ failed` |
+| `e2e_tool_success_shows_duration` | success tools show `✓ (duration)` |
+| `e2e_tool_collapsed_shows_fold_hint` | collapsed tools show `+ N more lines (Ctrl+O to expand)` |
+| `e2e_consecutive_system_messages_collapsed` | consecutive System messages fold to `+ N system messages` |
+| `e2e_important_system_not_collapsed` | System messages containing "error"/"warning" remain visible |
+| `e2e_separator_between_different_message_types` | different message types are separated by a blank line |
+| `e2e_assistant_and_thinking_no_separator` | AssistantText + ThinkingText flow together without separator |
+| `e2e_thinking_collapsed_shows_hint` | collapsed thinking shows `💭 + N more lines (Ctrl+O to expand)` |
 
 **Result:** PASS
 

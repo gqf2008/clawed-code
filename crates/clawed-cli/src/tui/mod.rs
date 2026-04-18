@@ -4328,6 +4328,61 @@ mod tests {
                 },
             });
         }
+
+        fn send_tool_start(&self, id: &str, tool_name: &str) {
+            let _ = self.notify_tx.try_send(AgentNotification::ToolUseStart {
+                id: id.to_string(),
+                tool_name: tool_name.to_string(),
+            });
+        }
+
+        fn send_tool_ready(&self, id: &str, tool_name: &str, input: serde_json::Value) {
+            let _ = self.notify_tx.try_send(AgentNotification::ToolUseReady {
+                id: id.to_string(),
+                tool_name: tool_name.to_string(),
+                input,
+            });
+        }
+
+        fn send_tool_output(&self, id: &str, tool_name: &str, line: &str) {
+            let _ = self.notify_tx.try_send(AgentNotification::ToolOutputLine {
+                id: id.to_string(),
+                tool_name: tool_name.to_string(),
+                line: line.to_string(),
+            });
+        }
+
+        fn send_tool_complete(
+            &self,
+            id: &str,
+            tool_name: &str,
+            is_error: bool,
+            result_preview: Option<&str>,
+        ) {
+            let _ = self.notify_tx.try_send(AgentNotification::ToolUseComplete {
+                id: id.to_string(),
+                tool_name: tool_name.to_string(),
+                is_error,
+                result_preview: result_preview.map(|s| s.to_string()),
+            });
+        }
+
+        fn send_agent_spawned(&self, agent_id: &str, name: &str) {
+            let _ = self.notify_tx.try_send(AgentNotification::AgentSpawned {
+                agent_id: agent_id.to_string(),
+                name: Some(name.to_string()),
+                agent_type: "sub".to_string(),
+                background: false,
+            });
+        }
+
+        fn send_agent_complete(&self, agent_id: &str) {
+            let _ = self.notify_tx.try_send(AgentNotification::AgentComplete {
+                agent_id: agent_id.to_string(),
+                result: "done".to_string(),
+                is_error: false,
+            });
+        }
     }
 
     #[test]
@@ -6476,5 +6531,292 @@ mod tests {
         } else {
             panic!("expected Permissions command result");
         }
+    }
+
+    // ── E2E: UX rendering tests ──────────────────────────────────────────────
+
+    #[test]
+    fn e2e_tool_tree_renders_depth_connector() {
+        let mut env = E2ETestEnv::new();
+        env.app.term_width = 80;
+        env.app.term_height = 24;
+
+        // Spawn an agent so depth becomes 1 for subsequent tools
+        env.send_agent_spawned("agent-1", "CodeReview");
+        env.tick();
+
+        // Start a tool inside the agent context
+        env.send_tool_start("t1", "Read");
+        env.send_tool_ready("t1", "Read", json!({"path": "src/main.rs"}));
+        env.tick();
+
+        // Render
+        env.app.needs_redraw = true;
+        env.tick();
+
+        let text = env
+            .app
+            .cached_visible_lines
+            .iter()
+            .map(|l| line_text(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Depth=1 should produce tree connector prefix
+        assert!(
+            text.contains("└─ "),
+            "tool at depth=1 should render tree connector, got:\n{text}"
+        );
+        assert!(
+            text.contains("● Read"),
+            "tool header should contain name, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn e2e_tool_error_shows_red_failed() {
+        let mut env = E2ETestEnv::new();
+        env.app.term_width = 80;
+        env.app.term_height = 24;
+
+        env.send_tool_start("t1", "Bash");
+        env.send_tool_ready("t1", "Bash", json!({"command": "false"}));
+        env.send_tool_output("t1", "Bash", "something went wrong");
+        env.send_tool_complete("t1", "Bash", true, Some("exit code 1"));
+        env.tick();
+
+        env.app.needs_redraw = true;
+        env.tick();
+
+        let text = env
+            .app
+            .cached_visible_lines
+            .iter()
+            .map(|l| line_text(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            text.contains("✗ failed"),
+            "error tool should show ✗ failed, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn e2e_tool_success_shows_duration() {
+        let mut env = E2ETestEnv::new();
+        env.app.term_width = 80;
+        env.app.term_height = 24;
+
+        env.send_tool_start("t1", "Bash");
+        env.send_tool_ready("t1", "Bash", json!({"command": "echo hi"}));
+        env.send_tool_output("t1", "Bash", "hi");
+        // Small sleep so duration is non-zero
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        env.send_tool_complete("t1", "Bash", false, Some("hi"));
+        env.tick();
+
+        env.app.needs_redraw = true;
+        env.tick();
+
+        let text = env
+            .app
+            .cached_visible_lines
+            .iter()
+            .map(|l| line_text(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Completed successful tool should show a duration line with checkmark
+        assert!(
+            text.contains('✓') || text.contains("ms") || text.contains('s'),
+            "success tool should show duration marker, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn e2e_tool_collapsed_shows_fold_hint() {
+        let mut env = E2ETestEnv::new();
+        env.app.term_width = 80;
+        env.app.term_height = 24;
+
+        env.send_tool_start("t1", "Read");
+        env.send_tool_ready("t1", "Read", json!({"path": "file.txt"}));
+        // Emit some live output so the tool takes the "streamed" fold path
+        env.send_tool_output("t1", "Read", "out1");
+        env.send_tool_output("t1", "Read", "out2");
+        env.send_tool_complete(
+            "t1",
+            "Read",
+            false,
+            Some("line1\nline2\nline3\nline4\nline5\nline6"),
+        );
+        env.tick();
+
+        // Collapse the tool message
+        if let Some(msg) = env.app.messages.iter_mut().rev().find(|m| {
+            matches!(&m.content, MessageContent::ToolExecution { .. })
+        }) {
+            msg.toggle_collapsed();
+        }
+        env.app.invalidate_visible_lines();
+
+        env.app.needs_redraw = true;
+        env.tick();
+
+        let text = env
+            .app
+            .cached_visible_lines
+            .iter()
+            .map(|l| line_text(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            text.contains("more lines (Ctrl+O to expand)"),
+            "collapsed tool should show fold hint, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn e2e_consecutive_system_messages_collapsed() {
+        let mut env = E2ETestEnv::new();
+        env.app.term_width = 80;
+        env.app.term_height = 24;
+
+        // Invalidate cache so rebuild_visible_lines runs the collapse logic
+        env.app.invalidate_visible_lines();
+        // Push multiple non-important system messages
+        for i in 0..5 {
+            env.app.push_message(MessageContent::System(format!("status {i}")));
+        }
+        env.app.needs_redraw = true;
+        env.tick();
+
+        let text = env
+            .app
+            .cached_visible_lines
+            .iter()
+            .map(|l| line_text(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            text.contains("+ 3 system messages"),
+            "consecutive system messages should collapse (5 -> first + +3 + last), got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn e2e_important_system_not_collapsed() {
+        let mut env = E2ETestEnv::new();
+        env.app.term_width = 80;
+        env.app.term_height = 24;
+
+        // Push an important system message (contains "error")
+        env.app.push_message(MessageContent::System(
+            "An error occurred while processing".to_string(),
+        ));
+        // Followed by normal ones
+        for i in 0..3 {
+            env.app.push_message(MessageContent::System(format!("status {i}")));
+        }
+        env.app.needs_redraw = true;
+        env.tick();
+
+        let text = env
+            .app
+            .cached_visible_lines
+            .iter()
+            .map(|l| line_text(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            text.contains("error"),
+            "important system message should remain visible, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn e2e_separator_between_different_message_types() {
+        let mut env = E2ETestEnv::new();
+        env.app.term_width = 80;
+        env.app.term_height = 24;
+
+        env.app.push_message(MessageContent::AssistantText("hello".to_string()));
+        env.app.push_message(MessageContent::UserInput("hi".to_string()));
+        env.app.needs_redraw = true;
+        env.tick();
+
+        let lines: Vec<_> = env
+            .app
+            .cached_visible_lines
+            .iter()
+            .map(|l| line_text(l))
+            .collect();
+
+        // Find the assistant text and user input, verify there is a blank separator
+        let assistant_idx = lines.iter().position(|l| l.contains("hello")).unwrap();
+        let user_idx = lines.iter().position(|l| l.contains("hi")).unwrap();
+        assert!(
+            lines[assistant_idx + 1..user_idx].iter().any(|l| l.is_empty()),
+            "different message types should have a blank separator, got: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn e2e_assistant_and_thinking_no_separator() {
+        let mut env = E2ETestEnv::new();
+        env.app.term_width = 80;
+        env.app.term_height = 24;
+
+        env.app.push_message(MessageContent::AssistantText("hello".to_string()));
+        env.app.push_message(MessageContent::ThinkingText("reasoning".to_string()));
+        env.app.needs_redraw = true;
+        env.tick();
+
+        let lines: Vec<_> = env
+            .app
+            .cached_visible_lines
+            .iter()
+            .map(|l| line_text(l))
+            .collect();
+
+        let assistant_idx = lines.iter().position(|l| l.contains("hello")).unwrap();
+        let thinking_idx = lines.iter().position(|l| l.contains("reasoning")).unwrap();
+        // There should be no blank line between them
+        let between = &lines[assistant_idx + 1..thinking_idx];
+        assert!(
+            !between.iter().any(|l| l.is_empty()),
+            "assistant and thinking should flow together without separator, got: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn e2e_thinking_collapsed_shows_hint() {
+        let mut env = E2ETestEnv::new();
+        env.app.term_width = 80;
+        env.app.term_height = 24;
+
+        env.app.push_message(MessageContent::ThinkingText(
+            "line1\nline2\nline3\nline4\nline5".to_string(),
+        ));
+        env.app.thinking_collapsed = true;
+        env.app.needs_redraw = true;
+        env.tick();
+
+        let text = env
+            .app
+            .cached_visible_lines
+            .iter()
+            .map(|l| line_text(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            text.contains("💭 + 5 more lines (Ctrl+O to expand)"),
+            "collapsed thinking should show fold hint with line count, got:\n{text}"
+        );
     }
 }
