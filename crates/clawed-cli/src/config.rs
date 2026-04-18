@@ -18,6 +18,18 @@ pub fn parse_permission_mode(mode: &str) -> PermissionMode {
     }
 }
 
+/// Format a PermissionMode into its canonical CLI label.
+pub fn format_permission_mode(mode: PermissionMode) -> &'static str {
+    match mode {
+        PermissionMode::Default => "default",
+        PermissionMode::AcceptEdits => "acceptEdits",
+        PermissionMode::BypassAll => "bypass",
+        PermissionMode::Plan => "plan",
+        PermissionMode::DontAsk => "dontAsk",
+        PermissionMode::Auto => "auto",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

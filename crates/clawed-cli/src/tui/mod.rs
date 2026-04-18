@@ -2109,7 +2109,7 @@ pub async fn run_tui(
 ) -> anyhow::Result<()> {
     let model = { engine.state().read().await.model.clone() };
     let mut app = App::new(model);
-    app.permission_mode = format!("{:?}", engine.state().read().await.permission_mode).to_lowercase();
+    app.permission_mode = crate::config::format_permission_mode(engine.state().read().await.permission_mode).to_string();
 
     // Load history into input widget
     if let Some(hist_path) = crate::input::history_file_path() {
@@ -2734,7 +2734,7 @@ async fn handle_footer_picker_selection(
         FooterPickerKind::Permissions => {
             let new_mode = crate::config::parse_permission_mode(value);
             engine.state().write().await.permission_mode = new_mode;
-            app.permission_mode = format!("{:?}", new_mode).to_lowercase();
+            app.permission_mode = crate::config::format_permission_mode(new_mode).to_string();
             app.push_message(MessageContent::System(format!(
                 "Permission mode: {:?}",
                 new_mode
@@ -3276,7 +3276,7 @@ async fn handle_async_command(
             } else {
                 let new_mode = crate::config::parse_permission_mode(&mode);
                 engine.state().write().await.permission_mode = new_mode;
-                app.permission_mode = format!("{:?}", new_mode).to_lowercase();
+                app.permission_mode = crate::config::format_permission_mode(new_mode).to_string();
                 app.push_message(MessageContent::System(format!(
                     "Permission mode: {:?}",
                     new_mode
