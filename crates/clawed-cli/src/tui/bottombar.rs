@@ -6,8 +6,8 @@ use ratatui::{
     Frame,
 };
 
-/// Static hints for the bottom bar.
-const HINTS: &[(&str, &str)] = &[
+/// Static hints for the bottom bar in normal (idle) mode.
+const NORMAL_HINTS: &[(&str, &str)] = &[
     ("Tab", "complete"),
     ("Ctrl+J/N", "newline"),
     ("↑↓", "history"),
@@ -16,12 +16,25 @@ const HINTS: &[(&str, &str)] = &[
     ("Ctrl+C", "abort/quit"),
 ];
 
-pub fn render(frame: &mut Frame, area: Rect) {
+/// Hints shown while the LLM is generating or tools are running.
+const GENERATING_HINTS: &[(&str, &str)] = &[
+    ("Esc", "interrupt"),
+    ("Ctrl+O", "expand/collapse"),
+    ("Ctrl+C", "abort"),
+];
+
+pub fn render(frame: &mut Frame, area: Rect, is_generating: bool) {
+    let hints: &[(&str, &str)] = if is_generating {
+        GENERATING_HINTS
+    } else {
+        NORMAL_HINTS
+    };
+
     let sep = Style::default();
     let key_style = Style::default().fg(Color::Cyan);
     let desc_style = Style::default();
     let mut spans = Vec::new();
-    for (i, (key, desc)) in HINTS.iter().enumerate() {
+    for (i, (key, desc)) in hints.iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled(" │ ", sep));
         }

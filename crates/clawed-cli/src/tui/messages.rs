@@ -74,6 +74,8 @@ pub enum MessageContent {
         duration_ms: u64,
         /// Full output for the expand view.
         full_result: Option<String>,
+        /// Nesting depth for tree rendering (0 = top-level, 1+ = sub-tool).
+        depth: u32,
     },
     System(String),
 }
@@ -264,6 +266,7 @@ impl Message {
                 is_error,
                 duration_ms,
                 full_result,
+                depth,
             } => self.render_tool_execution(
                 name,
                 input.as_deref(),
@@ -271,6 +274,7 @@ impl Message {
                 *is_error,
                 *duration_ms,
                 full_result.as_deref(),
+                *depth,
             ),
             MessageContent::System(text) => text
                 .lines()
@@ -287,13 +291,23 @@ impl Message {
         is_error: bool,
         duration_ms: u64,
         full_result: Option<&str>,
+        depth: u32,
     ) -> Vec<Line<'static>> {
         const MAX_INPUT_CHARS: usize = 80;
 
         let mut lines = Vec::new();
 
-        // ── Header: ● Bash(command...) ──
+        // ── Tree indent based on depth ──
+        let indent = "  ".repeat(depth as usize);
+        let child_prefix = if depth > 0 { "└─ " } else { "" };
+        let output_indent = "  ".repeat(depth as usize + 1);
+
+        // ── Header: ● Bash(command...) or   └─ Bash(command...) ──
         let mut header_spans: Vec<Span<'static>> = Vec::new();
+        header_spans.push(Span::styled(
+            format!("{indent}{child_prefix}"),
+            Style::default().fg(MUTED),
+        ));
         header_spans.push(Span::styled("● ", Style::default().fg(Color::Green)));
         header_spans.push(Span::styled(
             name.to_string(),
@@ -309,10 +323,10 @@ impl Message {
         }
         lines.push(Line::from(header_spans));
 
-        // ── Output lines (simple indent, no tree char) ──
+        // ── Output lines ──
         for line in output_lines {
             lines.push(Line::styled(
-                format!("  {}", line),
+                format!("{output_indent}{}", line),
                 Style::default().fg(MUTED),
             ));
         }
@@ -325,7 +339,7 @@ impl Message {
                 format!("{}ms", duration_ms)
             };
             lines.push(Line::styled(
-                format!("  ({})", dur),
+                format!("{output_indent}({})", dur),
                 Style::default().fg(MUTED),
             ));
         }
@@ -333,7 +347,7 @@ impl Message {
         // ── Error indicator ──
         if is_error && output_lines.is_empty() {
             lines.push(Line::styled(
-                "  ✗ failed",
+                format!("{output_indent}✗ failed"),
                 Style::default().fg(Color::Red),
             ));
         }
@@ -347,18 +361,18 @@ impl Message {
                     let total = full.lines().count();
                     for l in &preview_lines {
                         let style = diff_line_style(l);
-                        lines.push(Line::styled(format!("  {}", l), style));
+                        lines.push(Line::styled(format!("{output_indent}{}", l), style));
                     }
                     if total > 5 {
                         lines.push(Line::styled(
-                            format!("  + {} more lines (Ctrl+O to expand)", total - 5),
+                            format!("{output_indent}+ {} more lines (Ctrl+O to expand)", total - 5),
                             Style::default().fg(MUTED),
                         ));
                     }
                 } else {
                     let n = full.lines().count();
                     lines.push(Line::styled(
-                        format!("  + {} lines (Ctrl+O to expand)", n),
+                        format!("{output_indent}+ {n} more lines (Ctrl+O to expand)"),
                         Style::default().fg(MUTED),
                     ));
                 }
@@ -366,7 +380,7 @@ impl Message {
                 lines.push(Line::from(""));
                 for l in full.lines() {
                     let style = diff_line_style(l);
-                    lines.push(Line::styled(format!("  {}", l), style));
+                    lines.push(Line::styled(format!("{output_indent}{}", l), style));
                 }
                 lines.push(Line::from(""));
             }
@@ -421,6 +435,7 @@ mod tests {
             is_error: false,
             duration_ms: 0,
             full_result: None,
+            depth: 0,
         });
         let lines = msg.to_lines();
         assert_eq!(lines.len(), 1);
@@ -439,6 +454,7 @@ mod tests {
             is_error: false,
             duration_ms: 0,
             full_result: None,
+            depth: 0,
         });
         let lines = msg.to_lines();
         let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
@@ -455,6 +471,7 @@ mod tests {
             is_error: false,
             duration_ms: 500,
             full_result: None,
+            depth: 0,
         });
         let lines = msg.to_lines();
         // header + 2 output + 1 duration = 4
@@ -472,11 +489,12 @@ mod tests {
             is_error: false,
             duration_ms: 100,
             full_result: Some("line 1\nline 2\nline 3\nline 4\nline 5\nline 6".into()),
+            depth: 0,
         });
         msg.collapsed = true;
         let lines = msg.to_lines();
         let last_text: String = lines.last().unwrap().spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(last_text.contains("+ 6 lines"));
+        assert!(last_text.contains("+ 6 more lines"));
         assert!(last_text.contains("Ctrl+O to expand"));
     }
 
@@ -489,6 +507,7 @@ mod tests {
             is_error: false,
             duration_ms: 100,
             full_result: Some("line 1\nline 2".into()),
+            depth: 0,
         });
         // ToolExecution defaults to expanded (collapsed = false)
         let lines = msg.to_lines();

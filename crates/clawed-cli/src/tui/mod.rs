@@ -85,7 +85,7 @@ fn collapsed_thinking_lines(text: &str) -> Vec<Line<'static>> {
     }
 
     vec![Line::styled(
-        format!("+ {line_count} lines (Ctrl+O to expand)"),
+        format!("+ {line_count} more lines (Ctrl+O to expand)"),
         Style::default().fg(MUTED),
     )]
 }
@@ -790,6 +790,8 @@ impl App {
                         started: Instant::now(),
                     },
                 );
+                // Depth = 1 when running inside an agent context, 0 otherwise.
+                let depth = if self.status.active_agents.is_empty() { 0 } else { 1 };
                 // Create message immediately so ToolOutputLine streaming has
                 // somewhere to append. Input will be filled in by ToolUseReady.
                 self.push_message(MessageContent::ToolExecution {
@@ -799,6 +801,7 @@ impl App {
                     is_error: false,
                     duration_ms: 0,
                     full_result: None,
+                    depth,
                 });
             }
             AgentNotification::ToolUseReady { tool_name, input, .. } => {
@@ -1458,7 +1461,7 @@ fn render(frame: &mut Frame, app: &mut App) {
         render_input(frame, input_chunks[0], app);
         render_input_separator(frame, input_chunks[2]);
         if bottom_bar_rows > 0 {
-            bottombar::render(frame, input_chunks[3]);
+            bottombar::render(frame, input_chunks[3], app.is_generating);
         }
 
         if let Some(picker) = app.footer_picker.as_ref() {
@@ -3533,6 +3536,7 @@ async fn replay_session_messages(engine: &Arc<QueryEngine>, app: &mut App) {
                                 is_error: false,
                                 duration_ms: 0,
                                 full_result: None,
+                                depth: 0,
                             });
                         }
                         _ => {}
@@ -3868,7 +3872,7 @@ mod tests {
 
         // >3 lines, so collapse hint
         assert_eq!(app.cached_visible_lines.len(), 1);
-        assert!(line_text(&app.cached_visible_lines[0]).contains("4 lines"));
+        assert!(line_text(&app.cached_visible_lines[0]).contains("4 more lines"));
     }
 
     #[test]
