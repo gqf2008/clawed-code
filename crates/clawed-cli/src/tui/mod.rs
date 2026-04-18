@@ -72,12 +72,14 @@ fn collapsed_thinking_lines(text: &str) -> Vec<Line<'static>> {
 
     let line_count = text.lines().count();
     if line_count <= 3 {
-        // Short thinking (≤3 lines) — render normally with muted/italic style
+        // Short thinking (≤3 lines) — render with muted/italic style + 💭 prefix
         return text
             .lines()
-            .map(|l| {
+            .enumerate()
+            .map(|(i, l)| {
+                let prefix = if i == 0 { "💭 " } else { "   " };
                 Line::styled(
-                    l.to_string(),
+                    format!("{prefix}{l}"),
                     Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
                 )
             })
@@ -85,7 +87,7 @@ fn collapsed_thinking_lines(text: &str) -> Vec<Line<'static>> {
     }
 
     vec![Line::styled(
-        format!("+ {line_count} more lines (Ctrl+O to expand)"),
+        format!("💭 + {line_count} more lines (Ctrl+O to expand)"),
         Style::default().fg(MUTED),
     )]
 }
