@@ -302,8 +302,11 @@ impl Tool for BashTool {
 
     fn description(&self) -> &'static str {
         "Execute a shell command in the working directory. Use for system commands, \
-         git operations, build commands, and running programs. Do NOT use for file operations \
-         when dedicated tools exist (Read, Edit, Write, Glob, Grep). \
+         git operations, build commands, and running programs. \
+         Do NOT use this tool for read-only file operations when a dedicated tool exists: \
+         use Glob (not find/ls) for file search, Grep (not grep/rg) for content search, \
+         Read (not cat/head/tail) for reading files, Edit (not sed/awk) for editing files, \
+         Write (not echo/cat heredoc) for writing files. \
          Git safety: NEVER update git config, NEVER run destructive git commands \
          (force push, reset --hard, clean -f) unless explicitly requested, NEVER skip hooks, \
          always create NEW commits (not amend) unless asked, prefer staging specific files \

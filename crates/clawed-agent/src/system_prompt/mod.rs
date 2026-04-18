@@ -137,8 +137,7 @@ pub fn build_system_prompt_ext(
         section_doing_tasks().to_string(),
         section_actions().to_string(),
         section_using_tools().to_string(),
-        section_tone_style().to_string(),
-        section_output_efficiency().to_string(),
+        section_text_output().to_string(),
     ];
 
     let static_text = parts.join("\n");
@@ -340,6 +339,10 @@ Use TodoWrite to maintain a shared scratchpad:
 - If a task is blocked, use SendMessage to provide additional context to the worker
 - If multiple workers conflict (e.g., editing the same file), serialize those tasks
 
+## Trust but verify
+
+A worker's summary describes what it intended to do, not necessarily what it did. When a worker writes or edits code, check the actual changes before reporting the work as done.
+
 ## Result Assembly
 
 After all workers complete:
@@ -381,8 +384,7 @@ mod tests {
         assert!(prompt.text.contains("# Doing tasks"));
         assert!(prompt.text.contains("# Executing actions"));
         assert!(prompt.text.contains("# Using tools"));
-        assert!(prompt.text.contains("# Tone and style"));
-        assert!(prompt.text.contains("# Output efficiency"));
+        assert!(prompt.text.contains("# Text output"));
         assert!(prompt.text.contains("Environment"));
         assert!(prompt.text.contains(SUMMARIZE_TOOL_RESULTS));
         assert!(prompt.dynamic_boundary_offset > 0);
@@ -398,7 +400,7 @@ mod tests {
         let suffix = prompt.dynamic_suffix();
 
         assert!(prefix.contains(DEFAULT_PREFIX));
-        assert!(prefix.contains("Tone and style"));
+        assert!(prefix.contains("# Text output"));
         assert!(!suffix.starts_with(SYSTEM_PROMPT_DYNAMIC_BOUNDARY));
         assert!(suffix.contains("Environment"));
     }

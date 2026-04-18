@@ -22,10 +22,13 @@ impl Tool for FileWriteTool {
     }
 
     fn description(&self) -> &'static str {
-        "Writes a file to the local filesystem. Overwrites existing files if present. \
-         If this is an existing file, you MUST use Read first. Prefer Edit for modifying \
-         existing files — it only sends the diff. Use Write for new files or complete rewrites. \
-         NEVER create documentation files (*.md) or README files unless explicitly requested."
+        "Writes a file to the local filesystem. \
+         This tool will overwrite the existing file if there is one at the provided path. \
+         If this is an existing file, you MUST use the Read tool first. \
+         Prefer the Edit tool for modifying existing files — it only sends the diff. \
+         Only use this tool to create new files or for complete rewrites. \
+         NEVER create documentation files (*.md) or README files unless explicitly requested. \
+         Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."
     }
 
     fn to_auto_classifier_input(&self, input: &Value) -> Value {

@@ -17,7 +17,9 @@ impl Tool for SkillTool {
 
     fn description(&self) -> &'static str {
         "Execute a skill (a reusable prompt template loaded from .claude/skills/). \
-         Skills expand into prompts that guide a sub-task. Use /skills to list available ones."
+         Skills expand into prompts that guide a sub-task. Use /skills to list available ones. \
+         Only invoke a skill that appears in the available-skills list or one the user \
+         explicitly typed as a slash command. Never guess or invent skill names."
     }
 
     fn input_schema(&self) -> Value {
