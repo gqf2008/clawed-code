@@ -1176,6 +1176,7 @@ impl App {
             }
             AgentNotification::Error { message, .. } => {
                 self.push_message(MessageContent::System(format!("\u{2717} Error: {message}")));
+                self.mark_done();
             }
             AgentNotification::ModelChanged {
                 model,
