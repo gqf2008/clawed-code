@@ -46,7 +46,7 @@ pub fn render(frame: &mut Frame, area: Rect, is_generating: bool, permission_mod
     if !is_generating && !permission_mode.is_empty() && permission_mode != "default" {
         spans.push(Span::styled(" │ ", sep));
         spans.push(Span::styled(
-            format!("permissions: {permission_mode}"),
+            format!("permissions: {permission_mode} (shift+tab: cycle)"),
             Style::default().fg(Color::Yellow),
         ));
     }
