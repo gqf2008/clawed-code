@@ -257,8 +257,10 @@ impl Settings {
                 debug!("Injecting env from settings: {key}={display_val}");
                 let old = std::env::var(key).ok();
                 previous.push((key.clone(), old));
-                // NOTE: In Rust 2021 edition this is safe; in 2024 edition it becomes
-                // `unsafe`. Callers must ensure this runs single-threaded during init.
+                // NOTE: `std::env::set_var` is a data race if any other thread calls
+                // `std::env::var` concurrently. It is only sound when called strictly
+                // single-threaded (e.g. before the tokio runtime or any worker threads
+                // are spawned). In Rust 2024 edition this requires `unsafe`.
                 std::env::set_var(key, value);
             }
         }

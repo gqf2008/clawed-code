@@ -36,51 +36,60 @@ impl QueryEngine {
 
     /// Undo the last assistant turn and return the user prompt that preceded it.
     ///
-    /// Removes both the last assistant message and the last user message from history.
-    /// Used by `/retry` to resend the last user prompt.
+    /// Removes the entire last turn — including the assistant message, any
+    /// intermediate tool-result user messages, and the original user prompt —
+    /// from history.  Used by `/retry` to resend the last user prompt.
+    ///
+    /// A "turn" may consist of more than a simple user→assistant pair when
+    /// the assistant issued tool calls: the sequence can be
+    /// `User(prompt) → Assistant(tool_use) → User(tool_result) → Assistant(final)`.
+    /// This method correctly identifies the turn boundaries and removes the
+    /// whole block.
     pub async fn pop_last_turn(&self) -> Option<String> {
         let mut s = self.state.write().await;
 
-        // Extract the last user prompt while holding the write lock
-        let prompt = s.messages.iter().rev().find_map(|m| {
-            if let Message::User(u) = m {
-                u.content.iter().find_map(|b| {
-                    if let ContentBlock::Text { text } = b {
-                        Some(text.clone())
-                    } else {
-                        None
-                    }
-                })
-            } else {
-                None
-            }
-        })?;
+        // Find the last assistant message.
+        let assistant_idx = s
+            .messages
+            .iter()
+            .rposition(|m| matches!(m, Message::Assistant(_)))?;
 
-        // Pop messages from the end until we've removed the last assistant + user pair
-        let mut removed_assistant = false;
-        while let Some(last) = s.messages.last() {
-            match last {
-                Message::Assistant(_) if !removed_assistant => {
-                    s.messages.pop();
-                    removed_assistant = true;
+        // Walk backwards from that assistant to find the user message that
+        // starts this turn.  We skip user messages that consist solely of
+        // tool results — those are intermediate responses, not the original
+        // prompt.
+        let user_idx = s.messages[..assistant_idx]
+            .iter()
+            .rposition(|m| {
+                if let Message::User(u) = m {
+                    u.content
+                        .iter()
+                        .any(|b| !matches!(b, ContentBlock::ToolResult { .. }))
+                } else {
+                    false
                 }
-                Message::User(_) if removed_assistant => {
-                    s.messages.pop();
-                    break;
+            })?;
+
+        let prompt = if let Message::User(u) = &s.messages[user_idx] {
+            u.content.iter().find_map(|b| {
+                if let ContentBlock::Text { text } = b {
+                    Some(text.clone())
+                } else {
+                    None
                 }
-                _ if removed_assistant => {
-                    break; // stop if we hit a non-user message
-                }
-                _ => {
-                    s.messages.pop(); // skip tool result messages etc.
-                }
-            }
-        }
+            })
+        } else {
+            None
+        };
+
+        // Drop the entire last turn (prompt + any tool results + assistants).
+        s.messages.truncate(user_idx);
+
         if s.turn_count > 0 {
             s.turn_count -= 1;
         }
 
-        Some(prompt)
+        prompt
     }
 
     /// Rewind the conversation by removing the last `n` turns (user+assistant pairs).

@@ -2,21 +2,29 @@
 //! event bus so the ratatui TUI (or any other bus-connected UI) can handle
 //! them instead of the raw terminal prompt.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use clawed_bus::events::{
     PermissionRequest as BusPermissionRequest, PermissionResponse as BusPermissionResponse,
     RiskLevel,
 };
 use clawed_core::permissions::{PermissionResponse, PermissionSuggestion};
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use uuid::Uuid;
 
 use super::PermissionPrompter;
 
 /// Permission prompter that broadcasts requests through the event bus and
 /// waits for responses from the UI client.
+///
+/// A background task continuously drains the shared `mpsc` response channel
+/// and routes each response to the correct in-flight request via a
+/// per-request `oneshot` channel. This eliminates the need for a global
+/// mutex and allows concurrent permission requests to proceed in parallel.
 pub struct BusPermissionPrompter {
     req_tx: broadcast::Sender<BusPermissionRequest>,
-    resp_rx: Mutex<mpsc::Receiver<BusPermissionResponse>>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<BusPermissionResponse>>>>,
 }
 
 impl BusPermissionPrompter {
@@ -24,14 +32,39 @@ impl BusPermissionPrompter {
     ///
     /// Call [`BusHandle::perm_req_sender()`] and [`BusHandle::take_perm_resp_rx()`]
     /// to obtain the arguments.
+    ///
+    /// This constructor spawns a background task that owns `resp_rx` and
+    /// routes incoming responses to their matching request by `request_id`.
     pub fn new(
         req_tx: broadcast::Sender<BusPermissionRequest>,
-        resp_rx: mpsc::Receiver<BusPermissionResponse>,
+        mut resp_rx: mpsc::Receiver<BusPermissionResponse>,
     ) -> Self {
-        Self {
-            req_tx,
-            resp_rx: Mutex::new(resp_rx),
-        }
+        let pending: Arc<Mutex<HashMap<String, oneshot::Sender<BusPermissionResponse>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let pending_bg = Arc::clone(&pending);
+
+        tokio::spawn(async move {
+            while let Some(resp) = resp_rx.recv().await {
+                let tx = {
+                    let mut map = pending_bg.lock().await;
+                    map.remove(&resp.request_id)
+                };
+                match tx {
+                    Some(tx) => {
+                        let _ = tx.send(resp);
+                    }
+                    None => {
+                        tracing::warn!(
+                            request_id = %resp.request_id,
+                            "BusPermissionPrompter: response for unknown or timed-out request"
+                        );
+                    }
+                }
+            }
+            tracing::debug!("BusPermissionPrompter response router task ended");
+        });
+
+        Self { req_tx, pending }
     }
 }
 
@@ -52,36 +85,24 @@ impl PermissionPrompter for BusPermissionPrompter {
             description: description.to_string(),
         };
 
-        // Hold the lock for the entire send+receive cycle so concurrent
-        // permission requests are serialized. The TUI can only display one
-        // permission dialog at a time; if we broadcast multiple requests
-        // before the first is answered, later ones overwrite `app.permission`
-        // and earlier callers never get a response.
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut map = self.pending.lock().await;
+            map.insert(request_id.clone(), tx);
+        }
+
+        if self.req_tx.send(req).is_err() {
+            let mut map = self.pending.lock().await;
+            map.remove(&request_id);
+            tracing::warn!(
+                "No UI client listening for permission requests; auto-denying"
+            );
+            return PermissionResponse::deny();
+        }
+
         let timeout = std::time::Duration::from_secs(300);
-        let wait = async {
-            let mut rx = self.resp_rx.lock().await;
-
-            // Broadcast to all UI clients (inside lock to prevent interleaving)
-            if self.req_tx.send(req).is_err() {
-                tracing::warn!("No UI client listening for permission requests; auto-denying");
-                return None;
-            }
-
-            while let Some(resp) = rx.recv().await {
-                if resp.request_id == request_id {
-                    return Some(resp);
-                }
-                tracing::warn!(
-                    "BusPermissionPrompter: response for unknown request_id: {}",
-                    resp.request_id,
-                );
-            }
-            None
-        };
-
-        match tokio::time::timeout(timeout, wait).await {
-            Ok(Some(bus_resp)) => {
-                // Convert bus PermissionResponse → core PermissionResponse
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(bus_resp)) => {
                 if bus_resp.granted {
                     if bus_resp.remember {
                         // "Allow Always" → persist to project-local settings so the rule
@@ -102,11 +123,15 @@ impl PermissionPrompter for BusPermissionPrompter {
                     PermissionResponse::deny()
                 }
             }
-            Ok(None) => {
-                tracing::warn!("Permission response channel closed; auto-denying");
+            Ok(Err(_)) => {
+                tracing::warn!("Permission response oneshot dropped; auto-denying");
                 PermissionResponse::deny()
             }
             Err(_) => {
+                // Timeout: remove the stale pending entry so the background
+                // router doesn't warn about it when/if a late response arrives.
+                let mut map = self.pending.lock().await;
+                map.remove(&request_id);
                 tracing::warn!("Permission prompt timed out (bus); auto-denying");
                 PermissionResponse::deny()
             }

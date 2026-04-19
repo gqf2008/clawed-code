@@ -172,9 +172,14 @@ impl Tool for ReplTool {
                     text = format!("(process exited with code {exit_code})");
                 }
 
-                // Truncate very large outputs
+                // Truncate very large outputs — must not split a multi-byte UTF-8
+                // character, which would cause `String::truncate` to panic.
                 if text.len() > 50_000 {
-                    text.truncate(50_000);
+                    let mut truncate_at = 50_000;
+                    while truncate_at > 0 && !text.is_char_boundary(truncate_at) {
+                        truncate_at -= 1;
+                    }
+                    text.truncate(truncate_at);
                     text.push_str("\n... [output truncated at 50KB]");
                 }
 
