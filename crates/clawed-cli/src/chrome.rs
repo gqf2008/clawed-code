@@ -54,7 +54,9 @@ impl ChromiumBrowser {
             let path = match self {
                 ChromiumBrowser::Chrome => base.join("Google/Chrome/NativeMessagingHosts"),
                 ChromiumBrowser::Edge => base.join("Microsoft Edge/NativeMessagingHosts"),
-                ChromiumBrowser::Brave => base.join("BraveSoftware/Brave-Browser/NativeMessagingHosts"),
+                ChromiumBrowser::Brave => {
+                    base.join("BraveSoftware/Brave-Browser/NativeMessagingHosts")
+                }
                 ChromiumBrowser::Opera => base.join("com.operasoftware.Opera/NativeMessagingHosts"),
                 ChromiumBrowser::Arc => base.join("Arc/User Data/NativeMessagingHosts"),
             };
@@ -65,7 +67,9 @@ impl ChromiumBrowser {
             let path = match self {
                 ChromiumBrowser::Chrome => home.join(".config/google-chrome/NativeMessagingHosts"),
                 ChromiumBrowser::Edge => home.join(".config/microsoft-edge/NativeMessagingHosts"),
-                ChromiumBrowser::Brave => home.join(".config/BraveSoftware/Brave-Browser/NativeMessagingHosts"),
+                ChromiumBrowser::Brave => {
+                    home.join(".config/BraveSoftware/Brave-Browser/NativeMessagingHosts")
+                }
                 ChromiumBrowser::Opera => home.join(".config/opera/NativeMessagingHosts"),
                 ChromiumBrowser::Arc => return None, // Arc is macOS-only
             };
@@ -79,13 +83,14 @@ impl ChromiumBrowser {
 
     /// Check whether this browser appears to be installed.
     pub fn is_installed(&self) -> bool {
-        self.native_messaging_dir().is_some_and(|d| d.parent().is_some_and(|p| p.exists()))
+        self.native_messaging_dir()
+            .is_some_and(|d| d.parent().is_some_and(|p| p.exists()))
     }
 }
 
 /// Detect installed Chromium-based browsers.
 pub fn detect_browsers() -> Vec<ChromiumBrowser> {
-    use ChromiumBrowser::{Chrome, Edge, Brave, Opera, Arc};
+    use ChromiumBrowser::{Arc, Brave, Chrome, Edge, Opera};
     [Chrome, Edge, Brave, Opera, Arc]
         .into_iter()
         .filter(|b| b.is_installed())
@@ -113,10 +118,7 @@ impl NativeHostManifest {
             description: "Claude Code Chrome Native Messaging Host".into(),
             path: binary_path.to_string_lossy().to_string(),
             host_type: "stdio".into(),
-            allowed_origins: vec![
-                "chrome-extension://*/".into(),
-                "extension://*/".into(),
-            ],
+            allowed_origins: vec!["chrome-extension://*/".into(), "extension://*/".into()],
         }
     }
 }
@@ -135,7 +137,11 @@ pub fn install_native_host_manifest() -> Result<Vec<(ChromiumBrowser, PathBuf)>>
             let path = dir.join("com.anthropic.clawed.json");
             fs::write(&path, &json)
                 .with_context(|| format!("failed to write {}", path.display()))?;
-            info!("installed NativeMessaging host manifest for {} at {}", browser.app_name(), path.display());
+            info!(
+                "installed NativeMessaging host manifest for {} at {}",
+                browser.app_name(),
+                path.display()
+            );
             installed.push((browser, path));
         }
     }
@@ -154,7 +160,10 @@ pub fn uninstall_native_host_manifest() -> Result<()> {
             let path = dir.join("com.anthropic.clawed.json");
             if path.exists() {
                 fs::remove_file(&path)?;
-                info!("removed NativeMessaging host manifest for {}", browser.app_name());
+                info!(
+                    "removed NativeMessaging host manifest for {}",
+                    browser.app_name()
+                );
             }
         }
     }
@@ -199,8 +208,16 @@ impl ChromeStatus {
         format!(
             "Browsers: {} | Extension: {} | Native host: {}",
             browser_names.join(", "),
-            if self.extension_installed { "installed" } else { "not installed" },
-            if self.native_host_installed { "installed" } else { "not installed" }
+            if self.extension_installed {
+                "installed"
+            } else {
+                "not installed"
+            },
+            if self.native_host_installed {
+                "installed"
+            } else {
+                "not installed"
+            }
         )
     }
 }
@@ -210,28 +227,24 @@ impl ChromeStatus {
 /// Handle the `/chrome` slash command.
 pub fn handle_chrome_command(args: &[&str]) -> String {
     match args.first().copied() {
-        Some("install") | Some("setup") => {
-            match install_native_host_manifest() {
-                Ok(installed) => {
-                    let paths: Vec<_> = installed
-                        .iter()
-                        .map(|(b, p)| format!("  {} → {}", b.app_name(), p.display()))
-                        .collect();
-                    format!(
+        Some("install") | Some("setup") => match install_native_host_manifest() {
+            Ok(installed) => {
+                let paths: Vec<_> = installed
+                    .iter()
+                    .map(|(b, p)| format!("  {} → {}", b.app_name(), p.display()))
+                    .collect();
+                format!(
                         "Chrome Native Messaging host installed.\n\n{}\n\nNext steps:\n1. Install the Chrome extension from {}\n2. Refresh any open Claude Code tabs.",
                         paths.join("\n"),
                         CHROME_EXTENSION_URL
                     )
-                }
-                Err(e) => format!("Failed to install Chrome Native Messaging host: {e}"),
             }
-        }
-        Some("uninstall") | Some("remove") => {
-            match uninstall_native_host_manifest() {
-                Ok(()) => "Chrome Native Messaging host removed.".into(),
-                Err(e) => format!("Failed to remove Chrome Native Messaging host: {e}"),
-            }
-        }
+            Err(e) => format!("Failed to install Chrome Native Messaging host: {e}"),
+        },
+        Some("uninstall") | Some("remove") => match uninstall_native_host_manifest() {
+            Ok(()) => "Chrome Native Messaging host removed.".into(),
+            Err(e) => format!("Failed to remove Chrome Native Messaging host: {e}"),
+        },
         Some("status") | None => {
             let status = ChromeStatus::check();
             format!(
@@ -277,7 +290,7 @@ pub enum ChromeMessage {
 /// Read a single Native Messaging message from stdin (length-prefixed JSON).
 #[allow(dead_code)]
 pub fn read_native_message() -> Result<Option<ChromeMessage>> {
-    use std::io::{Read, stdin};
+    use std::io::{stdin, Read};
 
     let mut len_buf = [0u8; 4];
     let mut handle = stdin().lock();
@@ -300,7 +313,7 @@ pub fn read_native_message() -> Result<Option<ChromeMessage>> {
 /// Write a single Native Messaging message to stdout (length-prefixed JSON).
 #[allow(dead_code)]
 pub fn write_native_message(msg: &ChromeMessage) -> Result<()> {
-    use std::io::{Write, stdout};
+    use std::io::{stdout, Write};
 
     let json = serde_json::to_vec(msg)?;
     let len = json.len() as u32;

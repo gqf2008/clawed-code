@@ -58,7 +58,10 @@ const TELEPORT_RETRY_DELAYS: [Duration; 4] = [
 /// Fetch available CCR environments from the Claude AI API.
 pub async fn list_environments(access_token: &str, org_uuid: &str) -> Result<Vec<Environment>> {
     let base_url = api_base_url();
-    let url = format!("{}/v1/environment_providers", base_url.trim_end_matches('/'));
+    let url = format!(
+        "{}/v1/environment_providers",
+        base_url.trim_end_matches('/')
+    );
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
@@ -83,7 +86,10 @@ pub async fn list_environments(access_token: &str, org_uuid: &str) -> Result<Vec
         );
     }
 
-    let body: EnvironmentListResponse = resp.json().await.context("invalid JSON in environment list response")?;
+    let body: EnvironmentListResponse = resp
+        .json()
+        .await
+        .context("invalid JSON in environment list response")?;
     Ok(body.environments)
 }
 
@@ -114,7 +120,8 @@ pub async fn upload_git_bundle(
     };
 
     let max_bytes = max_bytes.unwrap_or(100 * 1024 * 1024);
-    let bundle_path = std::env::temp_dir().join(format!("clawed-bundle-{}.bundle", uuid::Uuid::new_v4()));
+    let bundle_path =
+        std::env::temp_dir().join(format!("clawed-bundle-{}.bundle", uuid::Uuid::new_v4()));
 
     // 1. Stash WIP if dirty
     let has_wip = git_stash_create(&git_root).await.ok().flatten().is_some();
@@ -128,7 +135,11 @@ pub async fn upload_git_bundle(
     // 3. Upload if successful
     let upload_result = match bundle_result {
         Ok(size) => {
-            debug!("git bundle created: {} bytes at {}", size, bundle_path.display());
+            debug!(
+                "git bundle created: {} bytes at {}",
+                size,
+                bundle_path.display()
+            );
             match upload_bundle_file(access_token, &bundle_path).await {
                 Ok(file_id) => BundleUploadResult {
                     success: true,
@@ -153,7 +164,10 @@ pub async fn upload_git_bundle(
     };
 
     // 4. Cleanup
-    if git_update_ref(&git_root, "refs/seed/stash", "").await.is_ok() {
+    if git_update_ref(&git_root, "refs/seed/stash", "")
+        .await
+        .is_ok()
+    {
         let _ = git_delete_ref(&git_root, "refs/seed/stash").await;
     }
     let _ = tokio::fs::remove_file(&bundle_path).await;
@@ -232,7 +246,10 @@ async fn git_update_ref(git_root: &Path, refname: &str, target: &str) -> Result<
     }
     let output = cmd.output().await?;
     if !output.status.success() {
-        anyhow::bail!("git update-ref failed: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "git update-ref failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     Ok(())
 }
@@ -244,14 +261,27 @@ async fn git_delete_ref(git_root: &Path, refname: &str) -> Result<()> {
         .output()
         .await?;
     if !output.status.success() {
-        anyhow::bail!("git delete-ref failed: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "git delete-ref failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     Ok(())
 }
 
-async fn create_git_bundle(git_root: &Path, bundle_path: &Path, max_bytes: u64, has_stash: bool) -> Result<u64> {
+async fn create_git_bundle(
+    git_root: &Path,
+    bundle_path: &Path,
+    max_bytes: u64,
+    has_stash: bool,
+) -> Result<u64> {
     let bundle_path_str = bundle_path.to_string_lossy().to_string();
-    let mut args = vec!["bundle".to_string(), "create".to_string(), bundle_path_str, "--all".to_string()];
+    let mut args = vec![
+        "bundle".to_string(),
+        "create".to_string(),
+        bundle_path_str,
+        "--all".to_string(),
+    ];
     if has_stash {
         args.push("refs/seed/stash".to_string());
     }
@@ -264,13 +294,20 @@ async fn create_git_bundle(git_root: &Path, bundle_path: &Path, max_bytes: u64, 
         .context("git bundle create failed")?;
 
     if !output.status.success() {
-        anyhow::bail!("git bundle create failed: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "git bundle create failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     let meta = tokio::fs::metadata(bundle_path).await?;
     let size = meta.len();
     if size > max_bytes {
-        anyhow::bail!("git bundle exceeds size limit: {} > {} bytes", size, max_bytes);
+        anyhow::bail!(
+            "git bundle exceeds size limit: {} > {} bytes",
+            size,
+            max_bytes
+        );
     }
     Ok(size)
 }
@@ -294,7 +331,10 @@ async fn upload_bundle_file(access_token: &str, bundle_path: &Path) -> Result<St
         .await?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("file upload failed: {}", resp.text().await.unwrap_or_default());
+        anyhow::bail!(
+            "file upload failed: {}",
+            resp.text().await.unwrap_or_default()
+        );
     }
 
     let json: serde_json::Value = resp.json().await?;

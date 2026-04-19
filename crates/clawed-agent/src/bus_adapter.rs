@@ -874,7 +874,11 @@ mod tests {
                 message: msg,
             }),
             AgentEvent::ToolOutputLine { id, name, line } => {
-                Some(AgentNotification::ToolOutputLine { id, tool_name: name, line })
+                Some(AgentNotification::ToolOutputLine {
+                    id,
+                    tool_name: name,
+                    line,
+                })
             }
         }
     }

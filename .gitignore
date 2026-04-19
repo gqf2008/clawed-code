@@ -11,3 +11,7 @@ target/
 .claude/
 .github/
 graphify-out/
+session-*.json
+session-*.md
+session-*.log
+session-*.jsonl

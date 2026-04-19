@@ -1,10 +1,10 @@
 mod auth;
+mod chrome;
 mod commands;
 mod config;
 mod diff_display;
 mod init;
 mod input;
-mod chrome;
 mod markdown;
 mod native_installer;
 mod output;
@@ -316,16 +316,18 @@ async fn run() -> anyhow::Result<()> {
             .append(true)
             .open(&log_path)
             .unwrap_or_else(|e| {
-                eprintln!("Warning: failed to open log file {}: {}", log_path.display(), e);
+                eprintln!(
+                    "Warning: failed to open log file {}: {}",
+                    log_path.display(),
+                    e
+                );
                 std::process::exit(1);
             });
         tracing_subscriber::fmt()
             .with_writer(move || {
-                log_file
-                    .try_clone()
-                    .unwrap_or_else(|e| {
-                        panic!("failed to clone log file handle: {}", e);
-                    })
+                log_file.try_clone().unwrap_or_else(|e| {
+                    panic!("failed to clone log file handle: {}", e);
+                })
             })
             .with_env_filter(filter)
             .init();
@@ -567,7 +569,8 @@ async fn run() -> anyhow::Result<()> {
                 let mut buf = String::new();
                 std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
                 Ok::<String, std::io::Error>(buf)
-            }).await??;
+            })
+            .await??;
             if stdin_buf.is_empty() {
                 prompt
             } else {
@@ -628,7 +631,8 @@ async fn run() -> anyhow::Result<()> {
             let mut buf = String::new();
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
             Ok::<String, std::io::Error>(buf)
-        }).await??;
+        })
+        .await??;
         let stdin_buf = stdin_buf.trim().to_string();
         if !stdin_buf.is_empty() {
             let task = async {

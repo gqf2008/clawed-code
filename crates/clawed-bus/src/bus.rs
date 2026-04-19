@@ -700,9 +700,7 @@ impl ClientHandle {
     ) -> Result<Option<AgentNotification>, TryRecvNotificationError> {
         match self.notify_rx.try_recv() {
             Ok(event) => Ok(Some(event)),
-            Err(broadcast::error::TryRecvError::Lagged(_)) => {
-                Err(TryRecvNotificationError::Lagged)
-            }
+            Err(broadcast::error::TryRecvError::Lagged(_)) => Err(TryRecvNotificationError::Lagged),
             Err(broadcast::error::TryRecvError::Empty | broadcast::error::TryRecvError::Closed) => {
                 Ok(None)
             }

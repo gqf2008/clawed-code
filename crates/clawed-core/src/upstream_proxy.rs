@@ -62,9 +62,7 @@ pub fn init() -> ProxyState {
     let ca_bundle_path = std::env::var("SSL_CERT_FILE")
         .map(PathBuf::from)
         .ok()
-        .or_else(|| {
-            dirs::home_dir().map(|h| h.join(".ccr").join("ca-bundle.crt"))
-        });
+        .or_else(|| dirs::home_dir().map(|h| h.join(".ccr").join("ca-bundle.crt")));
 
     let state = ProxyState {
         enabled: true,
@@ -90,7 +88,9 @@ pub fn init_with(proxy_url: String, ca_bundle_path: Option<PathBuf>) -> ProxySta
 /// Returns proxy env vars to merge into every child subprocess.
 /// Empty when the proxy is disabled.
 pub fn get_env() -> HashMap<String, String> {
-    let state = crate::sync::lock_or_recover(&STATE).clone().unwrap_or_default();
+    let state = crate::sync::lock_or_recover(&STATE)
+        .clone()
+        .unwrap_or_default();
 
     if !state.enabled {
         return inherit_proxy_env();
@@ -118,7 +118,9 @@ pub fn get_env() -> HashMap<String, String> {
 
 /// Whether the upstream proxy is currently enabled.
 pub fn is_enabled() -> bool {
-    crate::sync::lock_or_recover(&STATE).as_ref().is_some_and(|s| s.enabled)
+    crate::sync::lock_or_recover(&STATE)
+        .as_ref()
+        .is_some_and(|s| s.enabled)
 }
 
 /// Read the CCR session token from the well-known path, if present.
@@ -156,7 +158,11 @@ fn read_token(path: &str) -> Option<String> {
     match std::fs::read_to_string(path) {
         Ok(raw) => {
             let trimmed = raw.trim();
-            if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => {
@@ -214,9 +220,15 @@ mod tests {
 
     #[test]
     fn get_env_returns_proxy_vars_when_enabled() {
-        init_with("http://127.0.0.1:8080".into(), Some(PathBuf::from("/tmp/ca.crt")));
+        init_with(
+            "http://127.0.0.1:8080".into(),
+            Some(PathBuf::from("/tmp/ca.crt")),
+        );
         let env = get_env();
-        assert_eq!(env.get("HTTPS_PROXY"), Some(&"http://127.0.0.1:8080".to_string()));
+        assert_eq!(
+            env.get("HTTPS_PROXY"),
+            Some(&"http://127.0.0.1:8080".to_string())
+        );
         assert!(env.contains_key("NO_PROXY"));
         assert_eq!(env.get("SSL_CERT_FILE"), Some(&"/tmp/ca.crt".to_string()));
     }

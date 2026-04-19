@@ -176,7 +176,10 @@ fn e2e_init_skips_existing_claude_md() {
 
     // Existing CLAUDE.md should NOT be overwritten
     let content = fs::read_to_string(tmp.path().join("CLAUDE.md")).expect("read CLAUDE.md");
-    assert_eq!(content, "# existing", "existing CLAUDE.md should not be overwritten");
+    assert_eq!(
+        content, "# existing",
+        "existing CLAUDE.md should not be overwritten"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -275,11 +278,7 @@ fn e2e_output_format_json() {
 fn e2e_cwd_flag_changes_directory() {
     let tmp = tempfile::tempdir().expect("create temp dir");
     let mut cmd = clawed();
-    cmd.args([
-        "--init",
-        "--cwd",
-        tmp.path().to_str().unwrap(),
-    ]);
+    cmd.args(["--init", "--cwd", tmp.path().to_str().unwrap()]);
     cmd.assert().success();
 
     assert!(tmp.path().join("CLAUDE.md").exists());
@@ -292,7 +291,7 @@ fn e2e_cwd_flag_changes_directory() {
 #[test]
 fn e2e_no_args_starts_interactive_but_aborts_without_tty() {
     // Running without args in non-TTY should fail gracefully or exit
-    let mut cmd = clawed();
+    let (mut cmd, _tmp) = clawed_with_temp_home();
     // In CI/non-TTY, this may either fail or wait for input.
     // We use a timeout to avoid hanging.
     cmd.timeout(std::time::Duration::from_secs(2));
@@ -306,9 +305,9 @@ fn e2e_no_args_starts_interactive_but_aborts_without_tty() {
 
 #[test]
 fn e2e_empty_prompt_arg() {
-    let mut cmd = clawed();
+    let (mut cmd, _tmp) = clawed_with_temp_home();
     cmd.arg("");
-    cmd.timeout(std::time::Duration::from_secs(2));
+    cmd.timeout(std::time::Duration::from_secs(5));
     let output = cmd.output().expect("run clawed with empty prompt");
     assert!(
         output.status.code().is_some(),

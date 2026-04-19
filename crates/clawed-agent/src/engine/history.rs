@@ -58,17 +58,15 @@ impl QueryEngine {
         // starts this turn.  We skip user messages that consist solely of
         // tool results — those are intermediate responses, not the original
         // prompt.
-        let user_idx = s.messages[..assistant_idx]
-            .iter()
-            .rposition(|m| {
-                if let Message::User(u) = m {
-                    u.content
-                        .iter()
-                        .any(|b| !matches!(b, ContentBlock::ToolResult { .. }))
-                } else {
-                    false
-                }
-            })?;
+        let user_idx = s.messages[..assistant_idx].iter().rposition(|m| {
+            if let Message::User(u) = m {
+                u.content
+                    .iter()
+                    .any(|b| !matches!(b, ContentBlock::ToolResult { .. }))
+            } else {
+                false
+            }
+        })?;
 
         let prompt = if let Message::User(u) = &s.messages[user_idx] {
             u.content.iter().find_map(|b| {

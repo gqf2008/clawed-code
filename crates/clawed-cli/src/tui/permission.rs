@@ -429,7 +429,11 @@ mod tests {
         let header = line_text(&lines[0]);
         assert!(header.contains("Input"));
         // At least one JSON line should contain the command key
-        let body: String = lines[1..].iter().map(line_text).collect::<Vec<_>>().join("\n");
+        let body: String = lines[1..]
+            .iter()
+            .map(line_text)
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(body.contains("command"));
         assert!(body.contains("rm -rf /tmp/foo"));
     }

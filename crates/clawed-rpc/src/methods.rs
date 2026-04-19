@@ -1171,6 +1171,7 @@ mod tests {
     #[test]
     fn validate_mcp_command_with_path() {
         assert!(validate_mcp_command("/usr/bin/node").is_ok());
+        #[cfg(windows)]
         assert!(validate_mcp_command("C:\\Program Files\\node.exe").is_ok());
     }
 

@@ -94,9 +94,7 @@ impl PermissionPrompter for BusPermissionPrompter {
         if self.req_tx.send(req).is_err() {
             let mut map = self.pending.lock().await;
             map.remove(&request_id);
-            tracing::warn!(
-                "No UI client listening for permission requests; auto-denying"
-            );
+            tracing::warn!("No UI client listening for permission requests; auto-denying");
             return PermissionResponse::deny();
         }
 

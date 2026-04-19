@@ -5,12 +5,12 @@
 //! Auth is handled in-process: the OAuth access token is loaded from the
 //! existing `~/.claude/oauth_token.json` storage and never exposed to the shell.
 
-use async_trait::async_trait;
-use std::path::PathBuf;
 use anyhow::Context;
+use async_trait::async_trait;
 use clawed_core::tool::{Tool, ToolCategory, ToolContext, ToolResult};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::path::PathBuf;
 use tracing::{debug, warn};
 
 const TRIGGERS_BETA: &str = "ccr-triggers-2026-01-30";
@@ -26,8 +26,7 @@ pub struct RemoteTriggerTool;
 impl RemoteTriggerTool {
     fn base_api_url() -> String {
         // Default to the public Claude AI API; override via env for testing/enterprise.
-        std::env::var("CLAUDE_API_BASE_URL")
-            .unwrap_or_else(|_| "https://api.claude.ai".to_string())
+        std::env::var("CLAUDE_API_BASE_URL").unwrap_or_else(|_| "https://api.claude.ai".to_string())
     }
 
     fn token_path() -> PathBuf {

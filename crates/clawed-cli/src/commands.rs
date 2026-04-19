@@ -351,9 +351,7 @@ impl SlashCommand {
             },
             Self::History { page } => CommandResult::History { page: *page },
             Self::Retry => CommandResult::Retry,
-            Self::Version => {
-                CommandResult::Print(format!("clawed v{}", env!("CARGO_PKG_VERSION")))
-            }
+            Self::Version => CommandResult::Print(format!("clawed v{}", env!("CARGO_PKG_VERSION"))),
             Self::Login => CommandResult::Login,
             Self::Logout => CommandResult::Logout,
             Self::Context => CommandResult::Context,

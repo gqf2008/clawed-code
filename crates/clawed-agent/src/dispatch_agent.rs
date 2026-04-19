@@ -616,7 +616,12 @@ impl Tool for DispatchAgentTool {
                 AgentEvent::TextDelta(text) => output.push_str(&text),
                 AgentEvent::ToolUseStart { name, .. } => {
                     tool_count += 1;
-                    info!("Sub-agent [{}] tool: {} (turn {})", agent_label, name, turn + 1);
+                    info!(
+                        "Sub-agent [{}] tool: {} (turn {})",
+                        agent_label,
+                        name,
+                        turn + 1
+                    );
                 }
                 AgentEvent::TurnComplete { .. } => {
                     turn += 1;

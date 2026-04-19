@@ -711,7 +711,11 @@ pub async fn run(
                                             text.len()
                                         ),
                                         Err(e) => {
-                                            eprintln!("{}Copy failed: {}\x1b[0m", theme::c_err(), e);
+                                            eprintln!(
+                                                "{}Copy failed: {}\x1b[0m",
+                                                theme::c_err(),
+                                                e
+                                            );
                                         }
                                     }
                                 } else {

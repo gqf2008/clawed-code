@@ -58,8 +58,12 @@ impl KeyringStorage {
     }
 
     fn entry(&self) -> Result<keyring::Entry> {
-        keyring::Entry::new(&self.service, &self.account)
-            .with_context(|| format!("failed to open keyring entry for {}/{}", self.service, self.account))
+        keyring::Entry::new(&self.service, &self.account).with_context(|| {
+            format!(
+                "failed to open keyring entry for {}/{}",
+                self.service, self.account
+            )
+        })
     }
 }
 
@@ -87,10 +91,16 @@ impl SecureStorage for KeyringStorage {
     fn write(&self, data: &SecureStorageData) -> Result<()> {
         let json = serde_json::to_string(data).context("failed to serialize credentials")?;
         let entry = self.entry()?;
-        entry
-            .set_password(&json)
-            .with_context(|| format!("failed to write keyring entry for {}/{}", self.service, self.account))?;
-        debug!("keyring entry updated for {}/{}", self.service, self.account);
+        entry.set_password(&json).with_context(|| {
+            format!(
+                "failed to write keyring entry for {}/{}",
+                self.service, self.account
+            )
+        })?;
+        debug!(
+            "keyring entry updated for {}/{}",
+            self.service, self.account
+        );
         Ok(())
     }
 
@@ -98,7 +108,10 @@ impl SecureStorage for KeyringStorage {
         let entry = self.entry()?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => {
-                debug!("keyring entry deleted for {}/{}", self.service, self.account);
+                debug!(
+                    "keyring entry deleted for {}/{}",
+                    self.service, self.account
+                );
                 Ok(())
             }
             Err(e) => Err(anyhow::Error::from(e).context("keyring delete failed")),
@@ -138,8 +151,8 @@ impl SecureStorage for PlaintextStorage {
     fn read(&self) -> Result<Option<SecureStorageData>> {
         match fs::read_to_string(&self.path) {
             Ok(contents) => {
-                let data: SecureStorageData =
-                    serde_json::from_str(&contents).context("credentials file contains invalid JSON")?;
+                let data: SecureStorageData = serde_json::from_str(&contents)
+                    .context("credentials file contains invalid JSON")?;
                 Ok(Some(data))
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -148,12 +161,17 @@ impl SecureStorage for PlaintextStorage {
     }
 
     fn write(&self, data: &SecureStorageData) -> Result<()> {
-        let dir = self.path.parent().context("credentials path has no parent directory")?;
-        fs::create_dir_all(dir).with_context(|| format!("failed to create directory {}", dir.display()))?;
+        let dir = self
+            .path
+            .parent()
+            .context("credentials path has no parent directory")?;
+        fs::create_dir_all(dir)
+            .with_context(|| format!("failed to create directory {}", dir.display()))?;
 
         let json = serde_json::to_string_pretty(data).context("failed to serialize credentials")?;
-        let mut file = fs::File::create(&self.path)
-            .with_context(|| format!("failed to create credentials file {}", self.path.display()))?;
+        let mut file = fs::File::create(&self.path).with_context(|| {
+            format!("failed to create credentials file {}", self.path.display())
+        })?;
 
         #[cfg(unix)]
         {
@@ -166,7 +184,10 @@ impl SecureStorage for PlaintextStorage {
         file.write_all(json.as_bytes())
             .with_context(|| format!("failed to write credentials file {}", self.path.display()))?;
 
-        warn!("credentials stored in plaintext at {} — consider using keyring storage", self.path.display());
+        warn!(
+            "credentials stored in plaintext at {} — consider using keyring storage",
+            self.path.display()
+        );
         Ok(())
     }
 
@@ -198,7 +219,11 @@ impl FallbackStorage {
 
 impl SecureStorage for FallbackStorage {
     fn name(&self) -> String {
-        format!("{}-with-{}-fallback", self.primary.name(), self.secondary.name())
+        format!(
+            "{}-with-{}-fallback",
+            self.primary.name(),
+            self.secondary.name()
+        )
     }
 
     fn read(&self) -> Result<Option<SecureStorageData>> {
@@ -206,7 +231,10 @@ impl SecureStorage for FallbackStorage {
             Ok(Some(data)) => Ok(Some(data)),
             Ok(None) => self.secondary.read(),
             Err(e) => {
-                warn!("primary storage {} read failed: {e}, trying fallback", self.primary.name());
+                warn!(
+                    "primary storage {} read failed: {e}, trying fallback",
+                    self.primary.name()
+                );
                 self.secondary.read()
             }
         }
@@ -254,7 +282,10 @@ impl SecureStorage for FallbackStorage {
 pub fn default_storage() -> Result<Box<dyn SecureStorage>> {
     let keyring = KeyringStorage::new("clawed-code", whoami::username());
     let plaintext = PlaintextStorage::new_default()?;
-    Ok(Box::new(FallbackStorage::new(Box::new(keyring), Box::new(plaintext))))
+    Ok(Box::new(FallbackStorage::new(
+        Box::new(keyring),
+        Box::new(plaintext),
+    )))
 }
 
 // ── Convenience API ─────────────────────────────────────────────────────────

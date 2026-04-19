@@ -217,11 +217,7 @@ impl Message {
 
     /// Append a live output line to the ToolExecution message.
     pub fn append_tool_output_line(&mut self, line: String) {
-        if let MessageContent::ToolExecution {
-            output_lines,
-            ..
-        } = &mut self.content
-        {
+        if let MessageContent::ToolExecution { output_lines, .. } = &mut self.content {
             output_lines.push(line);
             // Keep only last 5 lines
             if output_lines.len() > 5 {
@@ -273,14 +269,17 @@ impl Message {
         lines
     }
 
-    fn render_lines(&self, has_sibling_after: bool, live_duration_ms: Option<u64>) -> Vec<Line<'static>> {
+    fn render_lines(
+        &self,
+        has_sibling_after: bool,
+        live_duration_ms: Option<u64>,
+    ) -> Vec<Line<'static>> {
         match &self.content {
             MessageContent::UserInput(text) => {
                 let prefix_style = Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD);
-                let text_style = Style::default()
-                    .add_modifier(Modifier::BOLD);
+                let text_style = Style::default().add_modifier(Modifier::BOLD);
                 let mut lines = vec![Line::from("")];
                 for (i, part) in text.split('\n').enumerate() {
                     let prefix = if i == 0 { "\u{276F} " } else { "  " };
@@ -306,9 +305,7 @@ impl Message {
                     .map(|l| {
                         Line::styled(
                             format!("│ {l}"),
-                            Style::default()
-                                .fg(MUTED)
-                                .add_modifier(Modifier::ITALIC),
+                            Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
                         )
                     })
                     .collect()
@@ -348,7 +345,11 @@ impl Message {
         // ── Tree indent based on depth ──
         let indent = "  ".repeat(ctx.depth as usize);
         let child_prefix = if ctx.depth > 0 {
-            if ctx.has_sibling_after { "├─ " } else { "└─ " }
+            if ctx.has_sibling_after {
+                "├─ "
+            } else {
+                "└─ "
+            }
         } else {
             ""
         };
@@ -364,7 +365,11 @@ impl Message {
             format!("{indent}{child_prefix}"),
             Style::default().fg(MUTED),
         ));
-        let bullet_color = if ctx.is_error { Color::Red } else { Color::Green };
+        let bullet_color = if ctx.is_error {
+            Color::Red
+        } else {
+            Color::Green
+        };
         header_spans.push(Span::styled("● ", Style::default().fg(bullet_color)));
         header_spans.push(Span::styled(
             ctx.name.to_string(),
@@ -400,7 +405,11 @@ impl Message {
             } else {
                 format!("{}ms", d)
             };
-            let marker = if ctx.duration_ms > 0 && !ctx.is_error { "✓ " } else { "" };
+            let marker = if ctx.duration_ms > 0 && !ctx.is_error {
+                "✓ "
+            } else {
+                ""
+            };
             lines.push(Line::styled(
                 format!("{output_indent}{marker}({})", dur),
                 Style::default().fg(MUTED),
@@ -428,7 +437,10 @@ impl Message {
                     }
                     if total > 5 {
                         lines.push(Line::styled(
-                            format!("{output_indent}+ {} more lines (Ctrl+O to expand)", total - 5),
+                            format!(
+                                "{output_indent}+ {} more lines (Ctrl+O to expand)",
+                                total - 5
+                            ),
                             Style::default().fg(MUTED),
                         ));
                     }
@@ -556,7 +568,13 @@ mod tests {
         });
         msg.collapsed = true;
         let lines = msg.to_lines_with_context(false, None);
-        let last_text: String = lines.last().unwrap().spans.iter().map(|s| s.content.as_ref()).collect();
+        let last_text: String = lines
+            .last()
+            .unwrap()
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
         assert!(last_text.contains("+ 6 more lines"));
         assert!(last_text.contains("Ctrl+O to expand"));
     }

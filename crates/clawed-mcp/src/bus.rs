@@ -319,9 +319,13 @@ mod tests {
     #[tokio::test]
     async fn discover_and_load_no_configs() {
         let adapter = McpBusAdapter::new(McpManager::new());
-        let dir = std::env::temp_dir().join("mcp_test_no_configs");
-        std::fs::create_dir_all(&dir).ok();
-        let notifications = adapter.discover_and_load(&dir).await.unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        // Isolate from user-level MCP configs in ~/.claude/
+        let _home_guard = std::env::var("HOME").ok().map(|original| {
+            std::env::set_var("HOME", tmp.path());
+            original
+        });
+        let notifications = adapter.discover_and_load(tmp.path()).await.unwrap();
         assert!(notifications.is_empty());
     }
 

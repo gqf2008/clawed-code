@@ -55,8 +55,13 @@ pub fn install() -> Result<InstallReport> {
     let _lock = acquire_lock(&lock_path, &version)?;
 
     // Copy binary
-    fs::copy(&current_exe, &versioned)
-        .with_context(|| format!("failed to copy {} → {}", current_exe.display(), versioned.display()))?;
+    fs::copy(&current_exe, &versioned).with_context(|| {
+        format!(
+            "failed to copy {} → {}",
+            current_exe.display(),
+            versioned.display()
+        )
+    })?;
 
     #[cfg(unix)]
     {
@@ -146,9 +151,15 @@ pub fn check_install() -> InstallStatus {
     let version = get_version_from_binary(&target).ok();
 
     if on_path {
-        InstallStatus::Installed { path: target, version }
+        InstallStatus::Installed {
+            path: target,
+            version,
+        }
     } else {
-        InstallStatus::InstalledButNotOnPath { path: target, version }
+        InstallStatus::InstalledButNotOnPath {
+            path: target,
+            version,
+        }
     }
 }
 
@@ -164,8 +175,14 @@ pub struct InstallReport {
 #[derive(Debug)]
 pub enum InstallStatus {
     NotInstalled,
-    Installed { path: PathBuf, version: Option<String> },
-    InstalledButNotOnPath { path: PathBuf, version: Option<String> },
+    Installed {
+        path: PathBuf,
+        version: Option<String>,
+    },
+    InstalledButNotOnPath {
+        path: PathBuf,
+        version: Option<String>,
+    },
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────────
@@ -264,7 +281,9 @@ fn cleanup_old_versions(bin_dir: &Path, current_version: &str) -> Result<()> {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with(&format!("{}-", BINARY_NAME)) && !name.ends_with(".lock") {
-                let ver = name.trim_start_matches(&format!("{}-", BINARY_NAME)).to_string();
+                let ver = name
+                    .trim_start_matches(&format!("{}-", BINARY_NAME))
+                    .to_string();
                 versions.push((ver, entry.path()));
             }
         }
@@ -300,7 +319,9 @@ fn check_shell_path(bin_dir: &Path) -> Option<String> {
 
     if config_file.exists() {
         if let Ok(contents) = fs::read_to_string(&config_file) {
-            if contents.contains(&path_entry) || contents.contains(&bin_dir.to_string_lossy().to_string()) {
+            if contents.contains(&path_entry)
+                || contents.contains(&bin_dir.to_string_lossy().to_string())
+            {
                 return None; // Already configured
             }
         }
@@ -324,7 +345,10 @@ mod tests {
     #[test]
     fn version_lock_path_format() {
         let p = PathBuf::from("/tmp/clawed-v1.0.0");
-        assert_eq!(version_lock_path(&p), PathBuf::from("/tmp/clawed-v1.0.0.lock"));
+        assert_eq!(
+            version_lock_path(&p),
+            PathBuf::from("/tmp/clawed-v1.0.0.lock")
+        );
     }
 
     #[test]

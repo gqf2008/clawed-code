@@ -52,10 +52,12 @@ impl MigrationRunner {
     /// Load from an explicit state file path (useful for tests).
     pub fn load_from(state_path: PathBuf) -> Result<Self> {
         let state = if state_path.exists() {
-            let contents = fs::read_to_string(&state_path)
-                .with_context(|| format!("failed to read migration state {}", state_path.display()))?;
-            serde_json::from_str(&contents)
-                .with_context(|| format!("invalid migration state JSON in {}", state_path.display()))?
+            let contents = fs::read_to_string(&state_path).with_context(|| {
+                format!("failed to read migration state {}", state_path.display())
+            })?;
+            serde_json::from_str(&contents).with_context(|| {
+                format!("invalid migration state JSON in {}", state_path.display())
+            })?
         } else {
             MigrationState::default()
         };
@@ -123,11 +125,18 @@ impl MigrationRunner {
     }
 
     fn save_state(&self) -> Result<()> {
-        let dir = self.state_path.parent().context("migration state path has no parent")?;
+        let dir = self
+            .state_path
+            .parent()
+            .context("migration state path has no parent")?;
         fs::create_dir_all(dir)?;
         let json = serde_json::to_string_pretty(&self.state)?;
-        fs::write(&self.state_path, json)
-            .with_context(|| format!("failed to write migration state {}", self.state_path.display()))?;
+        fs::write(&self.state_path, json).with_context(|| {
+            format!(
+                "failed to write migration state {}",
+                self.state_path.display()
+            )
+        })?;
         Ok(())
     }
 
@@ -189,9 +198,13 @@ impl Migration for MigrateLegacyOAuthTokenFilename {
             let legacy = claude_dir.join(name);
             let current = claude_dir.join("oauth_token.json");
             if legacy.exists() && !current.exists() {
-                fs::rename(&legacy, &current)
-                    .with_context(|| format!("failed to rename {} to oauth_token.json", legacy.display()))?;
-                info!("renamed legacy token file {} → oauth_token.json", legacy.display());
+                fs::rename(&legacy, &current).with_context(|| {
+                    format!("failed to rename {} to oauth_token.json", legacy.display())
+                })?;
+                info!(
+                    "renamed legacy token file {} → oauth_token.json",
+                    legacy.display()
+                );
             }
         }
         Ok(())
@@ -341,7 +354,11 @@ mod tests {
         for v in [3, 1, 2] {
             let o = order.clone();
             let name = format!("m{v}");
-            runner.register(Box::new(OrderedMigration { name: name.clone(), version: v, order: o }));
+            runner.register(Box::new(OrderedMigration {
+                name: name.clone(),
+                version: v,
+                order: o,
+            }));
         }
 
         let executed = runner.run_pending().unwrap();

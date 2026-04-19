@@ -12,7 +12,8 @@ pub const MAX_TOOL_OUTPUT_SIZE: usize = 30 * 1024;
 pub const MAX_TOOL_OUTPUT_LINES: usize = 2000;
 
 /// Cache for find_project_root results — avoids repeated git process spawns.
-static PROJECT_ROOT_CACHE: std::sync::Mutex<Option<(PathBuf, Option<PathBuf>)>> = std::sync::Mutex::new(None);
+static PROJECT_ROOT_CACHE: std::sync::Mutex<Option<(PathBuf, Option<PathBuf>)>> =
+    std::sync::Mutex::new(None);
 
 /// Resolve a user-supplied file path relative to cwd.
 ///
@@ -88,9 +89,7 @@ fn normalize_path(path: &Path) -> PathBuf {
 /// Find the git root directory (cached per cwd to avoid repeated process spawns).
 fn find_project_root(cwd: &Path) -> Option<PathBuf> {
     // Check cache first (recover from poison so the cache remains usable)
-    let guard = PROJECT_ROOT_CACHE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let guard = PROJECT_ROOT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((cached_cwd, cached_root)) = guard.as_ref() {
         if cached_cwd == cwd {
             return cached_root.clone();
@@ -114,9 +113,7 @@ fn find_project_root(cwd: &Path) -> Option<PathBuf> {
         });
 
     // Update cache (recover from poison)
-    let mut guard = PROJECT_ROOT_CACHE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut guard = PROJECT_ROOT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     *guard = Some((cwd.to_path_buf(), result.clone()));
 
     result

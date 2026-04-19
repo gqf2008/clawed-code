@@ -278,7 +278,8 @@ async fn flush_buffer(buffer: &mut Vec<QueuedEntry>, state: &Arc<Mutex<WriteQueu
                 }
             }
         }
-    }).await;
+    })
+    .await;
 
     // Update stats
     {

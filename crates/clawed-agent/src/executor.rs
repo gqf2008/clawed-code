@@ -59,7 +59,10 @@ impl ToolExecutor {
 
     /// Set the channel for streaming tool output lines during execution.
     pub fn set_output_tx(&self, tx: tokio::sync::mpsc::UnboundedSender<(String, String, String)>) {
-        *self.output_tx.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(tx));
+        *self
+            .output_tx
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(tx));
     }
 
     /// Set the session ID for audit logging.
@@ -296,7 +299,12 @@ impl ToolExecutor {
         // If the executor has an output_tx channel, create a callback that sends
         // (tool_use_id, tool_name, line) so the query loop can yield ToolOutputLine events.
         let mut ctx = context.clone();
-        if let Some(tx) = self.output_tx.read().unwrap_or_else(|poisoned| poisoned.into_inner()).as_ref() {
+        if let Some(tx) = self
+            .output_tx
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+        {
             let id = tool_use_id.to_string();
             let tname = tool_name.to_string();
             let tx = Arc::clone(tx);
@@ -913,21 +921,32 @@ mod tests {
 
         // Run a command that produces multi-line output
         let result = executor
-            .execute("t1", "Bash", json!({"command": "echo line1\necho line2\necho line3"}), &ctx)
+            .execute(
+                "t1",
+                "Bash",
+                json!({"command": "echo line1\necho line2\necho line3"}),
+                &ctx,
+            )
             .await;
 
         // Verify the result is correct
         let text = match result {
-            ContentBlock::ToolResult { content, .. } => {
-                content.first().and_then(|c| {
+            ContentBlock::ToolResult { content, .. } => content
+                .first()
+                .and_then(|c| {
                     if let ToolResultContent::Text { text } = c {
                         Some(text.clone())
-                    } else { None }
-                }).unwrap_or_default()
-            }
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default(),
             _ => String::new(),
         };
-        assert!(text.contains("line1"), "expected line1 in result, got: {text}");
+        assert!(
+            text.contains("line1"),
+            "expected line1 in result, got: {text}"
+        );
 
         // Verify streaming lines were sent through the channel
         let mut lines = Vec::new();
