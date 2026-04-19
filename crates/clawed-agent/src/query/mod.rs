@@ -400,6 +400,11 @@ pub fn query_stream_with_injection(
                             yield AgentEvent::Error(format!("{}: {}", error.error_type, error.message));
                             break;
                         }
+                        StreamEvent::MessageStop => {
+                            // End-of-message marker — no action needed here.
+                            // The stop_reason was already captured in MessageDelta;
+                            // the stream will close naturally on the next iteration.
+                        }
                         _ => {}
                     },
                     Err(e) => {

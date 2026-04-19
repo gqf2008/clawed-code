@@ -4,7 +4,9 @@ use std::pin::Pin;
 use std::time::Duration;
 
 /// Default idle timeout for SSE streams (90 seconds).
-pub const DEFAULT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+/// 60s catches stalled streams quickly without false-triggering on normal
+/// extended-thinking gaps (thinking deltas arrive well within this window).
+pub const DEFAULT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Stall warning threshold — log a warning if no data received for this long.
 pub const STALL_WARNING_THRESHOLD: Duration = Duration::from_secs(30);
@@ -309,7 +311,7 @@ mod tests {
     #[test]
     fn watchdog_config_default() {
         let c = StreamWatchdogConfig::default();
-        assert_eq!(c.idle_timeout, Duration::from_secs(90));
+        assert_eq!(c.idle_timeout, Duration::from_secs(60));
         assert_eq!(c.stall_warning, Duration::from_secs(30));
     }
 

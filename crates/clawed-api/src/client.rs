@@ -33,6 +33,11 @@ impl ApiClient {
             .user_agent("Claude-Code-RS/0.1")
             // Title-case headers (e.g. Content-Type) for maximum proxy compatibility
             .http1_title_case_headers()
+            // Detect dead connections quickly — prevents streams from hanging
+            // indefinitely when the server stops sending data but keeps the
+            // TCP socket open (e.g. HTTP/2 PING frames or proxy keepalives).
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .tcp_keepalive(std::time::Duration::from_secs(30))
             .build()
             .unwrap_or_else(|e| {
                 tracing::warn!(
@@ -320,7 +325,9 @@ impl ApiClient {
             use futures::StreamExt;
             let mut byte_stream = response.bytes_stream();
             let mut buffer = String::new();
-            let chunk_timeout = std::time::Duration::from_secs(90);
+            // 60s is aggressive enough to detect stalled streams quickly, while
+            // still accommodating normal inter-event gaps (e.g. extended thinking).
+            let chunk_timeout = std::time::Duration::from_secs(60);
 
             loop {
                 match tokio::time::timeout(chunk_timeout, byte_stream.next()).await {

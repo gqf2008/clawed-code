@@ -2345,6 +2345,28 @@ pub async fn run_tui(
         // Advance the spinner on a fixed cadence, but only redraw when it actually changes.
         app.advance_spinner_if_due(Instant::now());
 
+        // Safety net: if generation has been active for an unreasonably long
+        // time without receiving TurnComplete, force recovery so the UI doesn't
+        // stay stuck forever. This catches edge cases where the API stream
+        // hangs without triggering the idle watchdog (e.g. keep-alive pings
+        // from a proxy resetting the timeout indefinitely).
+        const MAX_GENERATION_SECONDS: u64 = 1800; // 30 minutes
+        if app.is_generating {
+            if let Some(since) = app.status.generating_since {
+                if since.elapsed().as_secs() > MAX_GENERATION_SECONDS {
+                    tracing::warn!(
+                        "Force-recovering from stalled generation after {}s",
+                        since.elapsed().as_secs()
+                    );
+                    app.mark_done();
+                    app.push_message(MessageContent::System(
+                        "[Auto-recovered: API stream stalled. You can retry your request.]"
+                            .to_string(),
+                    ));
+                }
+            }
+        }
+
         // Detect any layout geometry change that can leave ghost cells behind in
         // non-alternate-screen mode: overlays, permission footer, queue rows,
         // input growth/shrink, task-plan height changes, bottom bar toggles, etc.
@@ -2755,15 +2777,18 @@ fn submit_queued_inputs(client: &ClientHandle, app: &mut App) {
     }
 }
 
-fn git_status_porcelain(cwd: &std::path::Path) -> String {
-    std::process::Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(cwd)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .unwrap_or_default()
+async fn git_status_porcelain(cwd: &std::path::Path) -> String {
+    let cwd = cwd.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(&cwd)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .unwrap_or_default()
+    }).await.unwrap_or_default()
 }
 
 async fn handle_pending_workflow(client: &ClientHandle, app: &mut App) -> bool {
@@ -2773,7 +2798,7 @@ async fn handle_pending_workflow(client: &ClientHandle, app: &mut App) -> bool {
             user_message,
             baseline_status,
         }) => {
-            let new_status = git_status_porcelain(&cwd);
+            let new_status = git_status_porcelain(&cwd).await;
             if new_status == baseline_status {
                 app.push_message(MessageContent::System(
                     "提交似乎未完成，中止工作流。".to_string(),
@@ -2883,12 +2908,14 @@ async fn handle_async_command(
     match cmd {
         CommandResult::Diff => {
             let cwd = std::env::current_dir().unwrap_or_default();
-            match std::process::Command::new("git")
-                .args(["diff", "--stat", "--no-color"])
-                .current_dir(&cwd)
-                .output()
-            {
-                Ok(out) => {
+            let result = tokio::task::spawn_blocking(move || {
+                std::process::Command::new("git")
+                    .args(["diff", "--stat", "--no-color"])
+                    .current_dir(&cwd)
+                    .output()
+            }).await;
+            match result {
+                Ok(Ok(out)) => {
                     let text = String::from_utf8_lossy(&out.stdout);
                     if text.trim().is_empty() {
                         app.push_message(MessageContent::System(
@@ -2898,8 +2925,11 @@ async fn handle_async_command(
                         app.push_message(MessageContent::System(text.to_string()));
                     }
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     app.push_message(MessageContent::System(format!("git diff failed: {e}")));
+                }
+                Err(e) => {
+                    app.push_message(MessageContent::System(format!("git diff task failed: {e}")));
                 }
             }
         }
@@ -3005,15 +3035,21 @@ async fn handle_async_command(
             drop(state);
             let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
             let filename = format!("claude-session-{ts}.md");
-            match std::fs::write(&filename, &md) {
-                Ok(()) => {
+            let md_clone = md.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                std::fs::write(&filename, &md_clone).map(|_| (filename, md_clone.len()))
+            }).await;
+            match result {
+                Ok(Ok((filename, len))) => {
                     app.push_message(MessageContent::System(format!(
-                        "✓ Session exported to {filename} ({} bytes)",
-                        md.len(),
+                        "✓ Session exported to {filename} ({len} bytes)",
                     )));
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     app.push_message(MessageContent::System(format!("Export failed: {e}")));
+                }
+                Err(e) => {
+                    app.push_message(MessageContent::System(format!("Export task failed: {e}")));
                 }
             }
         }
@@ -3049,12 +3085,19 @@ async fn handle_async_command(
             let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
             let ext = if fmt == "json" { "json" } else { "md" };
             let filename = format!("session-export-{ts}.{ext}");
-            match std::fs::write(&filename, &content) {
-                Ok(()) => {
+            let content_clone = content.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                std::fs::write(&filename, &content_clone).map(|_| filename)
+            }).await;
+            match result {
+                Ok(Ok(filename)) => {
                     app.push_message(MessageContent::System(format!("✓ Exported to {filename}",)));
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     app.push_message(MessageContent::System(format!("Export failed: {e}")));
+                }
+                Err(e) => {
+                    app.push_message(MessageContent::System(format!("Export task failed: {e}")));
                 }
             }
         }
@@ -3129,38 +3172,48 @@ async fn handle_async_command(
         }
         CommandResult::Files { pattern } => {
             let cwd = std::env::current_dir().unwrap_or_default();
-            match std::fs::read_dir(&cwd) {
-                Ok(entries) => {
-                    let mut items: Vec<_> = entries
-                        .flatten()
-                        .filter(|e| {
-                            pattern.is_empty()
-                                || e.file_name().to_string_lossy().contains(pattern.as_str())
-                        })
-                        .collect();
-                    items.sort_by_key(std::fs::DirEntry::file_name);
-                    let mut lines = String::new();
-                    for entry in &items {
-                        let name = entry.file_name();
-                        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                        if is_dir {
-                            lines.push_str(&format!("  {}/\n", name.to_string_lossy()));
-                        } else {
-                            lines.push_str(&format!("  {}\n", name.to_string_lossy()));
-                        }
+            let pattern2 = pattern.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                let entries = std::fs::read_dir(&cwd)?;
+                let mut items: Vec<_> = entries
+                    .flatten()
+                    .filter(|e| {
+                        pattern2.is_empty()
+                            || e.file_name().to_string_lossy().contains(pattern2.as_str())
+                    })
+                    .collect();
+                items.sort_by_key(std::fs::DirEntry::file_name);
+                let mut lines = String::new();
+                for entry in &items {
+                    let name = entry.file_name();
+                    let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                    if is_dir {
+                        lines.push_str(&format!("  {}/\n", name.to_string_lossy()));
+                    } else {
+                        lines.push_str(&format!("  {}\n", name.to_string_lossy()));
                     }
-                    if items.is_empty() {
+                }
+                Ok::<_, std::io::Error>((items.len(), lines, cwd))
+            }).await;
+            match result {
+                Ok(Ok((count, lines, cwd))) => {
+                    if count == 0 {
                         app.push_message(MessageContent::System(format!(
                             "No files matching '{pattern}'",
                         )));
                     } else {
-                        lines.push_str(&format!("({} items in {})", items.len(), cwd.display()));
-                        app.overlay = Some(overlay::build_info_overlay("Files", &lines));
+                        let full = format!("({count} items in {})", cwd.display());
+                        app.overlay = Some(overlay::build_info_overlay("Files", &format!("{lines}{full}")));
                     }
+                }
+                Ok(Err(e)) => {
+                    app.push_message(MessageContent::System(format!(
+                        "Cannot read directory: {e}",
+                    )));
                 }
                 Err(e) => {
                     app.push_message(MessageContent::System(format!(
-                        "Cannot read directory: {e}",
+                        "Directory read task failed: {e}",
                     )));
                 }
             }
@@ -3192,8 +3245,12 @@ async fn handle_async_command(
                 } else {
                     img_path.to_path_buf()
                 };
-                match clawed_core::image::read_image_file(&img_path) {
-                    Ok(ContentBlock::Image { source }) => {
+                let img_path2 = img_path.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    clawed_core::image::read_image_file(&img_path2)
+                }).await;
+                match result {
+                    Ok(Ok(ContentBlock::Image { source })) => {
                         app.pending_images.push(ImageAttachment {
                             data: source.data,
                             media_type: source.media_type,
@@ -3204,13 +3261,16 @@ async fn handle_async_command(
                             app.pending_images.len(),
                         )));
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         app.push_message(MessageContent::System(format!("Image error: {e}")));
                     }
                     Ok(_) => {
                         app.push_message(MessageContent::System(
                             "Unexpected content block from image read.".to_string(),
                         ));
+                    }
+                    Err(e) => {
+                        app.push_message(MessageContent::System(format!("Image read task failed: {e}")));
                     }
                 }
             }
@@ -3220,26 +3280,38 @@ async fn handle_async_command(
                 .map(|h| h.join(".claude").join("feedback.log"))
                 .unwrap_or_else(|| std::path::PathBuf::from("feedback.log"));
             if let Some(parent) = feedback_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+                let _ = tokio::task::spawn_blocking({
+                    let parent = parent.to_path_buf();
+                    move || std::fs::create_dir_all(&parent)
+                }).await;
             }
             let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
             let entry = format!("[{timestamp}] {text}\n");
-            match std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&feedback_path)
-            {
-                Ok(mut f) => {
-                    use std::io::Write;
-                    let _ = f.write_all(entry.as_bytes());
+            let path = feedback_path.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                let mut f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)?;
+                use std::io::Write;
+                f.write_all(entry.as_bytes()).map_err(|e| e)?;
+                Ok::<_, std::io::Error>(path)
+            }).await;
+            match result {
+                Ok(Ok(path)) => {
                     app.push_message(MessageContent::System(format!(
                         "✓ Feedback saved to {}",
-                        feedback_path.display(),
+                        path.display(),
+                    )));
+                }
+                Ok(Err(e)) => {
+                    app.push_message(MessageContent::System(format!(
+                        "Could not save feedback: {e}",
                     )));
                 }
                 Err(e) => {
                     app.push_message(MessageContent::System(format!(
-                        "Could not save feedback: {e}",
+                        "Feedback task failed: {e}",
                     )));
                 }
             }
