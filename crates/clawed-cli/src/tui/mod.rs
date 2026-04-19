@@ -933,11 +933,6 @@ impl App {
     /// Unlike status.thinking (which goes false during TextDelta), this stays
     /// true for the entire turn so queue gating and Esc abort work correctly.
     fn mark_generating(&mut self) {
-        tracing::info!(
-            is_generating = self.is_generating,
-            expecting_turn_start = self.expecting_turn_start,
-            "[TUI-DEBUG] mark_generating() called"
-        );
         self.status.thinking = true;
         self.status.is_generating = true;
         self.status.generating_since = Some(Instant::now());
@@ -952,7 +947,6 @@ impl App {
 
     /// Clear all generation state (abort or TurnComplete).
     fn mark_done(&mut self) {
-        tracing::info!("[TUI-DEBUG] mark_done() called");
         self.status.thinking = false;
         self.status.is_generating = false;
         self.status.generating_since = None;
@@ -1169,11 +1163,6 @@ impl App {
                 }
             }
             AgentNotification::TurnComplete { turn, usage, .. } => {
-                tracing::info!(
-                    turn,
-                    expecting_turn_start = self.expecting_turn_start,
-                    "[TUI-DEBUG] TurnComplete received"
-                );
                 self.total_turns = turn;
                 // input_tokens = context size for this turn (cumulative from API).
                 // Keep the latest value rather than summing — summing double-counts context.
@@ -1210,10 +1199,6 @@ impl App {
                 }
             }
             AgentNotification::TurnStart { .. } => {
-                tracing::info!(
-                    expecting_turn_start = self.expecting_turn_start,
-                    "[TUI-DEBUG] TurnStart received"
-                );
                 // Re-assert is_generating in case a stale TurnComplete from a
                 // previous (aborted) stream arrived between mark_generating()
                 // and this TurnStart, resetting is_generating prematurely.
@@ -1264,7 +1249,6 @@ impl App {
                 self.push_message(MessageContent::System("Context compacted".to_string()));
             }
             AgentNotification::Error { message, .. } => {
-                tracing::info!(%message, "[TUI-DEBUG] Error received");
                 self.push_message(MessageContent::System(format!("\u{2717} Error: {message}")));
                 self.mark_done();
             }
@@ -2425,11 +2409,6 @@ pub async fn run_tui(
                 match &notification {
                     AgentNotification::TextDelta { .. }
                     | AgentNotification::ThinkingDelta { .. } => {
-                        tracing::info!(
-                            is_generating = app.is_generating,
-                            expecting_turn_start = app.expecting_turn_start,
-                            "[TUI-DEBUG] discarding delta"
-                        );
                         continue;
                     }
                     _ => {}
