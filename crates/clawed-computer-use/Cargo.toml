@@ -26,6 +26,9 @@ screenshots = "0.8"
 # Hostname detection
 hostname = "0.4"
 
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
 

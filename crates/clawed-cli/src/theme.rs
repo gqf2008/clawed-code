@@ -456,19 +456,19 @@ fn get_lock() -> &'static RwLock<Theme> {
 pub fn init_theme(setting: ThemeSetting) {
     let theme = build_theme(setting.resolve());
     let lock = get_lock();
-    *lock.write().unwrap() = theme;
+    *clawed_core::sync::write_or_recover(lock) = theme;
 }
 
 /// Switch the active theme at runtime.
 pub fn set_theme(name: ThemeName) {
     let lock = get_lock();
-    *lock.write().unwrap() = build_theme(name);
+    *clawed_core::sync::write_or_recover(lock) = build_theme(name);
 }
 
 /// Get the current theme name.
 pub fn current_theme_name() -> ThemeName {
     let lock = get_lock();
-    lock.read().unwrap().name
+    clawed_core::sync::read_or_recover(lock).name
 }
 
 /// Read a field from the active theme. Usage:
@@ -481,7 +481,7 @@ where
     F: FnOnce(&Theme) -> R,
 {
     let lock = get_lock();
-    let guard = lock.read().unwrap();
+    let guard = clawed_core::sync::read_or_recover(lock);
     f(&guard)
 }
 
@@ -495,7 +495,7 @@ pub fn theme_reset() -> &'static str {
 /// Format a string with a theme color. Returns `"{color}{text}\x1b[0m"`.
 pub fn themed(slot: fn(&Theme) -> &AnsiColor, text: &str) -> String {
     let lock = get_lock();
-    let guard = lock.read().unwrap();
+    let guard = clawed_core::sync::read_or_recover(lock);
     let color = slot(&guard);
     format!("{}{}{}", color.fg, text, RESET)
 }

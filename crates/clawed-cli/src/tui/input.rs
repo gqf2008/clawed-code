@@ -76,6 +76,7 @@ impl InputWidget {
     }
 
     /// Number of visible rows (fixed at `MAX_INPUT_ROWS`).
+    #[allow(clippy::unused_self)]
     pub fn visible_rows(&self) -> u16 {
         MAX_INPUT_ROWS as u16
     }

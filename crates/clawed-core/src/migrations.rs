@@ -362,7 +362,7 @@ mod tests {
             self.version
         }
         fn run(&self) -> Result<()> {
-            self.order.lock().unwrap().push(self.name.clone());
+            crate::sync::lock_or_recover(&self.order).push(self.name.clone());
             Ok(())
         }
     }

@@ -48,7 +48,7 @@ impl Spinner {
                 if stop_clone.load(Ordering::Relaxed) {
                     break;
                 }
-                let elapsed = activity_clone.lock().unwrap().elapsed();
+                let elapsed = clawed_core::sync::lock_or_recover(&activity_clone).elapsed();
                 if elapsed.as_secs() >= STALL_CRIT_SECS && !critical {
                     critical = true;
                     bar_clone.set_style(
@@ -90,7 +90,7 @@ impl Spinner {
 
     /// Record activity to reset stall detection timer.
     pub(super) fn tick_activity(&self) {
-        *self.last_activity.lock().unwrap() = Instant::now();
+        *clawed_core::sync::lock_or_recover(&self.last_activity) = Instant::now();
     }
 
     pub(super) fn set_message(&self, msg: &str) {

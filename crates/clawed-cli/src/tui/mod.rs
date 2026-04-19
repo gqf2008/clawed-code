@@ -140,7 +140,7 @@ fn parse_inline_spans(line: &str) -> Vec<Span<'static>> {
             }
             let mut italic_text = String::new();
             let mut found_close = false;
-            while let Some(c) = chars.next() {
+            for c in chars.by_ref() {
                 if c == '*' {
                     found_close = true;
                     break;
@@ -176,7 +176,7 @@ fn parse_inline_spans(line: &str) -> Vec<Span<'static>> {
             }
             let mut code_text = String::new();
             let mut found_close = false;
-            while let Some(c) = chars.next() {
+            for c in chars.by_ref() {
                 if c == '`' {
                     found_close = true;
                     break;
@@ -681,7 +681,7 @@ impl App {
 
         // Determine tree sibling continuity for tool executions.
         let has_sibling_after = if let MessageContent::ToolExecution { depth: d1, .. } = &msg.content {
-            self.messages.get(index + 1).map_or(false, |next| {
+            self.messages.get(index + 1).is_some_and(|next| {
                 matches!(&next.content, MessageContent::ToolExecution { depth: d2, .. } if *d2 == *d1)
             })
         } else {
@@ -792,7 +792,7 @@ impl App {
     /// Returns true when two consecutive messages should be visually separated
     /// by a blank line in the TUI message list.
     fn needs_separator(prev: &MessageContent, curr: &MessageContent) -> bool {
-        use MessageContent::*;
+        use MessageContent::{AssistantText, ThinkingText};
         match (prev, curr) {
             // Assistant text blocks flow together naturally.
             (AssistantText(_), AssistantText(_)) => false,
@@ -1013,7 +1013,7 @@ impl App {
                     },
                 );
                 // Depth = 1 when running inside an agent context, 0 otherwise.
-                let depth = if self.status.active_agents.is_empty() { 0 } else { 1 };
+                let depth = u32::from(!self.status.active_agents.is_empty());
                 // Create message immediately so ToolOutputLine streaming has
                 // somewhere to append. Input will be filled in by ToolUseReady.
                 self.push_message(MessageContent::ToolExecution {

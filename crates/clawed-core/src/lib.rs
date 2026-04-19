@@ -26,6 +26,7 @@ pub mod plugin;
 pub mod secure_storage;
 pub mod session;
 pub mod skills;
+pub mod sync;
 pub mod text_util;
 pub mod token_estimation;
 pub mod upstream_proxy;

@@ -79,13 +79,13 @@ impl ChromiumBrowser {
 
     /// Check whether this browser appears to be installed.
     pub fn is_installed(&self) -> bool {
-        self.native_messaging_dir().map_or(false, |d| d.parent().map_or(false, |p| p.exists()))
+        self.native_messaging_dir().is_some_and(|d| d.parent().is_some_and(|p| p.exists()))
     }
 }
 
 /// Detect installed Chromium-based browsers.
 pub fn detect_browsers() -> Vec<ChromiumBrowser> {
-    use ChromiumBrowser::*;
+    use ChromiumBrowser::{Chrome, Edge, Brave, Opera, Arc};
     [Chrome, Edge, Brave, Opera, Arc]
         .into_iter()
         .filter(|b| b.is_installed())
@@ -176,7 +176,7 @@ impl ChromeStatus {
         let browsers = detect_browsers();
         let native_host_installed = browsers.iter().any(|b| {
             b.native_messaging_dir()
-                .map_or(false, |d| d.join("com.anthropic.clawed.json").exists())
+                .is_some_and(|d| d.join("com.anthropic.clawed.json").exists())
         });
 
         // Extension installation is hard to detect locally without the extension

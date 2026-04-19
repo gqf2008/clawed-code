@@ -125,7 +125,7 @@ impl PlaintextStorage {
     }
 
     /// Create with the default path.
-    pub fn default() -> Result<Self> {
+    pub fn new_default() -> Result<Self> {
         Ok(Self::new(Self::default_path()?))
     }
 }
@@ -215,7 +215,7 @@ impl SecureStorage for FallbackStorage {
     fn write(&self, data: &SecureStorageData) -> Result<()> {
         let primary_before = self.primary.read().ok().flatten();
 
-        if let Ok(()) = self.primary.write(data) {
+        if matches!(self.primary.write(data), Ok(())) {
             // Migration: if this is the first successful primary write, delete the stale fallback.
             if primary_before.is_none() {
                 let _ = self.secondary.delete();
@@ -252,8 +252,8 @@ impl SecureStorage for FallbackStorage {
 /// - Linux:  Keyring with plaintext fallback (libsecret or kwallet required)
 /// - Windows: Credential Manager with plaintext fallback
 pub fn default_storage() -> Result<Box<dyn SecureStorage>> {
-    let keyring = KeyringStorage::new("clawed-code", &whoami::username());
-    let plaintext = PlaintextStorage::default()?;
+    let keyring = KeyringStorage::new("clawed-code", whoami::username());
+    let plaintext = PlaintextStorage::new_default()?;
     Ok(Box::new(FallbackStorage::new(Box::new(keyring), Box::new(plaintext))))
 }
 

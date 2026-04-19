@@ -90,7 +90,7 @@ pub fn init_with(proxy_url: String, ca_bundle_path: Option<PathBuf>) -> ProxySta
 /// Returns proxy env vars to merge into every child subprocess.
 /// Empty when the proxy is disabled.
 pub fn get_env() -> HashMap<String, String> {
-    let state = STATE.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default();
+    let state = crate::sync::lock_or_recover(&STATE).clone().unwrap_or_default();
 
     if !state.enabled {
         return inherit_proxy_env();
@@ -118,7 +118,7 @@ pub fn get_env() -> HashMap<String, String> {
 
 /// Whether the upstream proxy is currently enabled.
 pub fn is_enabled() -> bool {
-    STATE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(false, |s| s.enabled)
+    crate::sync::lock_or_recover(&STATE).as_ref().is_some_and(|s| s.enabled)
 }
 
 /// Read the CCR session token from the well-known path, if present.
@@ -167,7 +167,7 @@ fn read_token(path: &str) -> Option<String> {
 }
 
 fn store_state(state: ProxyState) {
-    *STATE.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
+    *crate::sync::lock_or_recover(&STATE) = Some(state);
 }
 
 /// Inherit proxy env vars from the parent process when our own relay is not running.

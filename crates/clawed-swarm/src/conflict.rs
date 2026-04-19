@@ -60,7 +60,7 @@ impl FileConflictTracker {
     /// - If a different agent holds it, returns `Conflict`.
     pub fn try_lock(&self, file_path: &str, agent_id: &str, tool_name: &str) -> LockResult {
         let key = normalize_path(file_path);
-        let mut locks = self.locks.write().unwrap();
+        let mut locks = clawed_core::sync::write_or_recover(&self.locks);
 
         if let Some(existing) = locks.get(&key) {
             if existing.agent_id == agent_id {
@@ -99,7 +99,7 @@ impl FileConflictTracker {
     /// Release a lock on a file. Only the holder can release.
     pub fn release(&self, file_path: &str, agent_id: &str) -> bool {
         let key = normalize_path(file_path);
-        let mut locks = self.locks.write().unwrap();
+        let mut locks = clawed_core::sync::write_or_recover(&self.locks);
         if let Some(existing) = locks.get(&key) {
             if existing.agent_id == agent_id {
                 locks.remove(&key);
@@ -111,7 +111,7 @@ impl FileConflictTracker {
 
     /// Release all locks held by a specific agent (cleanup on agent exit).
     pub fn release_all(&self, agent_id: &str) -> usize {
-        let mut locks = self.locks.write().unwrap();
+        let mut locks = clawed_core::sync::write_or_recover(&self.locks);
         let keys_to_remove: Vec<String> = locks
             .iter()
             .filter(|(_, v)| v.agent_id == agent_id)
@@ -127,13 +127,13 @@ impl FileConflictTracker {
 
     /// Get all current locks.
     pub fn active_locks(&self) -> Vec<FileLock> {
-        let locks = self.locks.read().unwrap();
+        let locks = clawed_core::sync::read_or_recover(&self.locks);
         locks.values().cloned().collect()
     }
 
     /// Get locks held by a specific agent.
     pub fn locks_by_agent(&self, agent_id: &str) -> Vec<FileLock> {
-        let locks = self.locks.read().unwrap();
+        let locks = clawed_core::sync::read_or_recover(&self.locks);
         locks
             .values()
             .filter(|v| v.agent_id == agent_id)
@@ -144,7 +144,7 @@ impl FileConflictTracker {
     /// Get a conflict summary: files locked by multiple agents (shouldn't happen
     /// with try_lock, but useful for diagnostics).
     pub fn conflict_summary(&self) -> HashMap<String, Vec<String>> {
-        let locks = self.locks.read().unwrap();
+        let locks = clawed_core::sync::read_or_recover(&self.locks);
         let mut by_file: HashMap<String, Vec<String>> = HashMap::new();
         for v in locks.values() {
             by_file
@@ -159,7 +159,7 @@ impl FileConflictTracker {
 
     /// Number of currently held locks.
     pub fn lock_count(&self) -> usize {
-        let locks = self.locks.read().unwrap();
+        let locks = clawed_core::sync::read_or_recover(&self.locks);
         locks.len()
     }
 }
