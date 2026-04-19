@@ -1187,6 +1187,15 @@ impl App {
                 // lost and submit again unnecessarily.
                 if !self.expecting_turn_start {
                     self.mark_done();
+                } else if self.status.generating_since.map(|s| s.elapsed().as_secs() > 5).unwrap_or(false) {
+                    // Safety net: TurnStart may be delayed or lost (e.g. forwarder
+                    // lag, adapter still processing old stream). If we've been
+                    // waiting >5s, force mark_done to prevent stuck Thinking.
+                    tracing::warn!(
+                        turn,
+                        "TurnComplete arrived but TurnStart missing >5s, forcing mark_done"
+                    );
+                    self.mark_done();
                 }
                 // Skip TurnDivider — token/turn info lives in the status bar,
                 // keeping the transcript clean like the original Claude Code.
