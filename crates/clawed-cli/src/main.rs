@@ -18,6 +18,7 @@ mod ui;
 use std::sync::Arc;
 
 use clap::{CommandFactory, Parser};
+use clawed_core::permissions::PermissionMode;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
@@ -44,13 +45,16 @@ struct Cli {
     #[arg(long, short, default_value = "claude-sonnet-4-20250514")]
     model: String,
 
-    /// Permission mode: default | bypass | acceptEdits | plan.
+    /// Permission mode: default | bypass | acceptEdits | plan | auto | dontAsk.
     ///   default       — ask before risky operations.
     ///   bypass        — skip all permission checks (dangerzone).
     ///   acceptEdits   — auto-approve file edits, still ask for shell commands.
-    ///   plan          — read-only, no tool execution
-    #[arg(long, default_value = "default")]
-    permission_mode: String,
+    ///   plan          — read-only, no tool execution.
+    ///   auto          — safe tools auto-allowed, risky ones use classifier.
+    ///   dontAsk       — auto-approve everything.
+    /// When omitted and not set in settings.json, TUI shows a picker on first start.
+    #[arg(long)]
+    permission_mode: Option<String>,
 
     /// Replace the entire system prompt with custom text.
     /// Overrides built-in prompt, CLAUDE.md, and all injected sections
@@ -400,7 +404,14 @@ async fn run() -> anyhow::Result<()> {
         .or(settings.custom_system_prompt)
         .unwrap_or_default();
 
-    let permission_mode = config::parse_permission_mode(&cli.permission_mode);
+    // Permission mode precedence: CLI flag → settings.json → ask on first TUI start
+    let permission_mode = if let Some(ref mode) = cli.permission_mode {
+        config::parse_permission_mode(mode)
+    } else if let Some(ref mode) = settings.permission_mode {
+        config::parse_permission_mode(mode)
+    } else {
+        PermissionMode::Default
+    };
 
     // ── Discover MCP server configs ────────────────────────────────────────
     let mcp_instructions = init::discover_mcp_instructions(&cwd);
@@ -638,7 +649,8 @@ async fn run() -> anyhow::Result<()> {
         }
     } else if use_tui {
         // TUI mode: full-screen partitioned terminal UI
-        tui::run_tui(client_handle, engine, cwd).await?;
+        let ask_permission = cli.permission_mode.is_none() && settings.permission_mode.is_none();
+        tui::run_tui(client_handle, engine, cwd, ask_permission).await?;
     } else {
         repl::run(engine, Some(client_handle), cwd).await?;
     }
@@ -681,7 +693,7 @@ mod tests {
         let cli = Cli::try_parse_from(["claude"]).unwrap();
         assert!(cli.prompt.is_none());
         assert_eq!(cli.model, "claude-sonnet-4-20250514");
-        assert_eq!(cli.permission_mode, "default");
+        assert_eq!(cli.permission_mode, None);
         assert_eq!(cli.max_turns, 100);
         assert_eq!(cli.max_tokens, 16384);
         assert!(cli.max_context_window.is_none());
@@ -751,7 +763,7 @@ mod tests {
     #[test]
     fn test_cli_permission_mode() {
         let cli = Cli::try_parse_from(["claude", "--permission-mode", "bypass"]).unwrap();
-        assert_eq!(cli.permission_mode, "bypass");
+        assert_eq!(cli.permission_mode, Some("bypass".to_string()));
     }
 
     #[test]

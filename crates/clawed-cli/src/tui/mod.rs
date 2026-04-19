@@ -401,6 +401,51 @@ fn build_theme_picker(current_theme: &str) -> FooterPicker {
     .expect("theme overlay should be a selection list")
 }
 
+fn build_permission_overlay(
+    current_mode: clawed_core::permissions::PermissionMode,
+) -> Overlay {
+    let items = vec![
+        SelectionItem {
+            label: "default".to_string(),
+            description: "Ask before risky operations (recommended)".to_string(),
+            value: "default".to_string(),
+            is_current: current_mode == clawed_core::permissions::PermissionMode::Default,
+        },
+        SelectionItem {
+            label: "acceptEdits".to_string(),
+            description: "Auto-approve file edits, still ask for shell commands".to_string(),
+            value: "acceptEdits".to_string(),
+            is_current: current_mode == clawed_core::permissions::PermissionMode::AcceptEdits,
+        },
+        SelectionItem {
+            label: "auto".to_string(),
+            description: "Safe tools auto-allowed, risky ones use classifier".to_string(),
+            value: "auto".to_string(),
+            is_current: current_mode == clawed_core::permissions::PermissionMode::Auto,
+        },
+        SelectionItem {
+            label: "plan".to_string(),
+            description: "Read-only mode, no tool execution".to_string(),
+            value: "plan".to_string(),
+            is_current: current_mode == clawed_core::permissions::PermissionMode::Plan,
+        },
+        SelectionItem {
+            label: "bypass".to_string(),
+            description: "Skip ALL permission checks (dangerous)".to_string(),
+            value: "bypass".to_string(),
+            is_current: current_mode == clawed_core::permissions::PermissionMode::BypassAll,
+        },
+    ];
+    let selected = items.iter().position(|item| item.is_current).unwrap_or(0);
+
+    Overlay::SelectionList {
+        title: "Permission Mode".to_string(),
+        items,
+        selected,
+        scroll_offset: 0,
+    }
+}
+
 fn build_permissions_picker(
     current_mode: clawed_core::permissions::PermissionMode,
 ) -> FooterPicker {
@@ -2226,10 +2271,19 @@ pub async fn run_tui(
     client: ClientHandle,
     engine: Arc<QueryEngine>,
     _cwd: std::path::PathBuf,
+    ask_permission: bool,
 ) -> anyhow::Result<()> {
     let model = { engine.state().read().await.model.clone() };
     let mut app = App::new(model);
     app.permission_mode = crate::config::format_permission_mode(engine.state().read().await.permission_mode).to_string();
+
+    // On first start (no CLI flag and no settings.json permission_mode),
+    // show the permission picker immediately so the user makes an informed choice.
+    if ask_permission {
+        app.overlay = Some(build_permission_overlay(
+            engine.state().read().await.permission_mode,
+        ));
+    }
 
     // Load history into input widget
     if let Some(hist_path) = crate::input::history_file_path() {
@@ -2846,6 +2900,15 @@ async fn handle_overlay_selection(
                 app.needs_full_clear = true;
             }
         },
+        "Permission Mode" => {
+            let new_mode = crate::config::parse_permission_mode(value);
+            engine.state().write().await.permission_mode = new_mode;
+            app.permission_mode = crate::config::format_permission_mode(new_mode).to_string();
+            app.push_message(MessageContent::System(format!(
+                "✓ Permission mode → {:?}",
+                new_mode
+            )));
+        }
         _ => {
             app.push_message(MessageContent::System(format!("Selected: {value}")));
         }
