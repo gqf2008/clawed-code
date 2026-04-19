@@ -234,7 +234,6 @@ impl ApiClient {
                     delay.as_secs_f64()
                 );
                 info!("{}", msg);
-                eprintln!("\x1b[33m⟳ {msg}\x1b[0m");
             },
         )
         .await
@@ -315,7 +314,6 @@ impl ApiClient {
                     delay.as_secs_f64()
                 );
                 info!("{}", msg);
-                eprintln!("\x1b[33m⟳ {msg}\x1b[0m");
             },
         )
         .await

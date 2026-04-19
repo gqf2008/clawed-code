@@ -9,6 +9,7 @@ use clawed_core::tool::{Tool, ToolContext, ToolResult};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
+use tracing::info;
 
 use crate::coordinator::AgentTracker;
 use crate::executor::ToolExecutor;
@@ -602,7 +603,7 @@ impl Tool for DispatchAgentTool {
             .as_deref()
             .or(agent_name.as_deref())
             .unwrap_or(&type_label);
-        eprintln!("\x1b[2m  ◌ [{}] working…\x1b[0m", agent_label);
+        info!("Sub-agent [{}] working…", agent_label);
 
         // Collect all text output and emit lightweight progress lines to stderr.
         let mut output = String::new();
@@ -615,13 +616,13 @@ impl Tool for DispatchAgentTool {
                 AgentEvent::TextDelta(text) => output.push_str(&text),
                 AgentEvent::ToolUseStart { name, .. } => {
                     tool_count += 1;
-                    eprintln!("\x1b[2m  │ → {} (turn {})\x1b[0m", name, turn + 1);
+                    info!("Sub-agent [{}] tool: {} (turn {})", agent_label, name, turn + 1);
                 }
                 AgentEvent::TurnComplete { .. } => {
                     turn += 1;
                 }
                 AgentEvent::MaxTurns { limit } => {
-                    eprintln!("\x1b[33m  │ max turns ({}) reached\x1b[0m", limit);
+                    info!("Sub-agent [{}] max turns ({}) reached", agent_label, limit);
                 }
                 AgentEvent::Error(e) => {
                     error_msg = Some(e);
@@ -632,12 +633,12 @@ impl Tool for DispatchAgentTool {
         }
 
         if let Some(err) = error_msg {
-            eprintln!("\x1b[31m  ✗ [{}] failed\x1b[0m", agent_label);
+            info!("Sub-agent [{}] failed", agent_label);
             return Ok(ToolResult::error(format!("Sub-agent error: {}", err)));
         }
 
-        eprintln!(
-            "\x1b[2m  ✓ [{}] done ({} turns, {} tools)\x1b[0m",
+        info!(
+            "Sub-agent [{}] done ({} turns, {} tools)",
             agent_label, turn, tool_count
         );
 
