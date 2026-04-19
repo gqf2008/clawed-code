@@ -401,9 +401,7 @@ fn build_theme_picker(current_theme: &str) -> FooterPicker {
     .expect("theme overlay should be a selection list")
 }
 
-fn build_permission_overlay(
-    current_mode: clawed_core::permissions::PermissionMode,
-) -> Overlay {
+fn build_permission_overlay(current_mode: clawed_core::permissions::PermissionMode) -> Overlay {
     let items = vec![
         SelectionItem {
             label: "default".to_string(),
@@ -725,7 +723,9 @@ impl App {
         }
 
         // Determine tree sibling continuity for tool executions.
-        let has_sibling_after = if let MessageContent::ToolExecution { depth: d1, .. } = &msg.content {
+        let has_sibling_after = if let MessageContent::ToolExecution { depth: d1, .. } =
+            &msg.content
+        {
             self.messages.get(index + 1).is_some_and(|next| {
                 matches!(&next.content, MessageContent::ToolExecution { depth: d2, .. } if *d2 == *d1)
             })
@@ -734,9 +734,15 @@ impl App {
         };
 
         // Live duration for running tools (duration_ms == 0 means still active).
-        let live_duration_ms = if let MessageContent::ToolExecution { name, duration_ms, .. } = &msg.content {
+        let live_duration_ms = if let MessageContent::ToolExecution {
+            name, duration_ms, ..
+        } = &msg.content
+        {
             if *duration_ms == 0 {
-                self.status.active_tools.get(name).map(|t| t.started.elapsed().as_millis() as u64)
+                self.status
+                    .active_tools
+                    .get(name)
+                    .map(|t| t.started.elapsed().as_millis() as u64)
             } else {
                 None
             }
@@ -927,6 +933,11 @@ impl App {
     /// Unlike status.thinking (which goes false during TextDelta), this stays
     /// true for the entire turn so queue gating and Esc abort work correctly.
     fn mark_generating(&mut self) {
+        tracing::info!(
+            is_generating = self.is_generating,
+            expecting_turn_start = self.expecting_turn_start,
+            "[TUI-DEBUG] mark_generating() called"
+        );
         self.status.thinking = true;
         self.status.is_generating = true;
         self.status.generating_since = Some(Instant::now());
@@ -941,6 +952,7 @@ impl App {
 
     /// Clear all generation state (abort or TurnComplete).
     fn mark_done(&mut self) {
+        tracing::info!("[TUI-DEBUG] mark_done() called");
         self.status.thinking = false;
         self.status.is_generating = false;
         self.status.generating_since = None;
@@ -1071,7 +1083,9 @@ impl App {
                     depth,
                 });
             }
-            AgentNotification::ToolUseReady { tool_name, input, .. } => {
+            AgentNotification::ToolUseReady {
+                tool_name, input, ..
+            } => {
                 // Update the last ToolExecution message with the input display.
                 let input_str = extract_tool_input_display(&tool_name, &input);
                 if let Some(msg) = self.messages.iter_mut().rev().find(|m| {
@@ -1080,8 +1094,9 @@ impl App {
                         MessageContent::ToolExecution { name, .. } if *name == tool_name
                     )
                 }) {
-                    if let MessageContent::ToolExecution { input: ref mut inp, .. } =
-                        &mut msg.content
+                    if let MessageContent::ToolExecution {
+                        input: ref mut inp, ..
+                    } = &mut msg.content
                     {
                         *inp = input_str;
                     }
@@ -1113,9 +1128,10 @@ impl App {
                 // If tool_name is empty (lookup failed), fall back to last ToolExecution.
                 let result = result_preview.unwrap_or_default();
                 let msg = if tool_name.is_empty() {
-                    self.messages.iter_mut().rev().find(|m| {
-                        matches!(&m.content, MessageContent::ToolExecution { .. })
-                    })
+                    self.messages
+                        .iter_mut()
+                        .rev()
+                        .find(|m| matches!(&m.content, MessageContent::ToolExecution { .. }))
                 } else {
                     self.messages.iter_mut().rev().find(|m| {
                         matches!(
@@ -1129,13 +1145,16 @@ impl App {
                     self.invalidate_visible_lines();
                 }
             }
-            AgentNotification::ToolOutputLine { tool_name, line, .. } => {
+            AgentNotification::ToolOutputLine {
+                tool_name, line, ..
+            } => {
                 // Append output line to the last matching ToolExecution message.
                 // Fall back to last ToolExecution if name doesn't match (name lookup may fail).
                 let msg = if tool_name.is_empty() {
-                    self.messages.iter_mut().rev().find(|m| {
-                        matches!(&m.content, MessageContent::ToolExecution { .. })
-                    })
+                    self.messages
+                        .iter_mut()
+                        .rev()
+                        .find(|m| matches!(&m.content, MessageContent::ToolExecution { .. }))
                 } else {
                     self.messages.iter_mut().rev().find(|m| {
                         matches!(
@@ -1150,6 +1169,11 @@ impl App {
                 }
             }
             AgentNotification::TurnComplete { turn, usage, .. } => {
+                tracing::info!(
+                    turn,
+                    expecting_turn_start = self.expecting_turn_start,
+                    "[TUI-DEBUG] TurnComplete received"
+                );
                 self.total_turns = turn;
                 // input_tokens = context size for this turn (cumulative from API).
                 // Keep the latest value rather than summing — summing double-counts context.
@@ -1177,6 +1201,10 @@ impl App {
                 }
             }
             AgentNotification::TurnStart { .. } => {
+                tracing::info!(
+                    expecting_turn_start = self.expecting_turn_start,
+                    "[TUI-DEBUG] TurnStart received"
+                );
                 // Re-assert is_generating in case a stale TurnComplete from a
                 // previous (aborted) stream arrived between mark_generating()
                 // and this TurnStart, resetting is_generating prematurely.
@@ -1227,6 +1255,7 @@ impl App {
                 self.push_message(MessageContent::System("Context compacted".to_string()));
             }
             AgentNotification::Error { message, .. } => {
+                tracing::info!(%message, "[TUI-DEBUG] Error received");
                 self.push_message(MessageContent::System(format!("\u{2717} Error: {message}")));
                 self.mark_done();
             }
@@ -1466,8 +1495,9 @@ impl App {
                 if name.is_empty() {
                     self.set_footer_picker(build_model_picker(&self.model));
                 } else {
-                    let _ = client
-                        .send_request(clawed_bus::events::AgentRequest::SetModel { model: name.clone() });
+                    let _ = client.send_request(clawed_bus::events::AgentRequest::SetModel {
+                        model: name.clone(),
+                    });
                     let display = clawed_core::model::display_name_any(
                         &clawed_core::model::resolve_model_string(&name),
                     );
@@ -1738,7 +1768,12 @@ fn render(frame: &mut Frame, app: &mut App) {
         render_input(frame, input_chunks[0], app);
         render_input_separator(frame, input_chunks[2]);
         if bottom_bar_rows > 0 {
-            bottombar::render(frame, input_chunks[3], app.is_generating, &app.permission_mode);
+            bottombar::render(
+                frame,
+                input_chunks[3],
+                app.is_generating,
+                &app.permission_mode,
+            );
         }
 
         if let Some(picker) = app.footer_picker.as_ref() {
@@ -1773,7 +1808,10 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let (all_lines, cached_visual_count): (Vec<Line<'static>>, Option<usize>) =
         if app.messages.is_empty() {
-            (render_welcome_lines(area.width, &app.model, &app.permission_mode), None)
+            (
+                render_welcome_lines(area.width, &app.model, &app.permission_mode),
+                None,
+            )
         } else {
             app.rebuild_visible_lines();
             let cached_visual_count = app
@@ -1939,7 +1977,11 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         } else {
             dim
         };
-        let prefix = if info_parts.is_empty() { " " } else { " \u{2502} " };
+        let prefix = if info_parts.is_empty() {
+            " "
+        } else {
+            " \u{2502} "
+        };
         let s = format!("{prefix}{ctx}");
         spans.push(Span::styled(s, ctx_style));
     }
@@ -2275,7 +2317,9 @@ pub async fn run_tui(
 ) -> anyhow::Result<()> {
     let model = { engine.state().read().await.model.clone() };
     let mut app = App::new(model);
-    app.permission_mode = crate::config::format_permission_mode(engine.state().read().await.permission_mode).to_string();
+    app.permission_mode =
+        crate::config::format_permission_mode(engine.state().read().await.permission_mode)
+            .to_string();
 
     // On first start (no CLI flag and no settings.json permission_mode),
     // show the permission picker immediately so the user makes an informed choice.
@@ -2371,7 +2415,14 @@ pub async fn run_tui(
             if !app.is_generating || app.expecting_turn_start {
                 match &notification {
                     AgentNotification::TextDelta { .. }
-                    | AgentNotification::ThinkingDelta { .. } => continue,
+                    | AgentNotification::ThinkingDelta { .. } => {
+                        tracing::info!(
+                            is_generating = app.is_generating,
+                            expecting_turn_start = app.expecting_turn_start,
+                            "[TUI-DEBUG] discarding delta"
+                        );
+                        continue;
+                    }
                     _ => {}
                 }
             }
@@ -2474,7 +2525,11 @@ pub async fn run_tui(
                     // Esc while LLM is generating aborts the current task,
                     // but only when no overlay or permission prompt is open
                     // (those handle Esc themselves first).
-                    if key.code == KeyCode::Esc && app.is_generating && app.overlay.is_none() && app.permission.is_none() {
+                    if key.code == KeyCode::Esc
+                        && app.is_generating
+                        && app.overlay.is_none()
+                        && app.permission.is_none()
+                    {
                         let _ = client.abort();
                         app.mark_done();
                         app.pending_workflow = None;
@@ -2842,7 +2897,9 @@ async fn git_status_porcelain(cwd: &std::path::Path) -> String {
             .filter(|output| output.status.success())
             .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
             .unwrap_or_default()
-    }).await.unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 async fn handle_pending_workflow(client: &ClientHandle, app: &mut App) -> bool {
@@ -2976,7 +3033,8 @@ async fn handle_async_command(
                     .args(["diff", "--stat", "--no-color"])
                     .current_dir(&cwd)
                     .output()
-            }).await;
+            })
+            .await;
             match result {
                 Ok(Ok(out)) => {
                     let text = String::from_utf8_lossy(&out.stdout);
@@ -3101,7 +3159,8 @@ async fn handle_async_command(
             let md_clone = md.clone();
             let result = tokio::task::spawn_blocking(move || {
                 std::fs::write(&filename, &md_clone).map(|_| (filename, md_clone.len()))
-            }).await;
+            })
+            .await;
             match result {
                 Ok(Ok((filename, len))) => {
                     app.push_message(MessageContent::System(format!(
@@ -3151,7 +3210,8 @@ async fn handle_async_command(
             let content_clone = content.clone();
             let result = tokio::task::spawn_blocking(move || {
                 std::fs::write(&filename, &content_clone).map(|_| filename)
-            }).await;
+            })
+            .await;
             match result {
                 Ok(Ok(filename)) => {
                     app.push_message(MessageContent::System(format!("✓ Exported to {filename}",)));
@@ -3257,7 +3317,8 @@ async fn handle_async_command(
                     }
                 }
                 Ok::<_, std::io::Error>((items.len(), lines, cwd))
-            }).await;
+            })
+            .await;
             match result {
                 Ok(Ok((count, lines, cwd))) => {
                     if count == 0 {
@@ -3266,7 +3327,10 @@ async fn handle_async_command(
                         )));
                     } else {
                         let full = format!("({count} items in {})", cwd.display());
-                        app.overlay = Some(overlay::build_info_overlay("Files", &format!("{lines}{full}")));
+                        app.overlay = Some(overlay::build_info_overlay(
+                            "Files",
+                            &format!("{lines}{full}"),
+                        ));
                     }
                 }
                 Ok(Err(e)) => {
@@ -3311,7 +3375,8 @@ async fn handle_async_command(
                 let img_path2 = img_path.clone();
                 let result = tokio::task::spawn_blocking(move || {
                     clawed_core::image::read_image_file(&img_path2)
-                }).await;
+                })
+                .await;
                 match result {
                     Ok(Ok(ContentBlock::Image { source })) => {
                         app.pending_images.push(ImageAttachment {
@@ -3333,7 +3398,9 @@ async fn handle_async_command(
                         ));
                     }
                     Err(e) => {
-                        app.push_message(MessageContent::System(format!("Image read task failed: {e}")));
+                        app.push_message(MessageContent::System(format!(
+                            "Image read task failed: {e}"
+                        )));
                     }
                 }
             }
@@ -3346,7 +3413,8 @@ async fn handle_async_command(
                 let _ = tokio::task::spawn_blocking({
                     let parent = parent.to_path_buf();
                     move || std::fs::create_dir_all(&parent)
-                }).await;
+                })
+                .await;
             }
             let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
             let entry = format!("[{timestamp}] {text}\n");
@@ -3357,9 +3425,10 @@ async fn handle_async_command(
                     .append(true)
                     .open(&path)?;
                 use std::io::Write;
-                f.write_all(entry.as_bytes()).map_err(|e| e)?;
+                f.write_all(entry.as_bytes())?;
                 Ok::<_, std::io::Error>(path)
-            }).await;
+            })
+            .await;
             match result {
                 Ok(Ok(path)) => {
                     app.push_message(MessageContent::System(format!(
@@ -3373,9 +3442,9 @@ async fn handle_async_command(
                     )));
                 }
                 Err(e) => {
-                    app.push_message(MessageContent::System(format!(
-                        "Feedback task failed: {e}",
-                    )));
+                    app.push_message(MessageContent::System(
+                        format!("Feedback task failed: {e}",),
+                    ));
                 }
             }
         }
@@ -4172,7 +4241,10 @@ mod tests {
             scroll_offset: 0,
         };
 
-        assert!(matches!(picker.handle_key(KeyCode::End), FooterPickerAction::Consumed));
+        assert!(matches!(
+            picker.handle_key(KeyCode::End),
+            FooterPickerAction::Consumed
+        ));
         assert_eq!(picker.selected, 11);
         assert_eq!(picker.scroll_offset, 2);
     }
@@ -4191,7 +4263,10 @@ mod tests {
             scroll_offset: 0,
         };
 
-        assert!(matches!(picker.handle_key(KeyCode::Left), FooterPickerAction::Consumed));
+        assert!(matches!(
+            picker.handle_key(KeyCode::Left),
+            FooterPickerAction::Consumed
+        ));
     }
 
     #[test]
@@ -4370,7 +4445,8 @@ mod tests {
         assert_ne!(base, app.layout_signature());
 
         app.queued_inputs.clear();
-        app.task_plan.add_task("agent-1".to_string(), "Task".to_string());
+        app.task_plan
+            .add_task("agent-1".to_string(), "Task".to_string());
         assert_ne!(base, app.layout_signature());
 
         let mut completion_app = App::new("test".to_string());
@@ -4547,16 +4623,12 @@ mod tests {
         fn tick(&mut self) {
             // Drain all pending notifications
             while let Ok(notification) = self.notify_rx.try_recv() {
-                let turn_complete = matches!(
-                    notification,
-                    AgentNotification::TurnComplete { .. }
-                );
+                let turn_complete = matches!(notification, AgentNotification::TurnComplete { .. });
                 let merged = self.app.handle_notification(notification);
                 // In simulation, we don't actually submit to a real client
                 if merged.is_some() {
-                    self.app.push_message(MessageContent::UserInput(
-                        merged.unwrap(),
-                    ));
+                    self.app
+                        .push_message(MessageContent::UserInput(merged.unwrap()));
                     self.app.mark_generating();
                 }
                 if turn_complete
@@ -4611,11 +4683,9 @@ mod tests {
 
         fn send_text_deltas(&self, deltas: &[&str]) {
             for delta in deltas {
-                let _ = self
-                    .notify_tx
-                    .try_send(AgentNotification::TextDelta {
-                        text: delta.to_string(),
-                    });
+                let _ = self.notify_tx.try_send(AgentNotification::TextDelta {
+                    text: delta.to_string(),
+                });
             }
         }
 
@@ -5071,7 +5141,9 @@ mod tests {
         // Compact sends Compact request directly, not pending_command
         match bus.recv_request().now_or_never() {
             Some(Some(clawed_bus::events::AgentRequest::Compact { ref instructions })) => {
-                assert!(instructions.as_ref().is_some_and(|i| i.contains("summarize")));
+                assert!(instructions
+                    .as_ref()
+                    .is_some_and(|i| i.contains("summarize")));
             }
             other => panic!("expected Compact request, got {other:?}"),
         }
@@ -5084,10 +5156,7 @@ mod tests {
 
         app.handle_slash_command(&client, "/review check for bugs");
         assert!(app.pending_command.is_some());
-        if let Some(
-            crate::commands::CommandResult::Review { ref prompt },
-        ) = app.pending_command
-        {
+        if let Some(crate::commands::CommandResult::Review { ref prompt }) = app.pending_command {
             assert!(prompt.contains("bugs"));
         } else {
             panic!("expected Review command result");
@@ -5491,7 +5560,9 @@ mod tests {
         let mut app = App::new("test".to_string());
 
         handle_async_command(
-            crate::commands::CommandResult::Session { sub: "save".to_string() },
+            crate::commands::CommandResult::Session {
+                sub: "save".to_string(),
+            },
             &engine,
             &client,
             &mut app,
@@ -5805,7 +5876,9 @@ mod tests {
         let mut app = App::new("test".to_string());
 
         handle_async_command(
-            crate::commands::CommandResult::Agents { sub: "status".to_string() },
+            crate::commands::CommandResult::Agents {
+                sub: "status".to_string(),
+            },
             &engine,
             &client,
             &mut app,
@@ -6205,7 +6278,9 @@ mod tests {
         let mut app = App::new("test".to_string());
 
         handle_async_command(
-            crate::commands::CommandResult::Feedback { text: String::new() },
+            crate::commands::CommandResult::Feedback {
+                text: String::new(),
+            },
             &engine,
             &client,
             &mut app,
@@ -6494,7 +6569,9 @@ mod tests {
         let mut app = App::new("test".to_string());
 
         handle_async_command(
-            crate::commands::CommandResult::Image { path: String::new() },
+            crate::commands::CommandResult::Image {
+                path: String::new(),
+            },
             &engine,
             &client,
             &mut app,
@@ -6606,8 +6683,7 @@ mod tests {
 
         app.handle_slash_command(&client, "/pr-comments abc");
         assert!(app.pending_command.is_some());
-        if let Some(crate::commands::CommandResult::PrComments { pr_number }) =
-            app.pending_command
+        if let Some(crate::commands::CommandResult::PrComments { pr_number }) = app.pending_command
         {
             assert_eq!(pr_number, 0);
         } else {
@@ -6622,8 +6698,7 @@ mod tests {
 
         app.handle_slash_command(&client, "/pr-comments");
         assert!(app.pending_command.is_some());
-        if let Some(crate::commands::CommandResult::PrComments { pr_number }) =
-            app.pending_command
+        if let Some(crate::commands::CommandResult::PrComments { pr_number }) = app.pending_command
         {
             assert_eq!(pr_number, 0);
         } else {
@@ -6957,9 +7032,13 @@ mod tests {
         env.tick();
 
         // Collapse the tool message
-        if let Some(msg) = env.app.messages.iter_mut().rev().find(|m| {
-            matches!(&m.content, MessageContent::ToolExecution { .. })
-        }) {
+        if let Some(msg) = env
+            .app
+            .messages
+            .iter_mut()
+            .rev()
+            .find(|m| matches!(&m.content, MessageContent::ToolExecution { .. }))
+        {
             msg.toggle_collapsed();
         }
         env.app.invalidate_visible_lines();
@@ -6991,7 +7070,8 @@ mod tests {
         env.app.invalidate_visible_lines();
         // Push multiple non-important system messages
         for i in 0..5 {
-            env.app.push_message(MessageContent::System(format!("status {i}")));
+            env.app
+                .push_message(MessageContent::System(format!("status {i}")));
         }
         env.app.needs_redraw = true;
         env.tick();
@@ -7022,7 +7102,8 @@ mod tests {
         ));
         // Followed by normal ones
         for i in 0..3 {
-            env.app.push_message(MessageContent::System(format!("status {i}")));
+            env.app
+                .push_message(MessageContent::System(format!("status {i}")));
         }
         env.app.needs_redraw = true;
         env.tick();
@@ -7047,8 +7128,10 @@ mod tests {
         env.app.term_width = 80;
         env.app.term_height = 24;
 
-        env.app.push_message(MessageContent::AssistantText("hello".to_string()));
-        env.app.push_message(MessageContent::UserInput("hi".to_string()));
+        env.app
+            .push_message(MessageContent::AssistantText("hello".to_string()));
+        env.app
+            .push_message(MessageContent::UserInput("hi".to_string()));
         env.app.needs_redraw = true;
         env.tick();
 
@@ -7063,7 +7146,9 @@ mod tests {
         let assistant_idx = lines.iter().position(|l| l.contains("hello")).unwrap();
         let user_idx = lines.iter().position(|l| l.contains("hi")).unwrap();
         assert!(
-            lines[assistant_idx + 1..user_idx].iter().any(|l| l.is_empty()),
+            lines[assistant_idx + 1..user_idx]
+                .iter()
+                .any(|l| l.is_empty()),
             "different message types should have a blank separator, got: {lines:?}"
         );
     }
@@ -7074,8 +7159,10 @@ mod tests {
         env.app.term_width = 80;
         env.app.term_height = 24;
 
-        env.app.push_message(MessageContent::AssistantText("hello".to_string()));
-        env.app.push_message(MessageContent::ThinkingText("reasoning".to_string()));
+        env.app
+            .push_message(MessageContent::AssistantText("hello".to_string()));
+        env.app
+            .push_message(MessageContent::ThinkingText("reasoning".to_string()));
         env.app.needs_redraw = true;
         env.tick();
 
