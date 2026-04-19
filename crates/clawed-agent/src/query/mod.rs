@@ -180,6 +180,7 @@ pub fn query_stream_with_injection(
         let escalated_max_tokens = caps.upper_max_output;
 
         loop {
+            tracing::info!(turn = turn_count, "query_stream: outer loop iteration");
             // Drain any externally injected messages (from SendMessage)
             if let Some(ref mut rx) = inject_rx {
                 while let Ok(msg_text) = rx.try_recv() {
@@ -238,7 +239,10 @@ pub fn query_stream_with_injection(
             };
 
             let event_stream = match client.messages_stream(&request).await {
-                Ok(s) => s,
+                Ok(s) => {
+                    tracing::info!(turn = turn_count, "query_stream: API stream connected");
+                    s
+                }
                 Err(e) => {
                     let err_str = format!("{}", e);
                     consecutive_errors += 1;
@@ -302,6 +306,7 @@ pub fn query_stream_with_injection(
             use tokio_stream::StreamExt;
             let mut event_stream = event_stream;
             while let Some(event_result) = event_stream.next().await {
+                tracing::info!(turn = turn_count, event = ?event_result, "query_stream: SSE event received");
                 match event_result {
                     Ok(event) => match event {
                         StreamEvent::ContentBlockStart { content_block, .. } => {
