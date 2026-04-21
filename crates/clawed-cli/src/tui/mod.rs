@@ -63,6 +63,10 @@ const SPINNER_TICK_INTERVAL: Duration = Duration::from_millis(80);
 /// Minimum time between renders during active streaming. Prevents the event loop
 /// from spending all its CPU on rendering, leaving no time for input processing.
 const MIN_RENDER_INTERVAL: Duration = Duration::from_millis(32);
+/// Periodic full-clear interval to self-heal screen corruption caused by
+/// external output (eprintln, third-party crates, sub-process leaks) that
+/// invalidates ratatui's diff-based rendering when not using alternate screen.
+const PERIODIC_CLEAR_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_COMPLETION_POPUP_ITEMS: usize = 10;
 
 fn collapsed_thinking_lines(text: &str) -> Vec<Line<'static>> {
@@ -626,6 +630,10 @@ struct App {
     /// Instant of the last render. Used to throttle render rate during
     /// active streaming so the event loop has time to process input events.
     last_render_at: Instant,
+    /// Instant of the last periodic full clear. Without alternate screen,
+    /// any external output to the terminal corrupts ratatui's diff buffer;
+    /// a periodic clear self-heals this.
+    last_periodic_clear: Instant,
     /// Cached terminal dimensions from the last frame. Used to detect resize
     /// in the layout signature so ghost cells are cleared after resize.
     term_width: u16,
@@ -670,6 +678,7 @@ impl App {
             last_rendered_message_visual_count: None,
             last_spinner_tick: Instant::now(),
             last_render_at: Instant::now() - Duration::from_secs(1),
+            last_periodic_clear: Instant::now(),
             term_width: 0,
             term_height: 0,
             permission_mode: String::new(),
@@ -2338,9 +2347,15 @@ pub async fn run_tui(
     let mut notify_sub = client.subscribe_notifications();
     let (notify_tx, mut notify_rx) = mpsc::channel::<AgentNotification>(256);
     let forwarder = tokio::spawn(async move {
-        while let Ok(notification) = notify_sub.recv().await {
-            if notify_tx.send(notification).await.is_err() {
-                break;
+        loop {
+            match notify_sub.recv().await {
+                Ok(notification) => {
+                    if notify_tx.send(notification).await.is_err() {
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
     });
@@ -2477,6 +2492,20 @@ pub async fn run_tui(
         if app.needs_full_clear {
             terminal.clear()?;
             app.needs_full_clear = false;
+            app.last_periodic_clear = Instant::now();
+            app.request_redraw();
+        }
+
+        // Periodic full clear: without alternate screen, any external output
+        // (eprintln from third-party crates, sub-process leaks, etc.) corrupts
+        // ratatui's diff buffer. Force a full clear + redraw every few seconds
+        // to self-heal. Skip when idle (no generation, no active tools) since
+        // corruption is far less likely then.
+        if app.last_periodic_clear.elapsed() >= PERIODIC_CLEAR_INTERVAL
+            && (app.is_generating || !app.status.active_tools.is_empty())
+        {
+            terminal.clear()?;
+            app.last_periodic_clear = Instant::now();
             app.request_redraw();
         }
 
@@ -2489,8 +2518,10 @@ pub async fn run_tui(
             if !throttled {
                 terminal.draw(|frame| render(frame, &mut app))?;
                 app.last_render_at = Instant::now();
+                app.needs_redraw = false;
             }
-            app.needs_redraw = false;
+            // When throttled, keep needs_redraw true so the next loop
+            // iteration (or spinner tick) will render the pending update.
         }
 
         // Keep the terminal responsive at rest, but use a tighter tick while the

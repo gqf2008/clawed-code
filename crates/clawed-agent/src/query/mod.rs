@@ -301,6 +301,12 @@ pub fn query_stream_with_injection(
 
             use tokio_stream::StreamExt;
             let mut event_stream = event_stream;
+            // Spawn tool execution early when stop_reason=tool_use is known, so
+            // the tool starts running while we finish consuming the API stream
+            // tail (MessageStop, stream close) and do post-processing. This
+            // eliminates the structural gap between ToolUseReady and the first
+            // ToolOutputLine.
+            let mut early_exec: Option<tokio::task::JoinHandle<Vec<ContentBlock>>> = None;
             while let Some(event_result) = event_stream.next().await {
                 match event_result {
                     Ok(event) => match event {
@@ -387,6 +393,23 @@ pub fn query_stream_with_injection(
                                     u.output_tokens = du.output_tokens;
                                 }
                             }
+                            // Eagerly start tool execution once stop_reason is known.
+                            // The API stream tail (MessageStop, close) carries no
+                            // information needed for execution; starting now lets
+                            // permission prompts and tool output flow immediately
+                            // while we finish consuming the remaining stream events.
+                            if stop_reason == Some(StopReason::ToolUse)
+                                && !tool_uses.is_empty()
+                                && early_exec.is_none()
+                            {
+                                tool_context.messages = messages.clone();
+                                let exec = Arc::clone(&executor);
+                                let ctx = tool_context.clone();
+                                let tools = std::mem::take(&mut tool_uses);
+                                early_exec = Some(tokio::spawn(async move {
+                                    exec.execute_many(tools, &ctx).await
+                                }));
+                            }
                         }
                         StreamEvent::MessageStart { message } => {
                             usage = Some(Usage {
@@ -436,6 +459,12 @@ pub fn query_stream_with_injection(
                         break;
                     }
                 }
+
+                // While waiting for the API stream to close, drain any early
+                // tool output that has already started flowing.
+                while let Ok((id, name, line)) = output_rx.try_recv() {
+                    yield AgentEvent::ToolOutputLine { id, name, line };
+                }
             }
 
             // If a stream timeout triggered a retry, skip message processing
@@ -448,6 +477,12 @@ pub fn query_stream_with_injection(
             if !assistant_text.is_empty() && !assistant_blocks.iter().any(|b| matches!(b, ContentBlock::Text { .. })) {
                 assistant_blocks.insert(0, ContentBlock::Text { text: assistant_text.clone() });
             }
+
+            // Capture tool names from assistant_blocks before they are moved
+            // into AssistantMessage, so plan-mode transitions can still reference them.
+            let called_tool_names: Vec<String> = assistant_blocks.iter().filter_map(|b| {
+                if let ContentBlock::ToolUse { name, .. } = b { Some(name.clone()) } else { None }
+            }).collect();
 
             let assistant_msg = AssistantMessage {
                 uuid: Uuid::new_v4().to_string(),
@@ -538,30 +573,46 @@ pub fn query_stream_with_injection(
 
             let actual_stop = stop_reason.unwrap_or(StopReason::EndTurn);
             match actual_stop {
-                StopReason::ToolUse if !tool_uses.is_empty() => {
-                    // Capture tool names for plan mode transitions before execution
-                    let called_tool_names: Vec<String> = tool_uses.iter().map(|(_, name, _)| name.clone()).collect();
+                StopReason::ToolUse if early_exec.is_some() || !tool_uses.is_empty() => {
+                    // called_tool_names was already captured from assistant_blocks above.
 
-                    // Snapshot messages into tool_context so tools like ContextTool can inspect them
-                    tool_context.messages = messages.clone();
-
-                    // Interleave tool execution with live output draining.
-                    // tokio::select! polls both branches concurrently, so output lines
-                    // are yielded as they arrive — not buffered until execution finishes.
-                    let exec_fut = executor.execute_many(tool_uses, &tool_context);
-                    let results = {
+                    let results = if let Some(handle) = early_exec.take() {
+                        // Tool execution was already started eagerly — drain output
+                        // while waiting for it to complete.
+                        let mut handle = std::pin::pin!(handle);
+                        let r = loop {
+                            tokio::select! {
+                                r = &mut handle => {
+                                    // Drain any remaining output
+                                    while let Ok((id, name, line)) = output_rx.try_recv() {
+                                        yield AgentEvent::ToolOutputLine { id, name, line };
+                                    }
+                                    break r.unwrap_or_else(|e| {
+                                        tracing::error!("Early tool execution task panicked: {}", e);
+                                        vec![]
+                                    });
+                                }
+                                Some((id, name, line)) = output_rx.recv() => {
+                                    yield AgentEvent::ToolOutputLine { id, name, line };
+                                }
+                            }
+                        };
+                        r
+                    } else {
+                        // Fallback: no early execution (shouldn't normally happen,
+                        // but covers edge cases like tool_uses populated without
+                        // stop_reason being set to ToolUse in MessageDelta).
+                        tool_context.messages = messages.clone();
+                        let exec_fut = executor.execute_many(tool_uses, &tool_context);
                         let mut exec_fut = std::pin::pin!(exec_fut);
                         loop {
                             tokio::select! {
-                                // Tool execution completes
                                 results = &mut exec_fut => {
-                                    // Drain any remaining output
                                     while let Ok((id, name, line)) = output_rx.try_recv() {
                                         yield AgentEvent::ToolOutputLine { id, name, line };
                                     }
                                     break results;
                                 }
-                                // Output line arrives during execution
                                 Some((id, name, line)) = output_rx.recv() => {
                                     yield AgentEvent::ToolOutputLine { id, name, line };
                                 }

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Why the model stopped generating: end of turn, tool use, token limit, or stop sequence.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StopReason {
     EndTurn,
     ToolUse,

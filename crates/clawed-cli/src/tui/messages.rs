@@ -377,7 +377,8 @@ impl Message {
         ));
         if let Some(cmd) = ctx.input {
             let display = if cmd.len() > MAX_INPUT_CHARS {
-                format!("({}\u{2026})", &cmd[..MAX_INPUT_CHARS])
+                let truncated: String = cmd.chars().take(MAX_INPUT_CHARS).collect();
+                format!("({truncated}\u{2026})")
             } else {
                 format!("({})", cmd)
             };
