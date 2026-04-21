@@ -381,6 +381,12 @@ impl OutputRenderer {
                 // Streaming output line — handled by TUI, not CLI output
                 tracing::debug!("[{}] {}", tool_name, line);
             }
+            AgentNotification::SkillsActivated { names } => {
+                eprintln!(
+                    "\x1b[36m\u{1f9e9} Skills activated: {}\x1b[0m",
+                    names.join(", ")
+                );
+            }
         }
         false
     }

@@ -811,8 +811,9 @@ pub fn substitute_arguments(skill: &SkillEntry, args: &str) -> String {
     // 4. $ARGUMENTS — full argument string
     result = result.replace("$ARGUMENTS", args);
 
-    // 5. If no placeholders were substituted and args is non-empty, append
-    if result == original && !args.is_empty() {
+    // 5. If no placeholders were substituted and the original prompt was non-empty,
+    //    append the raw arguments so the skill still receives user input.
+    if !original.is_empty() && result == original && !args.is_empty() {
         result.push_str(&format!("\n\nARGUMENTS: {}", args));
     }
 

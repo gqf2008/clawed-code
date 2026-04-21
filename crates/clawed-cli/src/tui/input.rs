@@ -21,7 +21,7 @@ pub const MAX_INPUT_ROWS: usize = 5;
 
 /// Slash command completion state.
 struct CompletionState {
-    matches: Vec<usize>, // Indices into SLASH_COMMANDS
+    matches: Vec<String>, // Actual command strings (e.g. "/help")
     selected: usize,
 }
 
@@ -32,6 +32,7 @@ pub struct InputWidget {
     history_idx: usize,
     history_saved: Option<String>, // Buffer snapshot when navigating history
     completion: Option<CompletionState>,
+    skill_names: Vec<String>,
 }
 
 pub enum InputAction {
@@ -50,6 +51,7 @@ impl InputWidget {
             history_idx: 0,
             history_saved: None,
             completion: None,
+            skill_names: Vec::new(),
         }
     }
 
@@ -99,8 +101,8 @@ impl InputWidget {
             // Accept slash completion on Enter when a menu is open; otherwise submit.
             KeyCode::Enter if key.modifiers == KeyModifiers::NONE => {
                 if let Some(ref comp) = self.completion {
-                    let idx = comp.matches[comp.selected];
-                    self.textarea.set_text(SLASH_COMMANDS[idx]);
+                    let text = comp.matches[comp.selected].clone();
+                    self.textarea.set_text(&text);
                     self.textarea.set_cursor(self.textarea.text().len());
                     self.completion = None;
                     self.scroll_offset = 0;
@@ -136,8 +138,8 @@ impl InputWidget {
                 if self.textarea.text().starts_with('/') {
                     if let Some(ref comp) = self.completion {
                         // Accept the highlighted item
-                        let idx = comp.matches[comp.selected];
-                        self.textarea.set_text(SLASH_COMMANDS[idx]);
+                        let text = comp.matches[comp.selected].clone();
+                        self.textarea.set_text(&text);
                         self.textarea.set_cursor(self.textarea.text().len());
                         self.completion = None;
                     } else {
@@ -146,8 +148,8 @@ impl InputWidget {
                         // If only one match, auto-accept it immediately
                         if let Some(ref comp) = self.completion {
                             if comp.matches.len() == 1 {
-                                let idx = comp.matches[0];
-                                self.textarea.set_text(SLASH_COMMANDS[idx]);
+                                let text = comp.matches[0].clone();
+                                self.textarea.set_text(&text);
                                 self.textarea.set_cursor(self.textarea.text().len());
                                 self.completion = None;
                             }
@@ -271,11 +273,16 @@ impl InputWidget {
             return;
         }
         let prefix = self.textarea.text();
-        let matches: Vec<usize> = SLASH_COMMANDS
+        let mut matches: Vec<String> = SLASH_COMMANDS
             .iter()
-            .enumerate()
-            .filter_map(|(i, cmd)| cmd.starts_with(prefix).then_some(i))
+            .filter(|&&cmd| cmd.starts_with(prefix))
+            .map(|&cmd| cmd.to_string())
             .collect();
+        for name in &self.skill_names {
+            if name.starts_with(prefix) {
+                matches.push(name.clone());
+            }
+        }
         if matches.is_empty() {
             self.completion = None;
         } else {
@@ -320,9 +327,13 @@ impl InputWidget {
 
     pub fn completion_matches(&self) -> Vec<&str> {
         self.completion
-            .iter()
-            .flat_map(|comp| comp.matches.iter().map(|&i| SLASH_COMMANDS[i]))
-            .collect()
+            .as_ref()
+            .map(|comp| comp.matches.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn set_skill_names(&mut self, names: Vec<String>) {
+        self.skill_names = names;
     }
 
     pub fn completion_selected(&self) -> usize {

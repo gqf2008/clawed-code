@@ -180,7 +180,7 @@ impl SlashCommand {
             "cost" => Self::Cost { window: args },
             "skills" => Self::Skills,
             "memory" => Self::Memory { sub: args },
-            "session" | "sessions" | "resume" => Self::Session { sub: args },
+            "session" | "resume" => Self::Session { sub: args },
             "diff" => Self::Diff,
             "status" => Self::Status,
             "permissions" | "perms" => Self::Permissions { mode: args },
@@ -2195,14 +2195,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_sessions() {
-        assert!(matches!(
-            SlashCommand::parse("/sessions", &no_skills()).unwrap(),
-            SlashCommand::Session { sub } if sub.is_empty()
-        ));
-    }
-
-    #[test]
     fn test_parse_resume() {
         assert!(matches!(
             SlashCommand::parse("/resume", &no_skills()).unwrap(),
@@ -2417,15 +2409,6 @@ mod tests {
         assert!(matches!(
             cmd.execute(&no_skills(), &no_plugins()),
             CommandResult::Memory { sub } if sub == "list"
-        ));
-    }
-
-    #[test]
-    fn test_execute_sessions() {
-        let cmd = SlashCommand::parse("/sessions", &no_skills()).unwrap();
-        assert!(matches!(
-            cmd.execute(&no_skills(), &no_plugins()),
-            CommandResult::Session { sub } if sub.is_empty()
         ));
     }
 

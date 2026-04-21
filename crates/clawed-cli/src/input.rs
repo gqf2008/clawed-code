@@ -33,7 +33,6 @@ pub const SLASH_COMMANDS: &[&str] = &[
     "/skills",
     "/memory",
     "/session",
-    "/sessions",
     "/resume",
     "/diff",
     "/status",
@@ -97,7 +96,6 @@ pub(crate) fn command_description(name: &str) -> &'static str {
         "/skills" => "List available skills",
         "/memory" => "Manage memory files",
         "/session" => "Manage sessions",
-        "/sessions" => "List saved sessions",
         "/resume" => "Resume a session",
         "/diff" => "Show git diff",
         "/status" => "Show session and git status",
@@ -189,11 +187,16 @@ impl Hint for SlashHint {
 }
 
 /// Rustyline helper: slash command + @file completion, hints, and highlighting.
-struct InputHelper;
+struct InputHelper {
+    /// Dynamic skill commands: ("/name", "description").
+    skills: Vec<(String, String)>,
+}
 
 impl InputHelper {
     fn new() -> Self {
-        Self
+        Self {
+            skills: Vec::new(),
+        }
     }
 }
 
@@ -212,18 +215,27 @@ impl Completer for InputHelper {
 
         // Empty buffer — user pressed "/" which fires Cmd::Complete; show all commands.
         if line.is_empty() {
-            let pairs = slash_command_pairs(SLASH_COMMANDS);
+            let mut pairs = slash_command_pairs(SLASH_COMMANDS);
+            for (name, desc) in &self.skills {
+                pairs.push(skill_pair(name, desc));
+            }
             return Ok((0, pairs));
         }
 
         // Slash command completion
         if line.starts_with('/') && !line.contains(' ') {
-            let matching: Vec<&str> = SLASH_COMMANDS
+            let matching_static: Vec<&str> = SLASH_COMMANDS
                 .iter()
                 .copied()
                 .filter(|cmd| cmd.starts_with(line))
                 .collect();
-            return Ok((0, slash_command_pairs(&matching)));
+            let mut pairs = slash_command_pairs(&matching_static);
+            for (name, desc) in &self.skills {
+                if name.starts_with(line) {
+                    pairs.push(skill_pair(name, desc));
+                }
+            }
+            return Ok((0, pairs));
         }
 
         // @file path completion
@@ -257,30 +269,40 @@ impl Hinter for InputHelper {
         }
         // Exact "/" with nothing after → informational only (right-arrow must NOT accept this)
         if line == "/" {
+            let total = SLASH_COMMANDS.len() + self.skills.len();
             return Some(SlashHint {
-                text: format!("  (Tab: {} commands)", SLASH_COMMANDS.len()),
+                text: format!("  (Tab: {total} commands)"),
                 is_completion: false,
             });
         }
-        let mut found: Option<&str> = None;
-        for cmd in SLASH_COMMANDS {
-            if cmd.starts_with(line) && *cmd != line {
-                if found.is_some() {
-                    // Ambiguous: informational count hint (right-arrow must NOT accept this)
-                    let count = SLASH_COMMANDS
-                        .iter()
-                        .filter(|c| c.starts_with(line))
-                        .count();
-                    return Some(SlashHint {
-                        text: format!("  (Tab: {count} matches)"),
-                        is_completion: false,
-                    });
-                }
-                found = Some(cmd);
-            }
+        // Count all matching commands (static + skills) for accurate totals
+        let static_matches: Vec<&str> = SLASH_COMMANDS
+            .iter()
+            .copied()
+            .filter(|cmd| cmd.starts_with(line) && *cmd != line)
+            .collect();
+        let skill_matches: Vec<&str> = self
+            .skills
+            .iter()
+            .filter(|(name, _)| name.starts_with(line) && name.as_str() != line)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        let total = static_matches.len() + skill_matches.len();
+        if total == 0 {
+            return None;
+        }
+        if total > 1 {
+            return Some(SlashHint {
+                text: format!("  (Tab: {total} matches)"),
+                is_completion: false,
+            });
         }
         // Unique match: real completion suffix (right-arrow accepts it)
-        found.map(|cmd| SlashHint {
+        let unique = static_matches
+            .first()
+            .copied()
+            .or(skill_matches.first().copied());
+        unique.map(|cmd| SlashHint {
             text: cmd[line.len()..].to_string(),
             is_completion: true,
         })
@@ -341,6 +363,19 @@ fn slash_command_pairs(cmds: &[&str]) -> Vec<Pair> {
             }
         })
         .collect()
+}
+
+/// Build a `Pair` for a dynamic skill command.
+fn skill_pair(name: &str, desc: &str) -> Pair {
+    let display = if desc.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name}  \x1b[2m{desc}\x1b[0m")
+    };
+    Pair {
+        display,
+        replacement: name.to_string(),
+    }
 }
 
 /// Event handler: pressing `/` on an **empty** buffer fires `Cmd::Complete`
@@ -463,6 +498,13 @@ impl InputReader {
     /// Save history to a file.
     pub fn save_history(&mut self, path: &Path) {
         let _ = self.editor.save_history(path);
+    }
+
+    /// Update the dynamic skill commands shown in tab completion.
+    pub fn set_skills(&mut self, skills: Vec<(String, String)>) {
+        if let Some(helper) = self.editor.helper_mut() {
+            helper.skills = skills;
+        }
     }
 
     /// Check whether this reader can be used (requires a real terminal).

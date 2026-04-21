@@ -19,6 +19,19 @@ use clawed_core::tool::ToolContext;
 
 use helpers::*;
 
+/// Extract file paths from a tool's input JSON for conditional skill activation.
+fn extract_tool_paths(input: &serde_json::Value) -> Vec<String> {
+    let mut paths = Vec::new();
+    if let Some(path) = input.get("file_path").and_then(|v| v.as_str()) {
+        paths.push(path.to_string());
+    } else if let Some(path) = input.get("path").and_then(|v| v.as_str()) {
+        paths.push(path.to_string());
+    } else if let Some(pattern) = input.get("pattern").and_then(|v| v.as_str()) {
+        paths.push(pattern.to_string());
+    }
+    paths
+}
+
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     TextDelta(String),
@@ -69,6 +82,8 @@ pub enum AgentEvent {
     MaxTurns {
         limit: u32,
     },
+    /// Conditional skills were activated based on file paths touched by tools.
+    SkillsActivated { names: Vec<String> },
     Error(String),
 }
 
@@ -292,6 +307,7 @@ pub fn query_stream_with_injection(
             let mut assistant_text = String::new();
             let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
             let mut tool_uses: Vec<(String, String, serde_json::Value)> = Vec::new();
+            let mut tool_paths: Vec<String> = Vec::new();
             let mut current_tool_input = String::new();
             let mut current_tool_id = String::new();
             let mut current_tool_name = String::new();
@@ -308,6 +324,12 @@ pub fn query_stream_with_injection(
             // ToolOutputLine.
             let mut early_exec: Option<tokio::task::JoinHandle<Vec<ContentBlock>>> = None;
             while let Some(event_result) = event_stream.next().await {
+                // Allow user abort (Esc / Ctrl-C) to interrupt the SSE stream
+                // mid-flight so output stops immediately rather than waiting for
+                // the API to finish the current turn.
+                if tool_context.abort_signal.is_aborted() {
+                    break;
+                }
                 match event_result {
                     Ok(event) => match event {
                         StreamEvent::ContentBlockStart { content_block, .. } => {
@@ -369,6 +391,7 @@ pub fn query_stream_with_injection(
                                     name: current_tool_name.clone(),
                                     input: input.clone(),
                                 });
+                                tool_paths.extend(extract_tool_paths(&input));
                                 tool_uses.push((current_tool_id.clone(), current_tool_name.clone(), input));
                                 current_tool_id.clear();
                                 current_tool_name.clear();
@@ -465,6 +488,14 @@ pub fn query_stream_with_injection(
                 while let Ok((id, name, line)) = output_rx.try_recv() {
                     yield AgentEvent::ToolOutputLine { id, name, line };
                 }
+            }
+
+            // User aborted mid-stream — don't persist a partial assistant message.
+            // Check before should_retry_turn so abort always wins over timeout-retry.
+            if tool_context.abort_signal.is_aborted() {
+                state.write().await.messages = messages.clone();
+                yield AgentEvent::TurnComplete { stop_reason: StopReason::EndTurn };
+                break;
             }
 
             // If a stream timeout triggered a retry, skip message processing
@@ -657,6 +688,20 @@ pub fn query_stream_with_injection(
                             yield AgentEvent::ToolResult { id: tool_use_id.clone(), is_error: *is_error, text: result_text };
                         }
                     }
+
+                    // ── Conditional skill activation (based on files touched) ──
+                    if !tool_paths.is_empty() {
+                        let paths: Vec<&str> = tool_paths.iter().map(|s| s.as_str()).collect();
+                        let activated = clawed_core::skills::activate_conditional_skills(
+                            &paths,
+                            &tool_context.cwd,
+                        );
+                        if !activated.is_empty() {
+                            yield AgentEvent::SkillsActivated { names: activated };
+                        }
+                        tool_paths.clear();
+                    }
+
                     turn_count += 1;
                     stop_hook_retries = 0;
                     { let mut s = state.write().await; s.turn_count = turn_count; }

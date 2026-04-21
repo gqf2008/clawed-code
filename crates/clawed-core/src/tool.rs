@@ -22,15 +22,15 @@ impl AbortSignal {
     }
     /// Set the abort flag. All clones observe the change immediately.
     pub fn abort(&self) {
-        self.0.store(true, Ordering::SeqCst);
+        self.0.store(true, Ordering::Relaxed);
     }
     /// Check whether abort has been requested.
     pub fn is_aborted(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
+        self.0.load(Ordering::Relaxed)
     }
     /// Clear the abort flag so the signal can be reused.
     pub fn reset(&self) {
-        self.0.store(false, Ordering::SeqCst);
+        self.0.store(false, Ordering::Relaxed);
     }
 }
 

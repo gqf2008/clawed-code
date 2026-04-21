@@ -641,6 +641,9 @@ struct App {
     /// Current permission mode label (e.g. "bypass", "default").
     /// Updated when user changes it via /permissions.
     permission_mode: String,
+    /// If a skill temporarily switched the model, store (original_model, skill_name)
+    /// here so it can be restored when TurnComplete arrives.
+    pending_skill_restore: Option<(Option<String>, String)>,
 }
 
 impl App {
@@ -682,6 +685,7 @@ impl App {
             term_width: 0,
             term_height: 0,
             permission_mode: String::new(),
+            pending_skill_restore: None,
         }
     }
 
@@ -1267,6 +1271,14 @@ impl App {
             } => {
                 self.model = model;
                 self.push_message(MessageContent::System(format!("Model: {display_name}")));
+            }
+            AgentNotification::SkillsActivated { names } => {
+                let list = names.join(", ");
+                self.push_message(MessageContent::System(format!(
+                    "\u{1f9e9} Skills activated: {list}"
+                )));
+                // Skill names for tab-completion were already loaded at startup
+                // and on /reload-context; activation doesn't change the name list.
             }
             // Notifications that now produce visible output
             AgentNotification::SessionStatus {
@@ -2308,13 +2320,27 @@ fn render_welcome_lines(width: u16, model: &str, permission_mode: &str) -> Vec<L
     welcome
 }
 
+/// If a skill temporarily changed the model or set a context, and the turn
+/// has ended (`is_generating` is false), restore the original state.
+async fn restore_skill_state_if_done(app: &mut App, engine: &Arc<QueryEngine>) {
+    if !app.is_generating {
+        if let Some((original_model, skill_name)) = app.pending_skill_restore.take() {
+            tracing::info!("[skill] restore_skill_state_if_done: restoring after skill '{skill_name}', is_generating={}", app.is_generating);
+            if let Some(orig) = original_model {
+                engine.state().write().await.model = orig;
+            }
+            engine.clear_skill_allowed_tools();
+        }
+    }
+}
+
 // -- Public entry point -------------------------------------------------------
 
 /// Run the full-screen TUI.
 pub async fn run_tui(
     client: ClientHandle,
     engine: Arc<QueryEngine>,
-    _cwd: std::path::PathBuf,
+    cwd: std::path::PathBuf,
     ask_permission: bool,
 ) -> anyhow::Result<()> {
     let model = { engine.state().read().await.model.clone() };
@@ -2342,6 +2368,14 @@ pub async fn run_tui(
             app.input.load_history(history);
         }
     }
+
+    // Load skills for tab completion
+    let startup_skills = clawed_core::skills::get_skills(&cwd);
+    let skill_names: Vec<String> = startup_skills
+        .iter()
+        .map(|s| format!("/{}", s.name))
+        .collect();
+    app.input.set_skill_names(skill_names);
 
     // Spawn notification forwarder: async recv from broadcast -> sync mpsc
     let mut notify_sub = client.subscribe_notifications();
@@ -2431,6 +2465,7 @@ pub async fn run_tui(
             }
             let turn_complete = matches!(notification, AgentNotification::TurnComplete { .. });
             let merged = app.handle_notification(notification);
+            restore_skill_state_if_done(&mut app, &engine).await;
             let workflow_submitted = if turn_complete {
                 handle_pending_workflow(&client, &mut app).await
             } else {
@@ -2467,6 +2502,7 @@ pub async fn run_tui(
                         since.elapsed().as_secs()
                     );
                     app.mark_done();
+                    restore_skill_state_if_done(&mut app, &engine).await;
                     app.push_message(MessageContent::System(
                         "[Auto-recovered: API stream stalled. You can retry your request.]"
                             .to_string(),
@@ -2551,6 +2587,7 @@ pub async fn run_tui(
                     {
                         let _ = client.abort();
                         app.mark_done();
+                        restore_skill_state_if_done(&mut app, &engine).await;
                         app.pending_workflow = None;
                         app.queued_inputs.clear();
                         app.push_message(MessageContent::System("[Aborted]".to_string()));
@@ -2636,6 +2673,7 @@ pub async fn run_tui(
                             if app.is_generating {
                                 let _ = client.abort();
                                 app.mark_done();
+                                restore_skill_state_if_done(&mut app, &engine).await;
                                 app.pending_workflow = None;
                                 app.queued_inputs.clear();
                                 app.push_message(MessageContent::System("[Aborted]".to_string()));
@@ -2648,6 +2686,7 @@ pub async fn run_tui(
                         (KeyCode::Esc, _) if app.is_generating => {
                             let _ = client.abort();
                             app.mark_done();
+                            restore_skill_state_if_done(&mut app, &engine).await;
                             app.pending_workflow = None;
                             app.queued_inputs.clear();
                             app.push_message(MessageContent::System("[Aborted]".to_string()));
@@ -2788,6 +2827,7 @@ pub async fn run_tui(
                                     if text == "/abort" {
                                         let _ = client.abort();
                                         app.mark_done();
+                                        restore_skill_state_if_done(&mut app, &engine).await;
                                         app.pending_workflow = None;
                                         app.queued_inputs.clear();
                                         app.push_message(MessageContent::System(
@@ -2830,6 +2870,7 @@ pub async fn run_tui(
                         input::InputAction::Abort => {
                             let _ = client.abort();
                             app.mark_done();
+                            restore_skill_state_if_done(&mut app, &engine).await;
                             app.pending_workflow = None;
                             app.queued_inputs.clear();
                             app.push_message(MessageContent::System("[Aborted]".to_string()));
@@ -3742,6 +3783,12 @@ async fn handle_async_command(
         CommandResult::ReloadContext => {
             let cwd = std::env::current_dir().unwrap_or_default();
             let info = crate::repl_commands::handle_reload_context_str(engine, &cwd).await;
+            let skills = clawed_core::skills::get_skills(&cwd);
+            let skill_names: Vec<String> = skills
+                .iter()
+                .map(|s| format!("/{}", s.name))
+                .collect();
+            app.input.set_skill_names(skill_names);
             app.overlay = Some(overlay::build_info_overlay("Reload Context", &info));
         }
         CommandResult::Theme { name } => {
@@ -3783,25 +3830,62 @@ async fn handle_async_command(
         CommandResult::RunSkill { name, prompt } => {
             let cwd = std::env::current_dir().unwrap_or_default();
             let skills = clawed_core::skills::get_skills(&cwd);
-            if prompt.trim().is_empty() {
-                app.push_message(MessageContent::System(format!("Usage: /{name} <prompt>",)));
-            } else {
-                match crate::repl_commands::find_skill(&skills, &name) {
-                    Ok(skill) => {
-                        app.push_message(MessageContent::System(format!("Running skill: {name}",)));
-                        if !skill.allowed_tools.is_empty() {
-                            app.push_message(MessageContent::System(format!(
-                                "Skill restricts tools to: {}",
-                                skill.allowed_tools.join(", "),
-                            )));
+            match crate::repl_commands::find_skill(&skills, &name) {
+                Ok(skill) => {
+                    app.push_message(MessageContent::System(format!("Running skill: {name}",)));
+                    if !skill.allowed_tools.is_empty() {
+                        app.push_message(MessageContent::System(format!(
+                            "Skill restricts tools to: {}",
+                            skill.allowed_tools.join(", "),
+                        )));
+                    }
+
+                    // Pass raw prompt (or empty) so substitute_arguments
+                    // doesn't append "ARGUMENTS: Execute the X skill" to skill content.
+                    // Always include the skill name in the user prompt so the model
+                    // can unambiguously associate the request with the skill.
+                    let (user_msg, skill_args) = if prompt.trim().is_empty() {
+                        (format!("Execute the {} skill", name), "")
+                    } else {
+                        (format!("[{name}] {prompt}"), prompt.as_str())
+                    };
+
+                    // Build combined user message with skill content + XML metadata tags.
+                    // Skill content is delivered as a user message (not system prompt),
+                    // matching the reference TS implementation.
+                    let combined_msg = if let Some(msg) =
+                        crate::repl_commands::build_skill_user_message(skill, skill_args, &user_msg)
+                    {
+                        msg
+                    } else {
+                        user_msg.clone()
+                    };
+
+                    // Set allowed tools for tool filtering
+                    if !skill.allowed_tools.is_empty() {
+                        engine.set_skill_allowed_tools(skill.allowed_tools.clone());
+                    }
+
+                    // Temporarily switch model if skill specifies one
+                    let original_model = if let Some(ref skill_model) = skill.model {
+                        let (orig, msg) = crate::repl_commands::switch_model_for_skill(engine, skill_model).await;
+                        if let Some(msg) = msg {
+                            app.push_message(MessageContent::System(msg));
                         }
-                        let augmented = crate::repl_commands::build_skill_prompt(skill, &prompt);
-                        let _ = client.submit(&augmented);
-                        app.mark_generating();
-                    }
-                    Err(message) => {
-                        app.push_message(MessageContent::System(message));
-                    }
+                        orig
+                    } else {
+                        None
+                    };
+
+                    let _ = client.submit(&combined_msg);
+                    app.mark_generating();
+
+                    // Model and tool whitelist are restored after TurnComplete arrives.
+                    // Store them on App for later cleanup.
+                    app.pending_skill_restore = Some((original_model, skill.name.clone()));
+                }
+                Err(message) => {
+                    app.push_message(MessageContent::System(message));
                 }
             }
         }
@@ -5305,15 +5389,6 @@ mod tests {
         let mut app = App::new("test".to_string());
 
         app.handle_slash_command(&client, "/plan");
-        assert!(app.pending_command.is_some());
-    }
-
-    #[test]
-    fn e2e_slash_command_sessions_goes_to_pending() {
-        let (_bus, client) = EventBus::new(16);
-        let mut app = App::new("test".to_string());
-
-        app.handle_slash_command(&client, "/sessions");
         assert!(app.pending_command.is_some());
     }
 

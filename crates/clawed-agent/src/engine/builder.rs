@@ -485,6 +485,7 @@ impl QueryEngineBuilder {
             break_cache_next: AtomicBool::new(false),
             thinking_override: std::sync::Mutex::new(ThinkingOverride::UseDefault),
             agent_notif_rx,
+            skill_allowed_tools: std::sync::Mutex::new(Vec::new()),
         }
     }
 }

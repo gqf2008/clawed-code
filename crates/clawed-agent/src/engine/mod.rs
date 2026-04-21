@@ -18,6 +18,7 @@ use clawed_api::client::ApiClient;
 use clawed_api::types::{CacheControl, ThinkingConfig, ToolDefinition};
 use clawed_bus::AgentNotification;
 use clawed_core::message::Message;
+use clawed_core::sync::lock_or_recover;
 use clawed_core::tool::AbortSignal;
 use clawed_tools::ToolRegistry;
 
@@ -84,6 +85,8 @@ pub struct QueryEngine {
     /// Drained by `drain_agent_notifications()` and forwarded to the bus adapter.
     pub agent_notif_rx:
         Option<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<AgentNotification>>>,
+    /// Temporary tool whitelist for the next skill submission.
+    skill_allowed_tools: std::sync::Mutex<Vec<String>>,
 }
 
 impl QueryEngine {
@@ -95,15 +98,28 @@ impl QueryEngine {
     }
 
     fn tool_definitions(&self, permission_mode: PermissionMode) -> Vec<ToolDefinition> {
+        let skill_tools_guard = lock_or_recover(&self.skill_allowed_tools);
+        if skill_tools_guard.is_empty() {
+            self.build_tool_definitions(permission_mode, &self.allowed_tools)
+        } else {
+            let skill_tools = skill_tools_guard.clone();
+            self.build_tool_definitions(permission_mode, &skill_tools)
+        }
+    }
+
+    fn build_tool_definitions(
+        &self,
+        permission_mode: PermissionMode,
+        effective_allowed: &[String],
+    ) -> Vec<ToolDefinition> {
         let mut defs: Vec<ToolDefinition> = self
             .registry
             .all()
             .iter()
             .filter(|t| t.is_enabled())
             .filter(|t| {
-                self.allowed_tools.is_empty()
-                    || self
-                        .allowed_tools
+                effective_allowed.is_empty()
+                    || effective_allowed
                         .iter()
                         .any(|a| a.eq_ignore_ascii_case(t.name()))
             })
@@ -148,6 +164,20 @@ impl QueryEngine {
             auto_compact_state: Some(Arc::clone(&self.auto_compact)),
             break_cache: self.take_break_cache(),
         }
+    }
+
+    /// Set the temporary tool whitelist for the next skill submission.
+    /// Call `clear_skill_allowed_tools()` after the skill turn completes.
+    pub fn set_skill_allowed_tools(&self, allowed_tools: Vec<String>) {
+        *lock_or_recover(&self.skill_allowed_tools) = allowed_tools;
+        tracing::info!("[skill] set_skill_allowed_tools: {} tools", lock_or_recover(&self.skill_allowed_tools).len());
+    }
+
+    /// Clear the temporary skill tool whitelist.
+    pub fn clear_skill_allowed_tools(&self) {
+        let had = !lock_or_recover(&self.skill_allowed_tools).is_empty();
+        lock_or_recover(&self.skill_allowed_tools).clear();
+        tracing::info!("[skill] clear_skill_allowed_tools (had_tools={})", had);
     }
 
     /// Get the cost tracker for displaying usage stats.

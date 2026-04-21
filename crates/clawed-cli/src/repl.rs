@@ -63,6 +63,13 @@ pub async fn run(
         rl.load_history(path);
     }
 
+    // Load skills for tab completion (re-use the already-fetched list)
+    let skill_entries: Vec<(String, String)> = startup_skills
+        .iter()
+        .map(|s| (format!("/{}", s.name), s.description.clone()))
+        .collect();
+    rl.set_skills(skill_entries);
+
     // Start real-time config file watcher (CLAUDE.md + settings.json)
     let mut config_watcher = ConfigWatcher::start(&cwd).ok();
 
@@ -421,6 +428,12 @@ pub async fn run(
                             }
                             CommandResult::ReloadContext => {
                                 handle_reload_context(&engine, &cwd).await;
+                                let skills = clawed_core::skills::get_skills(&cwd);
+                                let skill_entries: Vec<(String, String)> = skills
+                                    .iter()
+                                    .map(|s| (format!("/{}", s.name), s.description.clone()))
+                                    .collect();
+                                rl.set_skills(skill_entries);
                             }
                             CommandResult::Mcp { sub } => {
                                 handle_mcp_command(&sub, &cwd);

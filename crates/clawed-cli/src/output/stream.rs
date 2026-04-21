@@ -178,6 +178,13 @@ pub async fn print_stream(
             AgentEvent::ToolOutputLine { .. } => {
                 // Streaming output line — handled by TUI, not CLI output
             }
+            AgentEvent::SkillsActivated { names } => {
+                eprintln!(
+                    "{}Skills activated: {}\x1b[0m",
+                    theme::c_tool(),
+                    names.join(", ")
+                );
+            }
         }
     }
     md.finish();

@@ -702,6 +702,16 @@ pub fn notification_to_jsonrpc(notif: &AgentNotification) -> Notification {
                 ],
             ),
         ),
+        AgentNotification::SkillsActivated { names } => Notification::new(
+            "agent.skillsActivated",
+            json_obj(
+                3,
+                &[(
+                    "names",
+                    Value::Array(names.iter().map(|n| Value::String(n.clone())).collect()),
+                )],
+            ),
+        ),
     }
 }
 

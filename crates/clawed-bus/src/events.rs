@@ -198,6 +198,10 @@ pub enum AgentNotification {
         agents: Vec<String>,
     },
 
+    // ── Skills ──
+    /// Conditional skills were activated based on file paths touched by tools.
+    SkillsActivated { names: Vec<String>, },
+
     // ── Errors ──
     /// A non-fatal error occurred.
     Error { code: ErrorCode, message: String },

@@ -203,7 +203,8 @@ where
             | AgentEvent::ContextWarning { .. }
             | AgentEvent::CompactStart
             | AgentEvent::CompactComplete { .. }
-            | AgentEvent::ToolOutputLine { .. } => {}
+            | AgentEvent::ToolOutputLine { .. }
+            | AgentEvent::SkillsActivated { .. } => {}
         }
     }
 

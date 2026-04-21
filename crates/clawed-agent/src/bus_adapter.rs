@@ -456,6 +456,10 @@ impl AgentCoreAdapter {
                     },
                 },
 
+                AgentEvent::SkillsActivated { names } => {
+                    AgentNotification::SkillsActivated { names }
+                }
+
                 AgentEvent::Error(msg) => AgentNotification::Error {
                     code: ErrorCode::InternalError,
                     message: msg,
@@ -873,6 +877,9 @@ mod tests {
                 code: ErrorCode::InternalError,
                 message: msg,
             }),
+            AgentEvent::SkillsActivated { names } => {
+                Some(AgentNotification::SkillsActivated { names })
+            }
             AgentEvent::ToolOutputLine { id, name, line } => {
                 Some(AgentNotification::ToolOutputLine {
                     id,
