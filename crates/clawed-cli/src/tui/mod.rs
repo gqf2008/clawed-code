@@ -6764,8 +6764,32 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn e2e_commit_with_cjk_characters() {
         let tmp = TempDir::new().unwrap();
+        let repo = tmp.path();
+
+        fn run_git(repo: &std::path::Path, args: &[&str]) {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(repo)
+                .output()
+                .unwrap_or_else(|e| panic!("failed to execute git {}: {}", args.join(" "), e));
+            assert!(
+                output.status.success(),
+                "git {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        // Initialise a git repo with staged changes so prepare_commit_prompt succeeds
+        run_git(repo, &["init"]);
+        run_git(repo, &["config", "user.email", "test@example.com"]);
+        run_git(repo, &["config", "user.name", "Test User"]);
+        std::fs::write(repo.join("file.txt"), "hello").unwrap();
+        run_git(repo, &["add", "file.txt"]);
+        run_git(repo, &["commit", "-m", "initial"]);
+
         let engine = Arc::new(
-            QueryEngine::builder("test-key", tmp.path())
+            QueryEngine::builder("test-key", repo)
                 .load_claude_md(false)
                 .load_memory(false)
                 .build(),
