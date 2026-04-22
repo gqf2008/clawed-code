@@ -332,6 +332,14 @@ impl InputWidget {
             .unwrap_or_default()
     }
 
+    /// Whether the completion dropdown is currently active (non-empty matches).
+    /// Prefer this over `completion_matches()` on hot paths — it does not allocate.
+    pub fn has_completion(&self) -> bool {
+        self.completion
+            .as_ref()
+            .is_some_and(|comp| !comp.matches.is_empty())
+    }
+
     pub fn set_skill_names(&mut self, names: Vec<String>) {
         self.skill_names = names;
     }

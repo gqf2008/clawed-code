@@ -62,7 +62,7 @@ const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SPINNER_TICK_INTERVAL: Duration = Duration::from_millis(80);
 /// Minimum time between renders during active streaming. Prevents the event loop
 /// from spending all its CPU on rendering, leaving no time for input processing.
-const MIN_RENDER_INTERVAL: Duration = Duration::from_millis(32);
+const MIN_RENDER_INTERVAL: Duration = Duration::from_millis(50);
 /// Periodic full-clear interval to self-heal screen corruption caused by
 /// external output (eprintln, third-party crates, sub-process leaks) that
 /// invalidates ratatui's diff-based rendering when not using alternate screen.
@@ -1009,8 +1009,19 @@ impl App {
         self.invalidate_visible_lines();
         self.last_spinner_tick = Instant::now();
         self.expecting_turn_start = false;
+        // active_tools / active_shells are intentionally NOT cleared here.
+        // They track tool execution lifecycle (ToolUseStart → ToolUseComplete)
+        // and may outlive the API stream. Clearing them on TurnComplete would
+        // make spinner_active() return false while tools are still running,
+        // breaking Esc abort.
+    }
+
+    /// Hard-reset tool state. Called on error / abort / timeout when the normal
+    /// ToolUseComplete lifecycle may not arrive.
+    fn clear_tool_state(&mut self) {
         self.status.active_tools.clear();
         self.status.active_shells = 0;
+        self.task_plan.set_shells(0);
     }
 
     fn take_queued_inputs(&mut self) -> Option<String> {
@@ -1306,6 +1317,7 @@ impl App {
             AgentNotification::Error { message, .. } => {
                 self.push_message(MessageContent::System(format!("\u{2717} Error: {message}")));
                 self.mark_done();
+                self.clear_tool_state();
             }
             AgentNotification::ModelChanged {
                 model,
@@ -1744,7 +1756,11 @@ fn render(frame: &mut Frame, app: &mut App) {
     };
     let task_plan_rows = app.task_plan.render_height();
 
-    let input_rows = app.input.visible_rows();
+    let input_rows = if app.footer_picker.is_some() || app.input.has_completion() {
+        1
+    } else {
+        app.input.visible_rows()
+    };
     let completion_rows = if has_permission {
         0
     } else {
@@ -1857,8 +1873,7 @@ fn render(frame: &mut Frame, app: &mut App) {
 }
 
 fn poll_interval(app: &App) -> Duration {
-    if app.is_generating
-        || !app.status.active_tools.is_empty()
+    if app.spinner_active()
         || app.status.active_shells > 0
         || !app.status.active_agents.is_empty()
     {
@@ -1873,33 +1888,29 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    let (all_lines, cached_visual_count): (Vec<Line<'static>>, Option<usize>) =
-        if app.messages.is_empty() {
-            (
-                render_welcome_lines(area.width, &app.model, &app.permission_mode),
-                None,
-            )
-        } else {
-            app.rebuild_visible_lines();
-            let cached_visual_count = app
-                .cached_visible_line_count
-                .and_then(|(width, count)| (width == area.width).then_some(count));
-            (app.cached_visible_lines.clone(), cached_visual_count)
-        };
+    if app.messages.is_empty() {
+        let welcome = render_welcome_lines(area.width, &app.model, &app.permission_mode);
+        frame.render_widget(Paragraph::new(welcome).wrap(Wrap { trim: false }), area);
+        return;
+    }
+
+    app.rebuild_visible_lines();
+
+    let cached_visual_count = app
+        .cached_visible_line_count
+        .and_then(|(width, count)| (width == area.width).then_some(count));
 
     let viewport_height = area.height as usize;
 
-    // Build the full paragraph and let ratatui compute the exact visual row count.
-    // This avoids the div_ceil approximation which can be wrong for word-wrapped
-    // content (word boundaries differ from column boundaries).
+    let all_lines = app.cached_visible_lines.clone();
+
+    // Compute visual line count only when cache is stale.
     let paragraph = Paragraph::new(all_lines).wrap(Wrap { trim: false });
     let total_visual = if let Some(count) = cached_visual_count {
         count
     } else {
         let count = paragraph.line_count(area.width);
-        if !app.messages.is_empty() {
-            app.cached_visible_line_count = Some((area.width, count));
-        }
+        app.cached_visible_line_count = Some((area.width, count));
         count
     };
 
@@ -1909,8 +1920,6 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
     } else {
         let max_scroll = total_visual - viewport_height;
         let clamped = app.scroll_offset.min(max_scroll);
-        // Skip (max_scroll - clamped) visual rows from the top to anchor to the bottom.
-        // Clamp to u16::MAX: content beyond 65 k visual rows still renders from the bottom.
         (max_scroll - clamped).min(u16::MAX as usize) as u16
     };
 
@@ -2387,6 +2396,24 @@ async fn restore_skill_state_if_done(app: &mut App, engine: &Arc<QueryEngine>) {
     }
 }
 
+/// Abort the current session: signal the engine, clean up UI state, and push
+/// an "[Aborted]" message. Shared by Esc, Ctrl+C, and the Esc-fallback path.
+async fn abort_session(
+    client: &ClientHandle,
+    app: &mut App,
+    engine: &Arc<QueryEngine>,
+) {
+    // Signal the engine directly so the abort flag is set immediately,
+    // even though the bus adapter may be blocked inside stream_events().
+    engine.abort();
+    let _ = client.abort();
+    app.mark_done();
+    restore_skill_state_if_done(app, engine).await;
+    app.pending_workflow = None;
+    app.queued_inputs.clear();
+    app.push_message(MessageContent::System("[Aborted]".to_string()));
+}
+
 /// Restore a session and replay its messages into the TUI, then push a status message.
 async fn do_resume_session(engine: &Arc<QueryEngine>, app: &mut App, id: &str) {
     match engine.restore_session(id).await {
@@ -2531,7 +2558,9 @@ pub async fn run_tui(
             }
             let turn_complete = matches!(notification, AgentNotification::TurnComplete { .. });
             let merged = app.handle_notification(notification);
-            restore_skill_state_if_done(&mut app, &engine).await;
+            if turn_complete {
+                restore_skill_state_if_done(&mut app, &engine).await;
+            }
             let workflow_submitted = if turn_complete {
                 handle_pending_workflow(&client, &mut app).await
             } else {
@@ -2569,6 +2598,7 @@ pub async fn run_tui(
                     );
                     app.mark_done();
                     restore_skill_state_if_done(&mut app, &engine).await;
+                    app.clear_tool_state();
                     app.push_message(MessageContent::System(
                         "[Auto-recovered: API stream stalled. You can retry your request.]"
                             .to_string(),
@@ -2604,7 +2634,7 @@ pub async fn run_tui(
         // to self-heal. Skip when idle (no generation, no active tools) since
         // corruption is far less likely then.
         if app.last_periodic_clear.elapsed() >= PERIODIC_CLEAR_INTERVAL
-            && (app.is_generating || !app.status.active_tools.is_empty())
+            && app.spinner_active()
         {
             terminal.clear()?;
             app.last_periodic_clear = Instant::now();
@@ -2647,16 +2677,11 @@ pub async fn run_tui(
                     // but only when no overlay or permission prompt is open
                     // (those handle Esc themselves first).
                     if key.code == KeyCode::Esc
-                        && app.is_generating
+                        && app.spinner_active()
                         && app.overlay.is_none()
                         && app.permission.is_none()
                     {
-                        let _ = client.abort();
-                        app.mark_done();
-                        restore_skill_state_if_done(&mut app, &engine).await;
-                        app.pending_workflow = None;
-                        app.queued_inputs.clear();
-                        app.push_message(MessageContent::System("[Aborted]".to_string()));
+                        abort_session(&client, &mut app, &engine).await;
                         continue;
                     }
 
@@ -2736,26 +2761,16 @@ pub async fn run_tui(
                     // Global shortcuts
                     match (key.code, key.modifiers) {
                         (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                            if app.is_generating {
-                                let _ = client.abort();
-                                app.mark_done();
-                                restore_skill_state_if_done(&mut app, &engine).await;
-                                app.pending_workflow = None;
-                                app.queued_inputs.clear();
-                                app.push_message(MessageContent::System("[Aborted]".to_string()));
+                            if app.spinner_active() {
+                                abort_session(&client, &mut app, &engine).await;
                             } else {
                                 app.running = false;
                             }
                             continue;
                         }
                         // Esc fallback (when not generating — handled above in early check)
-                        (KeyCode::Esc, _) if app.is_generating => {
-                            let _ = client.abort();
-                            app.mark_done();
-                            restore_skill_state_if_done(&mut app, &engine).await;
-                            app.pending_workflow = None;
-                            app.queued_inputs.clear();
-                            app.push_message(MessageContent::System("[Aborted]".to_string()));
+                        (KeyCode::Esc, _) if app.spinner_active() => {
+                            abort_session(&client, &mut app, &engine).await;
                             continue;
                         }
                         (KeyCode::Char('t'), KeyModifiers::CONTROL) => {
@@ -4372,7 +4387,7 @@ mod tests {
     #[test]
     fn poll_interval_is_active_while_generating() {
         let mut app = App::new("test".to_string());
-        app.is_generating = true;
+        app.status.is_generating = true;
         assert_eq!(poll_interval(&app), ACTIVE_POLL_INTERVAL);
     }
 
