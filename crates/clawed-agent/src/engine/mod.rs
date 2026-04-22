@@ -211,6 +211,17 @@ impl QueryEngine {
         messages
     }
 
+    /// Inject a context note into the conversation as a system message without triggering an API call.
+    /// Used by `/btw` to add side-channel notes visible to the model on the next turn.
+    pub async fn inject_context(&self, text: &str) {
+        use clawed_core::message::{Message, SystemMessage};
+        let msg = Message::System(SystemMessage {
+            uuid: uuid::Uuid::new_v4().to_string(),
+            message: format!("[btw] {text}"),
+        });
+        self.state().write().await.messages.push(msg);
+    }
+
     /// Drain any pending bus `AgentNotification`s emitted by background sub-agents.
     /// Called by the bus adapter to forward these notifications to all TUI clients.
     pub fn drain_agent_notifications(&self) -> Vec<AgentNotification> {

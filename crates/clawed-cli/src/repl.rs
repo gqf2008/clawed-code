@@ -313,8 +313,34 @@ pub async fn run(
                             CommandResult::Memory { sub } => {
                                 handle_memory_command(&sub, &cwd);
                             }
-                            CommandResult::Session { sub } => {
-                                handle_session_command(&sub, &engine).await;
+                            CommandResult::Resume => {
+                                let sessions = clawed_core::session::list_sessions();
+                                if sessions.is_empty() {
+                                    println!("No saved sessions.");
+                                } else {
+                                    println!("Saved sessions:");
+                                    for (i, session) in sessions.iter().enumerate() {
+                                        let age = clawed_core::session::format_age(&session.updated_at);
+                                        println!(
+                                            "  {}. {:.8}  {} ({} turns, {} msgs, {})",
+                                            i + 1,
+                                            session.id,
+                                            session.title,
+                                            session.turn_count,
+                                            session.message_count,
+                                            age
+                                        );
+                                    }
+                                    println!("\nType /resume <id-prefix> to restore a session.");
+                                }
+                            }
+                            CommandResult::Btw { text } => {
+                                if text.is_empty() {
+                                    println!("Usage: /btw <text>");
+                                } else {
+                                    engine.inject_context(&text).await;
+                                    println!("{}Note added to conversation.\x1b[0m", theme::c_ok());
+                                }
                             }
                             CommandResult::Diff => {
                                 handle_diff_command(&cwd);

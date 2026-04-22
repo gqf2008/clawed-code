@@ -286,6 +286,7 @@ enum FooterPickerKind {
     Theme,
     Permissions,
     Skills,
+    Resume,
 }
 
 #[derive(Debug)]
@@ -516,6 +517,39 @@ fn build_skills_picker(skills: &[clawed_core::skills::SkillEntry]) -> Option<Foo
 
     (!items.is_empty()).then_some(FooterPicker {
         kind: FooterPickerKind::Skills,
+        items,
+        selected: 0,
+        scroll_offset: 0,
+    })
+}
+
+fn build_resume_picker() -> Option<FooterPicker> {
+    let sessions = clawed_core::session::list_sessions();
+    if sessions.is_empty() {
+        return None;
+    }
+    let items: Vec<SelectionItem> = sessions
+        .iter()
+        .map(|session| {
+            let age = clawed_core::session::format_age(&session.updated_at);
+            let label = session
+                .custom_title
+                .clone()
+                .unwrap_or_else(|| session.title.clone());
+            let description = format!(
+                "{} · {} turns · {} msgs · {}",
+                session.model, session.turn_count, session.message_count, age
+            );
+            SelectionItem {
+                label,
+                description,
+                value: session.id.clone(),
+                is_current: false,
+            }
+        })
+        .collect();
+    Some(FooterPicker {
+        kind: FooterPickerKind::Resume,
         items,
         selected: 0,
         scroll_offset: 0,
@@ -1484,6 +1518,16 @@ impl App {
                 self.set_footer_picker(build_model_picker(&self.model));
                 return;
             }
+            Some(crate::commands::SlashCommand::Resume) => {
+                if let Some(picker) = build_resume_picker() {
+                    self.set_footer_picker(picker);
+                } else {
+                    self.push_message(MessageContent::System(
+                        "No saved sessions. Use /summary to generate one.".to_string(),
+                    ));
+                }
+                return;
+            }
             _ => {}
         }
         let result = match crate::commands::resolve_command_result(cmd, &cwd, &skills) {
@@ -1626,7 +1670,7 @@ impl App {
             | crate::commands::CommandResult::Rewind { .. }
             | crate::commands::CommandResult::AddDir { .. }
             | crate::commands::CommandResult::Files { .. }
-            | crate::commands::CommandResult::Session { .. }
+            | crate::commands::CommandResult::Btw { .. }
             | crate::commands::CommandResult::Stats
             | crate::commands::CommandResult::Chrome { .. }
             | crate::commands::CommandResult::Image { .. }
@@ -1663,6 +1707,9 @@ impl App {
             | crate::commands::CommandResult::History { .. } => {
                 self.pending_command = Some(result);
             }
+            // Resume is handled synchronously in handle_slash_command via footer picker;
+            // this arm is unreachable but required for exhaustiveness.
+            crate::commands::CommandResult::Resume => {}
         }
     }
 }
@@ -3069,6 +3116,21 @@ async fn handle_footer_picker_selection(
             app.input.insert_text(&format!("/{value} "));
             app.request_redraw();
         }
+        FooterPickerKind::Resume => {
+            match engine.restore_session(value).await {
+                Ok(title) => {
+                    replay_session_messages(engine, app).await;
+                    app.push_message(MessageContent::System(format!(
+                        "✓ Resumed session: {title}"
+                    )));
+                }
+                Err(error) => {
+                    app.push_message(MessageContent::System(format!(
+                        "Failed to resume: {error}"
+                    )));
+                }
+            }
+        }
     }
 }
 
@@ -3405,18 +3467,14 @@ async fn handle_async_command(
                 }
             }
         }
-        CommandResult::Session { sub } => {
-            match crate::repl_commands::handle_session_command_output(&sub, engine).await {
-                crate::repl_commands::SessionCommandOutput::Message(message) => {
-                    if message.contains('\n') {
-                        app.overlay = Some(overlay::build_info_overlay("Sessions", &message));
-                    } else {
-                        app.push_message(MessageContent::System(overlay::strip_ansi(&message)));
-                    }
-                }
-                crate::repl_commands::SessionCommandOutput::Restored { .. } => {
-                    replay_session_messages(engine, app).await;
-                }
+        CommandResult::Btw { text } => {
+            if text.is_empty() {
+                app.push_message(MessageContent::System(
+                    "Usage: /btw <text>".to_string(),
+                ));
+            } else {
+                engine.inject_context(&text).await;
+                app.push_message(MessageContent::System(format!("[btw] {text}")));
             }
         }
         CommandResult::Image { path } => {
@@ -3918,6 +3976,7 @@ async fn handle_async_command(
         | CommandResult::Effort { .. }
         | CommandResult::Tag { .. }
         | CommandResult::Stickers
+        | CommandResult::Resume
         | CommandResult::Exit => {
             // Should not reach here — these are handled in handle_slash_command
         }
@@ -5393,12 +5452,13 @@ mod tests {
     }
 
     #[test]
-    fn e2e_slash_command_resume_goes_to_pending() {
+    fn e2e_slash_command_resume_shows_picker() {
         let (_bus, client) = EventBus::new(16);
         let mut app = App::new("test".to_string());
 
         app.handle_slash_command(&client, "/resume");
-        assert!(app.pending_command.is_some());
+        // /resume now shows a footer picker (or a message if no sessions)
+        assert!(app.footer_picker.is_some() || !app.messages.is_empty());
     }
 
     #[test]
@@ -5638,169 +5698,6 @@ mod tests {
     // ========================================================================
     // P0 Supplement: Subcommand parameter tests
     // ========================================================================
-
-    // -- /session subcommands --
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn e2e_session_save_produces_message() {
-        let tmp = TempDir::new().unwrap();
-        let engine = Arc::new(
-            QueryEngine::builder("test-key", tmp.path())
-                .load_claude_md(false)
-                .load_memory(false)
-                .build(),
-        );
-        let (_bus, client) = EventBus::new(16);
-        let mut app = App::new("test".to_string());
-
-        handle_async_command(
-            crate::commands::CommandResult::Session {
-                sub: "save".to_string(),
-            },
-            &engine,
-            &client,
-            &mut app,
-            None,
-        )
-        .await;
-
-        assert!(app.overlay.is_none());
-        let last_msg = app.messages.last().expect("should have a message");
-        let text = match &last_msg.content {
-            MessageContent::System(t) => t,
-            _ => panic!("expected system message"),
-        };
-        assert!(text.contains("saved") || text.contains("Session"));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn e2e_session_list_produces_output() {
-        let tmp = TempDir::new().unwrap();
-        let engine = Arc::new(
-            QueryEngine::builder("test-key", tmp.path())
-                .load_claude_md(false)
-                .load_memory(false)
-                .build(),
-        );
-        let (_bus, client) = EventBus::new(16);
-        let mut app = App::new("test".to_string());
-
-        // Call handle_session_command_output directly to verify it works
-        let output = crate::repl_commands::handle_session_command_output("list", &engine).await;
-        match output {
-            crate::repl_commands::SessionCommandOutput::Message(msg) => {
-                assert!(msg.contains("session") || msg.contains("No saved"));
-                // Now simulate what the TUI handler does
-                if msg.contains('\n') {
-                    app.overlay = Some(overlay::build_info_overlay("Sessions", &msg));
-                } else {
-                    app.push_message(MessageContent::System(overlay::strip_ansi(&msg)));
-                }
-            }
-            crate::repl_commands::SessionCommandOutput::Restored { .. } => {
-                panic!("expected Message output for list");
-            }
-        }
-
-        assert!(
-            !app.messages.is_empty() || app.overlay.is_some(),
-            "should have produced output"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn e2e_session_delete_empty_shows_usage() {
-        let tmp = TempDir::new().unwrap();
-        let engine = Arc::new(
-            QueryEngine::builder("test-key", tmp.path())
-                .load_claude_md(false)
-                .load_memory(false)
-                .build(),
-        );
-        let (_bus, client) = EventBus::new(16);
-        let mut app = App::new("test".to_string());
-
-        handle_async_command(
-            crate::commands::CommandResult::Session {
-                sub: "delete".to_string(),
-            },
-            &engine,
-            &client,
-            &mut app,
-            None,
-        )
-        .await;
-
-        let last_msg = app.messages.last().expect("should have a message");
-        let text = match &last_msg.content {
-            MessageContent::System(t) => t,
-            _ => panic!("expected system message"),
-        };
-        assert!(text.contains("Usage"));
-        assert!(text.contains("delete"));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn e2e_session_delete_nonexistent_not_found() {
-        let tmp = TempDir::new().unwrap();
-        let engine = Arc::new(
-            QueryEngine::builder("test-key", tmp.path())
-                .load_claude_md(false)
-                .load_memory(false)
-                .build(),
-        );
-        let (_bus, client) = EventBus::new(16);
-        let mut app = App::new("test".to_string());
-
-        handle_async_command(
-            crate::commands::CommandResult::Session {
-                sub: "delete nonexistent-id".to_string(),
-            },
-            &engine,
-            &client,
-            &mut app,
-            None,
-        )
-        .await;
-
-        let last_msg = app.messages.last().expect("should have a message");
-        let text = match &last_msg.content {
-            MessageContent::System(t) => t,
-            _ => panic!("expected system message"),
-        };
-        assert!(text.contains("No session found"));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn e2e_session_unknown_sub_fallback() {
-        let tmp = TempDir::new().unwrap();
-        let engine = Arc::new(
-            QueryEngine::builder("test-key", tmp.path())
-                .load_claude_md(false)
-                .load_memory(false)
-                .build(),
-        );
-        let (_bus, client) = EventBus::new(16);
-        let mut app = App::new("test".to_string());
-
-        handle_async_command(
-            crate::commands::CommandResult::Session {
-                sub: "bogus".to_string(),
-            },
-            &engine,
-            &client,
-            &mut app,
-            None,
-        )
-        .await;
-
-        let last_msg = app.messages.last().expect("should have a message");
-        let text = match &last_msg.content {
-            MessageContent::System(t) => t,
-            _ => panic!("expected system message"),
-        };
-        assert!(text.contains("Unknown session subcommand"));
-    }
 
     // -- /mcp subcommands --
 
@@ -6798,40 +6695,6 @@ mod tests {
         } else {
             panic!("expected PrComments command result");
         }
-    }
-
-    // -- Subcommand case sensitivity --
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn e2e_session_uppercase_SAVE_unknown_sub() {
-        let tmp = TempDir::new().unwrap();
-        let engine = Arc::new(
-            QueryEngine::builder("test-key", tmp.path())
-                .load_claude_md(false)
-                .load_memory(false)
-                .build(),
-        );
-        let (_bus, client) = EventBus::new(16);
-        let mut app = App::new("test".to_string());
-
-        handle_async_command(
-            crate::commands::CommandResult::Session {
-                sub: "SAVE".to_string(),
-            },
-            &engine,
-            &client,
-            &mut app,
-            None,
-        )
-        .await;
-
-        let last_msg = app.messages.last().expect("should have a message");
-        let text = match &last_msg.content {
-            MessageContent::System(t) => t,
-            _ => panic!("expected system message"),
-        };
-        // SAVE (uppercase) should hit "Unknown session subcommand" fallback
-        assert!(text.contains("Unknown session subcommand"));
     }
 
     // -- Unicode/CJK parameters --

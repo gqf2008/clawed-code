@@ -17,8 +17,9 @@ pub enum SlashCommand {
     Memory {
         sub: String,
     },
-    Session {
-        sub: String,
+    Resume,
+    Btw {
+        text: String,
     },
     Diff,
     Status,
@@ -180,7 +181,12 @@ impl SlashCommand {
             "cost" => Self::Cost { window: args },
             "skills" => Self::Skills,
             "memory" => Self::Memory { sub: args },
-            "session" | "resume" => Self::Session { sub: args },
+            "resume" => Self::Resume,
+            "btw" => Self::Btw { text: args },
+            "simplify" => Self::RunSkill {
+                name: "simplify".to_string(),
+                prompt: args,
+            },
             "diff" => Self::Diff,
             "status" => Self::Status,
             "permissions" | "perms" => Self::Permissions { mode: args },
@@ -319,7 +325,8 @@ impl SlashCommand {
                 }
             }
             Self::Memory { sub } => CommandResult::Memory { sub: sub.clone() },
-            Self::Session { sub } => CommandResult::Session { sub: sub.clone() },
+            Self::Resume => CommandResult::Resume,
+            Self::Btw { text } => CommandResult::Btw { text: text.clone() },
             Self::Diff => CommandResult::Diff,
             Self::Status => CommandResult::Status,
             Self::Permissions { mode } => CommandResult::Permissions { mode: mode.clone() },
@@ -478,8 +485,9 @@ pub enum CommandResult {
     Memory {
         sub: String,
     },
-    Session {
-        sub: String,
+    Resume,
+    Btw {
+        text: String,
     },
     Diff,
     Status,
@@ -690,10 +698,8 @@ const HELP_TEXT_BASE: &str = "\
   /plugin            List loaded plugins (alias: /plugins)
 
 \x1b[1mSession & Memory\x1b[0m
-  /session save      Save current session
-  /session list      List saved sessions
-  /session load <q>  Resume session (ID prefix or keyword search)
-  /session delete <id> Delete a saved session
+  /resume            Resume a saved session (interactive picker)
+  /btw <text>        Add context note without AI response
   /summary           Generate a conversation summary
   /rename <name>     Rename current session
   /tag <name>        Tag or untag current session
@@ -710,6 +716,7 @@ const HELP_TEXT_BASE: &str = "\
 \x1b[1mSystem\x1b[0m
   /doctor            Check environment health
   /skills            List available skills
+  /simplify          Simplify code (skill)
   /agents            Manage agent definitions (list|status|info|create|delete)
   /add-dir <path>    Add context directory at runtime
   /files [pattern]   List files in current directory
@@ -907,20 +914,16 @@ mod tests {
         ));
         assert!(matches!(
             SlashCommand::parse("/resume", &s),
-            Some(SlashCommand::Session { .. })
+            Some(SlashCommand::Resume)
         ));
     }
 
     #[test]
-    fn test_parse_memory_session_subcommands() {
+    fn test_parse_memory_subcommands() {
         let s = no_skills();
         match SlashCommand::parse("/memory list", &s) {
             Some(SlashCommand::Memory { sub }) => assert_eq!(sub, "list"),
             _ => panic!("expected Memory"),
-        }
-        match SlashCommand::parse("/session save", &s) {
-            Some(SlashCommand::Session { sub }) => assert_eq!(sub, "save"),
-            _ => panic!("expected Session"),
         }
     }
 
@@ -1623,16 +1626,11 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_memory_session_passthrough() {
+    fn test_execute_memory_passthrough() {
         let cmd = SlashCommand::Memory { sub: "list".into() };
         match cmd.execute(&no_skills(), &no_plugins()) {
             CommandResult::Memory { sub } => assert_eq!(sub, "list"),
             _ => panic!("expected Memory"),
-        }
-        let cmd = SlashCommand::Session { sub: "save".into() };
-        match cmd.execute(&no_skills(), &no_plugins()) {
-            CommandResult::Session { sub } => assert_eq!(sub, "save"),
-            _ => panic!("expected Session"),
         }
     }
 
@@ -1772,7 +1770,7 @@ mod tests {
         assert!(text.contains("/model"));
         assert!(text.contains("/permissions"));
         assert!(text.contains("/commit"));
-        assert!(text.contains("/session"));
+        assert!(text.contains("/resume"));
         assert!(text.contains("/diff"));
         assert!(text.contains("/doctor"));
         assert!(text.contains("/export"));
@@ -2198,7 +2196,7 @@ mod tests {
     fn test_parse_resume() {
         assert!(matches!(
             SlashCommand::parse("/resume", &no_skills()).unwrap(),
-            SlashCommand::Session { sub } if sub.is_empty()
+            SlashCommand::Resume
         ));
     }
 
@@ -2250,27 +2248,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_session_subcommands() {
+    fn test_parse_memory_show() {
         let s = no_skills();
-        // /session save
-        assert!(matches!(
-            SlashCommand::parse("/session save", &s).unwrap(),
-            SlashCommand::Session { sub } if sub == "save"
-        ));
-        // /session delete
-        assert!(matches!(
-            SlashCommand::parse("/session delete", &s).unwrap(),
-            SlashCommand::Session { sub } if sub == "delete"
-        ));
-    }
-
-    #[test]
-    fn test_parse_memory_subcommands() {
-        let s = no_skills();
-        assert!(matches!(
-            SlashCommand::parse("/memory list", &s).unwrap(),
-            SlashCommand::Memory { sub } if sub == "list"
-        ));
         assert!(matches!(
             SlashCommand::parse("/memory show", &s).unwrap(),
             SlashCommand::Memory { sub } if sub == "show"
@@ -2413,20 +2392,11 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_session_save() {
-        let cmd = SlashCommand::parse("/session save", &no_skills()).unwrap();
-        assert!(matches!(
-            cmd.execute(&no_skills(), &no_plugins()),
-            CommandResult::Session { sub } if sub == "save"
-        ));
-    }
-
-    #[test]
-    fn test_execute_session_resume() {
+    fn test_execute_resume() {
         let cmd = SlashCommand::parse("/resume", &no_skills()).unwrap();
         assert!(matches!(
             cmd.execute(&no_skills(), &no_plugins()),
-            CommandResult::Session { sub } if sub.is_empty()
+            CommandResult::Resume
         ));
     }
 
