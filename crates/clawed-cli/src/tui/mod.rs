@@ -530,6 +530,7 @@ fn build_resume_picker() -> Option<FooterPicker> {
     }
     let items: Vec<SelectionItem> = sessions
         .iter()
+        .take(20)
         .map(|session| {
             let age = clawed_core::session::format_age(&session.updated_at);
             let label = session
@@ -1518,7 +1519,7 @@ impl App {
                 self.set_footer_picker(build_model_picker(&self.model));
                 return;
             }
-            Some(crate::commands::SlashCommand::Resume) => {
+            Some(crate::commands::SlashCommand::Resume { query }) if query.is_empty() => {
                 if let Some(picker) = build_resume_picker() {
                     self.set_footer_picker(picker);
                 } else {
@@ -1704,12 +1705,10 @@ impl App {
             | crate::commands::CommandResult::PrComments { .. }
             | crate::commands::CommandResult::Branch { .. }
             | crate::commands::CommandResult::Search { .. }
-            | crate::commands::CommandResult::History { .. } => {
+            | crate::commands::CommandResult::History { .. }
+            | crate::commands::CommandResult::Resume { .. } => {
                 self.pending_command = Some(result);
             }
-            // Resume is handled synchronously in handle_slash_command via footer picker;
-            // this arm is unreachable but required for exhaustiveness.
-            crate::commands::CommandResult::Resume => {}
         }
     }
 }
@@ -3477,6 +3476,21 @@ async fn handle_async_command(
                 app.push_message(MessageContent::System(format!("[btw] {text}")));
             }
         }
+        CommandResult::Resume { query } => {
+            match engine.restore_session(&query).await {
+                Ok(title) => {
+                    replay_session_messages(engine, app).await;
+                    app.push_message(MessageContent::System(format!(
+                        "✓ Resumed session: {title}"
+                    )));
+                }
+                Err(error) => {
+                    app.push_message(MessageContent::System(format!(
+                        "Failed to resume: {error}"
+                    )));
+                }
+            }
+        }
         CommandResult::Image { path } => {
             if path.is_empty() {
                 app.push_message(MessageContent::System(
@@ -3976,7 +3990,6 @@ async fn handle_async_command(
         | CommandResult::Effort { .. }
         | CommandResult::Tag { .. }
         | CommandResult::Stickers
-        | CommandResult::Resume
         | CommandResult::Exit => {
             // Should not reach here — these are handled in handle_slash_command
         }

@@ -17,7 +17,9 @@ pub enum SlashCommand {
     Memory {
         sub: String,
     },
-    Resume,
+    Resume {
+        query: String,
+    },
     Btw {
         text: String,
     },
@@ -181,7 +183,7 @@ impl SlashCommand {
             "cost" => Self::Cost { window: args },
             "skills" => Self::Skills,
             "memory" => Self::Memory { sub: args },
-            "resume" => Self::Resume,
+            "resume" => Self::Resume { query: args },
             "btw" => Self::Btw { text: args },
             "simplify" => Self::RunSkill {
                 name: "simplify".to_string(),
@@ -325,7 +327,7 @@ impl SlashCommand {
                 }
             }
             Self::Memory { sub } => CommandResult::Memory { sub: sub.clone() },
-            Self::Resume => CommandResult::Resume,
+            Self::Resume { query } => CommandResult::Resume { query: query.clone() },
             Self::Btw { text } => CommandResult::Btw { text: text.clone() },
             Self::Diff => CommandResult::Diff,
             Self::Status => CommandResult::Status,
@@ -485,7 +487,9 @@ pub enum CommandResult {
     Memory {
         sub: String,
     },
-    Resume,
+    Resume {
+        query: String,
+    },
     Btw {
         text: String,
     },
@@ -914,7 +918,7 @@ mod tests {
         ));
         assert!(matches!(
             SlashCommand::parse("/resume", &s),
-            Some(SlashCommand::Resume)
+            Some(SlashCommand::Resume { query }) if query.is_empty()
         ));
     }
 
@@ -2196,7 +2200,7 @@ mod tests {
     fn test_parse_resume() {
         assert!(matches!(
             SlashCommand::parse("/resume", &no_skills()).unwrap(),
-            SlashCommand::Resume
+            SlashCommand::Resume { query } if query.is_empty()
         ));
     }
 
@@ -2396,7 +2400,7 @@ mod tests {
         let cmd = SlashCommand::parse("/resume", &no_skills()).unwrap();
         assert!(matches!(
             cmd.execute(&no_skills(), &no_plugins()),
-            CommandResult::Resume
+            CommandResult::Resume { query } if query.is_empty()
         ));
     }
 

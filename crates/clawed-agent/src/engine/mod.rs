@@ -17,7 +17,7 @@ use std::sync::Arc;
 use clawed_api::client::ApiClient;
 use clawed_api::types::{CacheControl, ThinkingConfig, ToolDefinition};
 use clawed_bus::AgentNotification;
-use clawed_core::message::Message;
+use clawed_core::message::{Message, SystemMessage};
 use clawed_core::sync::lock_or_recover;
 use clawed_core::tool::AbortSignal;
 use clawed_tools::ToolRegistry;
@@ -214,7 +214,6 @@ impl QueryEngine {
     /// Inject a context note into the conversation as a system message without triggering an API call.
     /// Used by `/btw` to add side-channel notes visible to the model on the next turn.
     pub async fn inject_context(&self, text: &str) {
-        use clawed_core::message::{Message, SystemMessage};
         let msg = Message::System(SystemMessage {
             uuid: uuid::Uuid::new_v4().to_string(),
             message: format!("[btw] {text}"),

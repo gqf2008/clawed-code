@@ -313,25 +313,36 @@ pub async fn run(
                             CommandResult::Memory { sub } => {
                                 handle_memory_command(&sub, &cwd);
                             }
-                            CommandResult::Resume => {
-                                let sessions = clawed_core::session::list_sessions();
-                                if sessions.is_empty() {
-                                    println!("No saved sessions.");
-                                } else {
-                                    println!("Saved sessions:");
-                                    for (i, session) in sessions.iter().enumerate() {
-                                        let age = clawed_core::session::format_age(&session.updated_at);
-                                        println!(
-                                            "  {}. {:.8}  {} ({} turns, {} msgs, {})",
-                                            i + 1,
-                                            session.id,
-                                            session.title,
-                                            session.turn_count,
-                                            session.message_count,
-                                            age
-                                        );
+                            CommandResult::Resume { query } => {
+                                let query = query.trim();
+                                if query.is_empty() {
+                                    let sessions = clawed_core::session::list_sessions();
+                                    if sessions.is_empty() {
+                                        println!("No saved sessions.");
+                                    } else {
+                                        println!("Saved sessions:");
+                                        for (i, session) in sessions.iter().take(20).enumerate() {
+                                            let age = clawed_core::session::format_age(&session.updated_at);
+                                            println!(
+                                                "  {}. {:.8}  {} ({} turns, {} msgs, {})",
+                                                i + 1,
+                                                session.id,
+                                                session.title,
+                                                session.turn_count,
+                                                session.message_count,
+                                                age
+                                            );
+                                        }
+                                        if sessions.len() > 20 {
+                                            println!("  … and {} more. Use /resume <id> for older sessions.", sessions.len() - 20);
+                                        }
+                                        println!("\nType /resume <id-prefix> to restore a session.");
                                     }
-                                    println!("\nType /resume <id-prefix> to restore a session.");
+                                } else {
+                                    match engine.restore_session(query).await {
+                                        Ok(title) => println!("{}✓ Resumed session: {}\x1b[0m", theme::c_ok(), title),
+                                        Err(e) => println!("{}Failed to resume: {}\x1b[0m", theme::c_err(), e),
+                                    }
                                 }
                             }
                             CommandResult::Btw { text } => {
