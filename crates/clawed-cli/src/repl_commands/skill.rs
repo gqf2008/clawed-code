@@ -31,8 +31,8 @@ pub(crate) fn build_skill_content(skill: &SkillEntry, skill_args: &str) -> Optio
 }
 
 /// Build the full user message for a skill invocation, including XML metadata tags
-/// and skill content. This is sent as the user message (not injected into the system prompt),
-/// matching the reference implementation's `getMessagesForPromptSlashCommand` behavior.
+/// and skill content. Delivered as a user message so skill instructions persist in
+/// conversation history and prompt caching is preserved.
 pub(crate) fn build_skill_user_message(
     skill: &SkillEntry,
     skill_args: &str,

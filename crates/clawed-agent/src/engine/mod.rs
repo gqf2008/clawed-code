@@ -169,15 +169,17 @@ impl QueryEngine {
     /// Set the temporary tool whitelist for the next skill submission.
     /// Call `clear_skill_allowed_tools()` after the skill turn completes.
     pub fn set_skill_allowed_tools(&self, allowed_tools: Vec<String>) {
+        let n = allowed_tools.len();
         *lock_or_recover(&self.skill_allowed_tools) = allowed_tools;
-        tracing::info!("[skill] set_skill_allowed_tools: {} tools", lock_or_recover(&self.skill_allowed_tools).len());
+        tracing::info!("[skill] set_skill_allowed_tools: {n} tools");
     }
 
     /// Clear the temporary skill tool whitelist.
     pub fn clear_skill_allowed_tools(&self) {
-        let had = !lock_or_recover(&self.skill_allowed_tools).is_empty();
-        lock_or_recover(&self.skill_allowed_tools).clear();
-        tracing::info!("[skill] clear_skill_allowed_tools (had_tools={})", had);
+        let mut guard = lock_or_recover(&self.skill_allowed_tools);
+        let had = !guard.is_empty();
+        guard.clear();
+        tracing::info!("[skill] clear_skill_allowed_tools (had_tools={had})");
     }
 
     /// Get the cost tracker for displaying usage stats.

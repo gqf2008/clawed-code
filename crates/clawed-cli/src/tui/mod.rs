@@ -289,6 +289,13 @@ enum FooterPickerKind {
     Resume,
 }
 
+/// Tracks the state to restore after a skill's turn completes.
+#[derive(Debug)]
+struct PendingSkillRestore {
+    original_model: Option<String>,
+    skill_name: String,
+}
+
 #[derive(Debug)]
 struct FooterPicker {
     kind: FooterPickerKind,
@@ -676,9 +683,9 @@ struct App {
     /// Current permission mode label (e.g. "bypass", "default").
     /// Updated when user changes it via /permissions.
     permission_mode: String,
-    /// If a skill temporarily switched the model, store (original_model, skill_name)
-    /// here so it can be restored when TurnComplete arrives.
-    pending_skill_restore: Option<(Option<String>, String)>,
+    /// If a skill temporarily switched the model, store the restore info here
+    /// so it can be cleaned up when TurnComplete arrives.
+    pending_skill_restore: Option<PendingSkillRestore>,
 }
 
 impl App {
@@ -2370,12 +2377,25 @@ fn render_welcome_lines(width: u16, model: &str, permission_mode: &str) -> Vec<L
 /// has ended (`is_generating` is false), restore the original state.
 async fn restore_skill_state_if_done(app: &mut App, engine: &Arc<QueryEngine>) {
     if !app.is_generating {
-        if let Some((original_model, skill_name)) = app.pending_skill_restore.take() {
-            tracing::info!("[skill] restore_skill_state_if_done: restoring after skill '{skill_name}', is_generating={}", app.is_generating);
-            if let Some(orig) = original_model {
+        if let Some(restore) = app.pending_skill_restore.take() {
+            tracing::info!("[skill] restore after '{}', is_generating={}", restore.skill_name, app.is_generating);
+            if let Some(orig) = restore.original_model {
                 engine.state().write().await.model = orig;
             }
             engine.clear_skill_allowed_tools();
+        }
+    }
+}
+
+/// Restore a session and replay its messages into the TUI, then push a status message.
+async fn do_resume_session(engine: &Arc<QueryEngine>, app: &mut App, id: &str) {
+    match engine.restore_session(id).await {
+        Ok(title) => {
+            replay_session_messages(engine, app).await;
+            app.push_message(MessageContent::System(format!("✓ Resumed session: {title}")));
+        }
+        Err(error) => {
+            app.push_message(MessageContent::System(format!("Failed to resume: {error}")));
         }
     }
 }
@@ -3116,19 +3136,7 @@ async fn handle_footer_picker_selection(
             app.request_redraw();
         }
         FooterPickerKind::Resume => {
-            match engine.restore_session(value).await {
-                Ok(title) => {
-                    replay_session_messages(engine, app).await;
-                    app.push_message(MessageContent::System(format!(
-                        "✓ Resumed session: {title}"
-                    )));
-                }
-                Err(error) => {
-                    app.push_message(MessageContent::System(format!(
-                        "Failed to resume: {error}"
-                    )));
-                }
-            }
+            do_resume_session(engine, app, value).await;
         }
     }
 }
@@ -3477,19 +3485,7 @@ async fn handle_async_command(
             }
         }
         CommandResult::Resume { query } => {
-            match engine.restore_session(&query).await {
-                Ok(title) => {
-                    replay_session_messages(engine, app).await;
-                    app.push_message(MessageContent::System(format!(
-                        "✓ Resumed session: {title}"
-                    )));
-                }
-                Err(error) => {
-                    app.push_message(MessageContent::System(format!(
-                        "Failed to resume: {error}"
-                    )));
-                }
-            }
+            do_resume_session(engine, app, &query).await;
         }
         CommandResult::Image { path } => {
             if path.is_empty() {
@@ -3954,7 +3950,10 @@ async fn handle_async_command(
 
                     // Model and tool whitelist are restored after TurnComplete arrives.
                     // Store them on App for later cleanup.
-                    app.pending_skill_restore = Some((original_model, skill.name.clone()));
+                    app.pending_skill_restore = Some(PendingSkillRestore {
+                        original_model,
+                        skill_name: skill.name.clone(),
+                    });
                 }
                 Err(message) => {
                     app.push_message(MessageContent::System(message));
