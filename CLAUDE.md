@@ -82,14 +82,6 @@ cargo fmt --check                    # Format check
 
 Test counts: `clawed-tools` 323, `clawed-cli` 297, `clawed-api` 180, `clawed-rpc` 84, `clawed-mcp` 73, `clawed-swarm` 65, `clawed-bridge` 52, `clawed-bus` 23, `clawed-computer-use` 16.
 
-## API Setup
-
-Required environment variables (one of):
-- `ANTHROPIC_API_KEY` -- Anthropic API key
-- `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, etc. -- For alternative providers
-
-Or OAuth via `~/.claude/.credentials.json` (official CLI login).
-
 ## Run
 
 ```bash
@@ -97,6 +89,14 @@ cargo run -- --help
 cargo run -- "your prompt here"
 cargo run -- -m claude-opus-4-20250514 --thinking
 ```
+
+## API Setup
+
+Required environment variables (one of):
+- `ANTHROPIC_API_KEY` -- Anthropic API key
+- `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, etc. -- For alternative providers
+
+Or OAuth via `~/.claude/.credentials.json` (official CLI login).
 
 ## Providers
 
@@ -132,6 +132,8 @@ All communication between the agent core and UI clients flows through `EventBus`
 
 Clients hold a `ClientHandle` and send/receive through the bus, never calling `QueryEngine` directly.
 
+The bus adapter (`AgentCoreAdapter`) processes requests **sequentially** -- while it is inside `stream_events()` consuming a stream, new requests (including `Abort`) are queued in the mpsc channel. This is why the TUI's `abort_session()` calls `engine.abort()` **directly** (synchronous `Arc<AtomicBool>` flip) in addition to `client.abort()` -- the latter notifies the adapter, but the former ensures the abort signal reaches in-flight tools immediately.
+
 ### Agent Loop Data Flow
 
 ```
@@ -164,6 +166,21 @@ pub trait Tool: Send + Sync {
 
 `ToolRegistry` in `clawed-tools/src/lib.rs` centrally registers all tools. MCP tools are dynamically injected.
 
+**AbortSignal flow:** `QueryEngine` holds an `AbortSignal` (`Arc<AtomicBool>`). On `submit()` it is `reset()`, then cloned into `ToolContext`. When `engine.abort()` is called, the flag flips; tools that need cancellation (e.g. `Bash`) watch it in `tokio::select!` and kill their child process.
+
+### Skill Subsystem
+
+Skills are user-invocable prompt templates loaded from `~/.claude/skills/` or `.claude/skills/`.
+
+**Content delivery:** Skill content is delivered as a **user message** (not system prompt injection), preserving prompt caching. The message carries XML metadata tags:
+- `<command-message>{skill_name}</command-message>`
+- `<command-name>{skill_name}</command-name>`
+- `<command_permissions>` (if `allowed_tools` or `model` override is set)
+
+**Tool restriction:** `skill_allowed_tools` on `QueryEngine` filters the tool definitions returned to the model for that turn. Cleared after turn completes via `clear_skill_allowed_tools()`.
+
+**Model override:** Skills can specify `model: haiku|sonnet|opus|inherit`. Resolved via `clawed_core::model::resolve_model_string()`.
+
 ## Key Conventions
 
 ### Error Handling
@@ -181,6 +198,10 @@ pub trait Tool: Send + Sync {
 - Async runtime: `tokio` with `features = ["full"]`.
 - Read-only tools run with `join_all` (parallel); write tools run sequentially.
 - `AbortSignal` (`Arc<AtomicBool>`) is used to cancel in-flight tool executions.
+
+### Serialization
+- `serde` with derive macros throughout; JSON is `serde_json`, YAML is `serde_yaml`.
+- Session snapshots are serialized via `SessionSnapshot` in `clawed-core/src/session.rs`.
 
 ### Adding a New Tool
 1. Create `crates/clawed-tools/src/<tool_name>.rs` implementing the `Tool` trait.
