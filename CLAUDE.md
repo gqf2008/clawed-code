@@ -84,11 +84,20 @@ Test counts: `clawed-tools` 323, `clawed-cli` 297, `clawed-api` 180, `clawed-rpc
 
 ## Run
 
+The binary is named `clawed`. Default UI is ratatui TUI; legacy REPL available via `--repl`.
+
 ```bash
 cargo run -- --help
 cargo run -- "your prompt here"
 cargo run -- -m claude-opus-4-20250514 --thinking
+
+# Non-interactive modes
+cargo run -- --print "summarize this project"           # Pipe-friendly output (no TUI)
+cargo run -- --output-format json "hello"               # Structured JSON output
+cargo run -- --output-format stream-json "explain foo"  # NDJSON streaming
 ```
+
+**Exit codes:** 0 = success, 1 = error, 2 = permission denied, 3 = context exceeded, 4 = timeout.
 
 ## API Setup
 
@@ -108,19 +117,19 @@ Use `--base-url` to override API endpoint (e.g., LiteLLM, DashScope).
 
 11-crate workspace with zero circular dependencies:
 
-| Crate | Role |
-|-------|------|
-| `clawed-cli` | Binary entry, REPL, themes, NDJSON output |
-| `clawed-rpc` | JSON-RPC external interface (TCP/stdio) |
-| `clawed-bridge` | External channel gateway (Lark/Telegram/Slack) |
-| `clawed-agent` | Engine orchestration, sessions, hooks, permissions, compaction |
-| `clawed-mcp` | MCP server registry, health monitoring, auto-reconnect |
-| `clawed-swarm` | kameo Actor multi-agent network |
-| `clawed-computer-use` | Computer Use (screenshot/mouse/keyboard) |
-| `clawed-bus` | In-process event bus, ClientHandle, broadcast notifications |
-| `clawed-api` | HTTP client, SSE streaming, OAuth PKCE |
-| `clawed-tools` | 28+ tool implementations, ToolRegistry, LSP |
-| `clawed-core` | Base types, Tool trait, permissions, config, file watching |
+| Layer | Crate | Role |
+|-------|-------|------|
+| 3 | `clawed-cli` | Binary entry, REPL/TUI, themes, NDJSON output |
+| 3 | `clawed-rpc` | JSON-RPC external interface (TCP/stdio) |
+| 3 | `clawed-bridge` | External channel gateway (Lark/Telegram/Slack) |
+| 2 | `clawed-agent` | Engine orchestration, sessions, hooks, permissions, compaction |
+| 2 | `clawed-mcp` | MCP server registry, health monitoring, auto-reconnect |
+| 2 | `clawed-swarm` | kameo Actor multi-agent network |
+| 2 | `clawed-computer-use` | Computer Use (screenshot/mouse/keyboard) |
+| 1 | `clawed-bus` | In-process event bus, ClientHandle, broadcast notifications |
+| 1 | `clawed-api` | HTTP client, SSE streaming, OAuth PKCE |
+| 1 | `clawed-tools` | 40+ tool implementations, ToolRegistry, LSP |
+| 0 | `clawed-core` | Base types, Tool trait, permissions, config, file watching |
 
 Dependency flow: `{cli,rpc,bridge} -> agent -> {swarm,mcp,computer-use,api,tools,bus} -> core`
 
@@ -207,6 +216,14 @@ Skills are user-invocable prompt templates loaded from `~/.claude/skills/` or `.
 1. Create `crates/clawed-tools/src/<tool_name>.rs` implementing the `Tool` trait.
 2. Register it in `crates/clawed-tools/src/lib.rs` (`ToolRegistry::new()`).
 3. Assign an appropriate `ToolCategory` and set `is_read_only()` correctly (affects both permission checks and parallelism).
+
+`ToolCategory` variants: `File`, `Shell`, `Web`, `Code`, `Git`, `Interaction`, `Agent`, `Management`, `Mcp`, `Session` (default).
+
+### Permission Modes
+Six modes selected via `--permission-mode`: `default`, `bypass`, `acceptEdits`, `plan`, `auto`, `dontAsk`. In TUI mode, permission prompts flow through the event bus to avoid corrupting the alternate screen.
+
+### Feature Flags (clawed-tools)
+Default features: `["shell", "web", "git", "mcp", "code"]`. Each independently toggleable.
 
 ### Clippy Configuration
 Clippy pedantic + nursery are enabled workspace-wide (`Cargo.toml [workspace.lints.clippy]`) with a large explicit allow-list for noisy rules. When adding new code, run `cargo clippy --workspace` -- all new warnings must be resolved, not suppressed unless already in the allow-list.
