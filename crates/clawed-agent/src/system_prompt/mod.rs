@@ -137,7 +137,8 @@ pub fn build_system_prompt_ext(
         section_doing_tasks().to_string(),
         section_actions().to_string(),
         section_using_tools().to_string(),
-        section_text_output().to_string(),
+        section_tone_style().to_string(),
+        section_output_efficiency().to_string(),
     ];
 
     let static_text = parts.join("\n");
@@ -289,7 +290,7 @@ pub fn build_effective_system_prompt(
 /// Build the coordinator-mode system prompt.
 pub fn coordinator_system_prompt() -> String {
     format!(
-        r#"You are Clawed Code, an AI assistant that orchestrates software engineering tasks across multiple workers.
+        r#"You are {PRODUCT_IDENTITY}, operating as a coordinator that orchestrates software engineering tasks across multiple workers.
 
 ## Role
 
@@ -359,7 +360,8 @@ After all workers complete:
 
 /// Default system prompt for sub-agents (explore, general-purpose, etc.).
 pub const DEFAULT_AGENT_PROMPT: &str = "\
-You are an agent for Clawed Code, a Rust-based open-source AI coding assistant. \
+You are an agent for Clawed Code, an open-source reimplementation of Claude Code, \
+Anthropic's official CLI for Claude. \
 Given the user's message, you should use the tools available to complete the task. \
 Complete the task fully — don't gold-plate, but don't leave it half-done. \
 When you complete the task, respond with a concise report covering what was done \
@@ -383,8 +385,9 @@ mod tests {
         assert!(prompt.text.contains("# System"));
         assert!(prompt.text.contains("# Doing tasks"));
         assert!(prompt.text.contains("# Executing actions"));
-        assert!(prompt.text.contains("# Using tools"));
-        assert!(prompt.text.contains("# Text output"));
+        assert!(prompt.text.contains("# Using your tools"));
+        assert!(prompt.text.contains("# Tone and style"));
+        assert!(prompt.text.contains("# Output efficiency"));
         assert!(prompt.text.contains("Environment"));
         assert!(prompt.text.contains(SUMMARIZE_TOOL_RESULTS));
         assert!(prompt.dynamic_boundary_offset > 0);
@@ -400,7 +403,7 @@ mod tests {
         let suffix = prompt.dynamic_suffix();
 
         assert!(prefix.contains(DEFAULT_PREFIX));
-        assert!(prefix.contains("# Text output"));
+        assert!(prefix.contains("# Output efficiency"));
         assert!(!suffix.starts_with(SYSTEM_PROMPT_DYNAMIC_BOUNDARY));
         assert!(suffix.contains("Environment"));
     }
