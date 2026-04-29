@@ -469,6 +469,7 @@ impl QueryEngineBuilder {
                 context_window: effective_context_window,
                 auto_compact_state: None, // engine.build_query_config() creates fresh state per submit
                 break_cache: false,
+                session_context: None,
             },
             hooks,
             cwd: self.cwd,

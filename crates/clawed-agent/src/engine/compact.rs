@@ -61,12 +61,22 @@ impl QueryEngine {
 
         // ── Replace conversation history ─────────────────────────────────────
         let context_msg = compact_context_message(&summary, None);
+        let mut new_messages = vec![Message::User(UserMessage {
+            uuid: Uuid::new_v4().to_string(),
+            content: vec![ContentBlock::Text { text: context_msg }],
+        })];
+        // Re-inject session context (date + git status) post-compact
+        if let Some(ctx) = self.session_context.get().filter(|s| !s.is_empty()) {
+            new_messages.push(Message::User(UserMessage {
+                uuid: Uuid::new_v4().to_string(),
+                content: vec![ContentBlock::Text {
+                    text: crate::context::format_context_message(ctx),
+                }],
+            }));
+        }
         {
             let mut s = self.state.write().await;
-            s.messages = vec![Message::User(UserMessage {
-                uuid: Uuid::new_v4().to_string(),
-                content: vec![ContentBlock::Text { text: context_msg }],
-            })];
+            s.messages = new_messages;
             s.total_input_tokens = 0;
             s.total_output_tokens = 0;
         }

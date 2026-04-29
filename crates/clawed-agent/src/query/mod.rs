@@ -104,6 +104,10 @@ pub struct QueryConfig {
     pub auto_compact_state: Option<Arc<tokio::sync::Mutex<AutoCompactState>>>,
     /// If true, skip cache_control markers on this query (one-shot /break-cache).
     pub break_cache: bool,
+    /// Session context (date + git status) for post-compact re-injection.
+    /// If set, this is appended after compact boundary messages so the model
+    /// retains time/repo awareness across compaction.
+    pub session_context: Option<String>,
 }
 
 impl Default for QueryConfig {
@@ -118,6 +122,7 @@ impl Default for QueryConfig {
             context_window: 200_000, // fallback; prefer runtime value from model capabilities
             auto_compact_state: None,
             break_cache: false,
+            session_context: None,
         }
     }
 }
@@ -764,10 +769,22 @@ pub fn query_stream_with_injection(
                                 Ok(summary) => {
                                     let summary_len = summary.len();
                                     let context_msg = compact_context_message(&summary, None);
-                                    messages = vec![Message::User(UserMessage {
+                                    let mut new_messages = vec![Message::User(UserMessage {
                                         uuid: Uuid::new_v4().to_string(),
                                         content: vec![ContentBlock::Text { text: context_msg }],
                                     })];
+                                    // Re-inject session context (date + git status) post-compact
+                                    if let Some(ref ctx) = config.session_context {
+                                        if !ctx.is_empty() {
+                                            new_messages.push(Message::User(UserMessage {
+                                                uuid: Uuid::new_v4().to_string(),
+                                                content: vec![ContentBlock::Text {
+                                                    text: crate::context::format_context_message(ctx),
+                                                }],
+                                            }));
+                                        }
+                                    }
+                                    messages = new_messages;
                                     // Re-estimate tokens so warning system stays accurate
                                     let new_tokens = clawed_core::token_estimation::token_count_with_estimation(&messages);
                                     {

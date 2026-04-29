@@ -155,6 +155,11 @@ impl QueryEngine {
     /// Build a `QueryConfig` with shared auto-compact state from this engine.
     /// Consumes the one-shot break-cache flag if set.
     fn build_query_config(&self) -> QueryConfig {
+        let session_context = self
+            .session_context
+            .get()
+            .filter(|s| !s.is_empty())
+            .cloned();
         QueryConfig {
             system_prompt: self.config.system_prompt.clone(),
             max_turns: self.config.max_turns,
@@ -165,6 +170,7 @@ impl QueryEngine {
             context_window: self.context_window,
             auto_compact_state: Some(Arc::clone(&self.auto_compact)),
             break_cache: self.take_break_cache(),
+            session_context,
         }
     }
 
