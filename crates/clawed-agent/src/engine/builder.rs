@@ -488,6 +488,7 @@ impl QueryEngineBuilder {
             thinking_override: std::sync::Mutex::new(ThinkingOverride::UseDefault),
             agent_notif_rx,
             skill_allowed_tools: std::sync::Mutex::new(Vec::new()),
+            session_context: std::sync::OnceLock::new(),
         }
     }
 }

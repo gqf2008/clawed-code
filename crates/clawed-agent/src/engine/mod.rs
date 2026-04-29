@@ -87,6 +87,8 @@ pub struct QueryEngine {
         Option<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<AgentNotification>>>,
     /// Temporary tool whitelist for the next skill submission.
     skill_allowed_tools: std::sync::Mutex<Vec<String>>,
+    /// Lazily-built session context (git status + date), prepended once.
+    session_context: std::sync::OnceLock<String>,
 }
 
 impl QueryEngine {
@@ -362,6 +364,30 @@ impl QueryEngine {
     }
 
     // ── Accessors and runtime config ─────────────────────────────────────────
+
+    /// Lazily build and return the session-start context as a formatted
+    /// `<system-reminder>` message, ready to prepend to the message list.
+    /// Returns `None` if no context could be collected.
+    pub async fn session_context_message(&self) -> Option<String> {
+        if self.session_context.get().is_some() {
+            let cached = self.session_context.get().unwrap();
+            if cached.is_empty() {
+                return None;
+            }
+            return Some(crate::context::format_context_message(cached));
+        }
+        let ctx = crate::context::build_session_context(&self.cwd).await;
+        match ctx {
+            Some(text) => {
+                let _ = self.session_context.set(text.clone());
+                Some(crate::context::format_context_message(&text))
+            }
+            None => {
+                let _ = self.session_context.set(String::new());
+                None
+            }
+        }
+    }
 
     /// Get the working directory.
     pub fn cwd(&self) -> &std::path::Path {

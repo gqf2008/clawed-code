@@ -53,6 +53,16 @@ impl QueryEngine {
             (s.permission_mode, s.messages.clone())
         };
 
+        // Inject session context (git status + date) before the first user message
+        if messages.is_empty() {
+            if let Some(ctx_msg) = self.session_context_message().await {
+                messages.push(Message::User(UserMessage {
+                    uuid: Uuid::new_v4().to_string(),
+                    content: vec![ContentBlock::Text { text: ctx_msg }],
+                }));
+            }
+        }
+
         let user_msg = UserMessage {
             uuid: Uuid::new_v4().to_string(),
             content: vec![ContentBlock::Text { text: prompt_text }],
@@ -134,6 +144,16 @@ impl QueryEngine {
             let s = self.state.read().await;
             (s.permission_mode, s.messages.clone())
         };
+
+        // Inject session context (git status + date) before the first user message
+        if messages.is_empty() {
+            if let Some(ctx_msg) = self.session_context_message().await {
+                messages.push(Message::User(UserMessage {
+                    uuid: Uuid::new_v4().to_string(),
+                    content: vec![ContentBlock::Text { text: ctx_msg }],
+                }));
+            }
+        }
 
         let user_msg = UserMessage {
             uuid: Uuid::new_v4().to_string(),

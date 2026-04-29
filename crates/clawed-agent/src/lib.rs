@@ -7,6 +7,7 @@
 pub mod audit;
 pub mod bus_adapter;
 pub mod compact;
+pub mod context;
 pub mod coordinator;
 pub mod cost;
 pub mod cron_scheduler;
