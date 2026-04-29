@@ -268,7 +268,6 @@ impl HookRegistry {
     }
 
     /// Build a `HookContext` for subagent events.
-    #[allow(dead_code)] // reserved for SubagentStart/End hook events
     pub(crate) fn subagent_ctx(&self, event: HookEvent, agent_id: &str) -> HookContext {
         HookContext {
             event: event.as_str().to_string(),

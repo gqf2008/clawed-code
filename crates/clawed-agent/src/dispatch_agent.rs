@@ -13,7 +13,7 @@ use tracing::info;
 
 use crate::coordinator::AgentTracker;
 use crate::executor::ToolExecutor;
-use crate::hooks::HookRegistry;
+use crate::hooks::{HookEvent, HookRegistry};
 use crate::permissions::PermissionChecker;
 use crate::query::{query_stream, query_stream_with_injection, AgentEvent, QueryConfig};
 use crate::state::new_shared_state;
@@ -185,6 +185,8 @@ pub struct DispatchAgentTool {
     pub agent_channels: Option<AgentChannelMap>,
     /// Optional channel to emit `AgentNotification`s to the bus (TUI visibility).
     pub agent_notif_tx: Option<mpsc::UnboundedSender<AgentNotification>>,
+    /// Parent engine's hook registry for SubagentStart/Stop dispatch.
+    pub hooks: Option<Arc<crate::hooks::HookRegistry>>,
 }
 
 #[async_trait]
@@ -395,6 +397,14 @@ impl Tool for DispatchAgentTool {
                     )
                     .await;
 
+                // Fire SubagentStart hook
+                if let Some(ref hooks) = self.hooks {
+                    if hooks.has_hooks(HookEvent::SubagentStart) {
+                        let ctx = hooks.subagent_ctx(HookEvent::SubagentStart, &agent_id);
+                        let _ = hooks.run(HookEvent::SubagentStart, ctx).await;
+                    }
+                }
+
                 // Create a CancellationToken so TaskStop can abort this agent
                 let cancel_token = tokio_util::sync::CancellationToken::new();
                 if let Some(ref tokens) = self.cancel_tokens {
@@ -435,6 +445,7 @@ impl Tool for DispatchAgentTool {
                 let agent_channels = self.agent_channels.clone();
                 let agent_name_clone = agent_name.clone();
                 let agent_notif_tx = self.agent_notif_tx.clone();
+                let subagent_hooks = self.hooks.clone();
 
                 // Notify TUI: agent spawned
                 if let Some(ref tx) = agent_notif_tx {
@@ -565,6 +576,15 @@ impl Tool for DispatchAgentTool {
                             ch.remove(name);
                         }
                     }
+
+                    // Fire SubagentStop hook
+                    if let Some(ref hooks) = subagent_hooks {
+                        if hooks.has_hooks(HookEvent::SubagentStop) {
+                            let ctx = hooks.subagent_ctx(HookEvent::SubagentStop, &agent_id_clone);
+                            let _ = hooks.run(HookEvent::SubagentStop, ctx).await;
+                        }
+                    }
+
                     tracker.remove(&agent_id_clone).await;
                 });
 
@@ -793,6 +813,7 @@ mod tests {
             cancel_tokens: None,
             agent_channels: None,
             agent_notif_tx: None,
+            hooks: None,
         }
     }
 

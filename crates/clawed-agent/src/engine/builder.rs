@@ -415,6 +415,13 @@ impl QueryEngineBuilder {
             (None, None, None, None, None, None)
         };
 
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let hooks = Arc::new(HookRegistry::from_config(
+            self.hooks_config.clone(),
+            self.cwd.clone(),
+            session_id.clone(),
+        ));
+
         let dispatch_tool = DispatchAgentTool {
             client: client.clone(),
             registry: sub_registry,
@@ -431,17 +438,12 @@ impl QueryEngineBuilder {
             cancel_tokens: coord_cancel_tokens.clone(),
             agent_channels: coord_agent_channels.clone(),
             agent_notif_tx,
+            hooks: Some(hooks.clone()),
         };
         registry.register(dispatch_tool);
 
         let registry = Arc::new(registry);
 
-        let session_id = uuid::Uuid::new_v4().to_string();
-        let hooks = Arc::new(HookRegistry::from_config(
-            self.hooks_config,
-            self.cwd.clone(),
-            session_id.clone(),
-        ));
         let executor = Arc::new({
             let mut exec =
                 ToolExecutor::with_hooks(registry.clone(), permission_checker, hooks.clone());
