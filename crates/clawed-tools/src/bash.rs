@@ -124,6 +124,10 @@ pub(crate) fn check_dangerous(command: &str) -> Option<&'static str> {
     }
     for (pattern, reason) in BLOCKED_GIT_PATTERNS {
         if lower.contains(pattern) {
+            // Exception: --force-with-lease is safe (checks remote ref)
+            if lower.contains("--force-with-lease") {
+                continue;
+            }
             return Some(reason);
         }
     }
@@ -949,14 +953,10 @@ mod tests {
     }
 
     #[test]
-    fn test_dangerous_git_force_with_lease_blocked_known_limitation() {
-        // --force-with-lease is safer, but current impl uses substring match on
-        // "git push --force" which also catches --force-with-lease. Known limitation.
+    fn test_dangerous_git_force_with_lease_allowed() {
+        // --force-with-lease checks the remote ref before pushing, making it safe
         let result = check_dangerous("git push --force-with-lease");
-        assert!(
-            result.is_some(),
-            "current impl blocks --force-with-lease (known limitation)"
-        );
+        assert!(result.is_none(), "--force-with-lease should be allowed");
     }
 
     #[test]
