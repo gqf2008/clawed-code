@@ -135,6 +135,9 @@ impl HookRegistry {
                         let decision = interpret_output(event, exit_code, stdout);
                         match decision {
                             HookDecision::Continue => {}
+                            HookDecision::Allow => {
+                                return decision;
+                            }
                             HookDecision::Block { .. } => {
                                 // Block wins immediately — short-circuit
                                 return decision;

@@ -173,7 +173,7 @@ fn test_interpret_exit0_json_modify() {
 fn test_interpret_exit0_json_approve() {
     let json = r#"{"decision":"approve"}"#;
     let d = interpret_output(HookEvent::PreToolUse, 0, json.into());
-    assert!(matches!(d, HookDecision::Continue));
+    assert!(matches!(d, HookDecision::Allow));
 }
 
 #[test]

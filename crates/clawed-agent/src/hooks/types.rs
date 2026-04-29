@@ -124,6 +124,8 @@ pub(crate) struct HookContext {
 pub enum HookDecision {
     /// Proceed normally.
     Continue,
+    /// Explicitly allow the action (e.g., approve a permission request).
+    Allow,
     /// Block the action; reason shown to Claude.
     Block { reason: String },
     /// (Stop hooks only) inject `feedback` as a new user message and loop.

@@ -164,8 +164,10 @@ pub(super) fn interpret_output(event: HookEvent, exit_code: i32, stdout: String)
                             return HookDecision::ModifyInput { new_input };
                         }
                     }
-                    // Explicit "approve" or "continue" → don't treat stdout as context
-                    Some("approve") | Some("continue") | Some("") => return HookDecision::Continue,
+                    // Explicit "approve" → Allow (can bypass permission prompts)
+                    Some("approve") => return HookDecision::Allow,
+                    // Explicit "continue" → proceed normally
+                    Some("continue") | Some("") => return HookDecision::Continue,
                     _ => {}
                 }
             }

@@ -228,7 +228,8 @@ impl ToolExecutor {
                 };
             }
             PermissionBehavior::Ask => {
-                // Fire PermissionRequest hook
+                // Fire PermissionRequest hook — hooks can override the decision
+                let mut hook_approved = false;
                 if self.hooks.has_hooks(HookEvent::PermissionRequest) {
                     let ctx = self.hooks.permission_ctx(
                         HookEvent::PermissionRequest,
@@ -236,8 +237,24 @@ impl ToolExecutor {
                         &input,
                         "ask",
                     );
-                    let _ = self.hooks.run(HookEvent::PermissionRequest, ctx).await;
+                    match self.hooks.run(HookEvent::PermissionRequest, ctx).await {
+                        HookDecision::Allow => {
+                            hook_approved = true;
+                        }
+                        HookDecision::Block { reason } => {
+                            return ContentBlock::ToolResult {
+                                tool_use_id: tool_use_id.to_string(),
+                                content: vec![ToolResultContent::Text {
+                                    text: format!("Blocked by hook: {reason}"),
+                                }],
+                                is_error: true,
+                            };
+                        }
+                        _ => {} // Fall through to interactive prompt
+                    }
                 }
+
+                if !hook_approved {
 
                 // Always use the canonical tool name for prompts and session cache so that
                 // alias-resolved tools (e.g. "FileWriteTool" → "Write") are keyed consistently.
@@ -288,6 +305,7 @@ impl ToolExecutor {
                 // way check() looks it up (via tool.name()).
                 self.permission_checker
                     .apply_response(canonical, &response, &perm, &context.cwd);
+                } // !hook_approved
             }
             PermissionBehavior::Allow => {}
         }
