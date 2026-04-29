@@ -311,7 +311,6 @@ impl HookRegistry {
     }
 
     /// Build a minimal `HookContext` for lifecycle events (CwdChanged, ConfigChange, etc.).
-    #[allow(dead_code)] // reserved for lifecycle hook events
     pub(crate) fn lifecycle_ctx(&self, event: HookEvent) -> HookContext {
         HookContext {
             event: event.as_str().to_string(),

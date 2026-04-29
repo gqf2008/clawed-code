@@ -140,8 +140,11 @@ impl PermissionChecker {
             }
         }
 
-        // Check configured rules (with optional pattern matching)
+        // Check configured rules — deny always wins over allow regardless of
+        // rule order, matching the original Claude Code behavior.
         let tool_cat = format!("category:{}", tool.category());
+        let mut matched_allow = false;
+        let mut matched_ask = false;
         for rule in &self.rules {
             let name_matches = rule.tool_name == tool.name()
                 || rule.tool_name == "*"
@@ -155,12 +158,23 @@ impl PermissionChecker {
                 }
             }
             match rule.behavior {
-                PermissionBehavior::Allow => return PermissionResult::allow(),
                 PermissionBehavior::Deny => {
                     return PermissionResult::deny(format!("'{}' denied by rule", tool.name()));
                 }
-                PermissionBehavior::Ask => {}
+                PermissionBehavior::Allow => matched_allow = true,
+                PermissionBehavior::Ask => matched_ask = true,
             }
+        }
+        if matched_ask && !matched_allow {
+            // At least one rule says "ask" and no rule says "allow" → prompt
+            let suggestions = build_permission_suggestions(tool, input);
+            return PermissionResult::ask_with_suggestions(
+                format!("Allow {}? (rule: ask)", tool.name()),
+                suggestions,
+            );
+        }
+        if matched_allow {
+            return PermissionResult::allow();
         }
 
         if tool.is_read_only() {
@@ -267,9 +281,9 @@ impl PermissionChecker {
             }
         }
 
-        // Stage 4: Web tools — auto-approve fetch but block if dangerous
+        // Stage 4: Web tools — auto-approve fetch/search
         if tool.category() == ToolCategory::Web
-            && (tool.name() == "WebFetchTool" || tool.name() == "WebSearchTool")
+            && (tool.name() == "WebFetch" || tool.name() == "WebSearch")
         {
             return PermissionResult::allow();
         }

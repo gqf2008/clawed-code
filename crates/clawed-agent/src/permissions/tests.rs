@@ -535,7 +535,7 @@ fn test_apply_response_no_suggestion_falls_back_to_session() {
 async fn test_auto_mode_allows_safe_tools() {
     let checker = PermissionChecker::new(PermissionMode::Auto, vec![]);
     let tool = MockTool {
-        name: "FileReadTool",
+        name: "Read",
         category: ToolCategory::FileSystem,
         read_only: true,
     };
@@ -547,7 +547,7 @@ async fn test_auto_mode_allows_safe_tools() {
 async fn test_auto_mode_allows_grep_tool() {
     let checker = PermissionChecker::new(PermissionMode::Auto, vec![]);
     let tool = MockTool {
-        name: "GrepTool",
+        name: "Grep",
         category: ToolCategory::FileSystem,
         read_only: true,
     };
@@ -559,7 +559,7 @@ async fn test_auto_mode_allows_grep_tool() {
 async fn test_auto_mode_allows_filesystem_writes() {
     let checker = PermissionChecker::new(PermissionMode::Auto, vec![]);
     let tool = MockTool {
-        name: "FileEditTool",
+        name: "Edit",
         category: ToolCategory::FileSystem,
         read_only: false,
     };
@@ -618,7 +618,7 @@ async fn test_auto_mode_allows_simple_rm() {
 async fn test_auto_mode_allows_web_tools() {
     let checker = PermissionChecker::new(PermissionMode::Auto, vec![]);
     let tool = MockTool {
-        name: "WebFetchTool",
+        name: "WebFetch",
         category: ToolCategory::Web,
         read_only: true,
     };
@@ -656,7 +656,7 @@ async fn test_auto_mode_prompts_for_network_shell() {
 async fn test_auto_mode_task_tools_allowed() {
     let checker = PermissionChecker::new(PermissionMode::Auto, vec![]);
     let tool = MockTool {
-        name: "TaskCreateTool",
+        name: "task_create",
         category: ToolCategory::Agent,
         read_only: false,
     };
@@ -692,7 +692,7 @@ async fn test_auto_mode_denial_reset_on_approval() {
     assert_eq!(checker.denial_state().consecutive_denials, 0);
 
     let tool = MockTool {
-        name: "GlobTool",
+        name: "Glob",
         category: ToolCategory::FileSystem,
         read_only: true,
     };
@@ -712,6 +712,75 @@ async fn test_auto_mode_rules_still_apply() {
         .check(&shell_tool(), &json!({"command": "rm -rf ."}), None)
         .await;
     assert_eq!(r.behavior, PermissionBehavior::Deny);
+}
+
+// ── Deny overrides Allow ─────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_deny_overrides_allow_same_tool() {
+    // Deny rule for Bash should win over Allow rule for Bash, regardless of order
+    let rules = vec![
+        PermissionRule {
+            tool_name: "Bash".into(),
+            pattern: None,
+            behavior: PermissionBehavior::Allow,
+        },
+        PermissionRule {
+            tool_name: "Bash".into(),
+            pattern: None,
+            behavior: PermissionBehavior::Deny,
+        },
+    ];
+    let checker = PermissionChecker::new(PermissionMode::Default, rules);
+    let r = checker.check(&shell_tool(), &json!({}), None).await;
+    assert_eq!(r.behavior, PermissionBehavior::Deny);
+}
+
+#[tokio::test]
+async fn test_deny_overrides_allow_wildcard() {
+    // Wildcard allow + specific deny → deny wins
+    let rules = vec![
+        PermissionRule {
+            tool_name: "*".into(),
+            pattern: None,
+            behavior: PermissionBehavior::Allow,
+        },
+        PermissionRule {
+            tool_name: "Bash".into(),
+            pattern: None,
+            behavior: PermissionBehavior::Deny,
+        },
+    ];
+    let checker = PermissionChecker::new(PermissionMode::Default, rules);
+    let r = checker.check(&shell_tool(), &json!({}), None).await;
+    assert_eq!(r.behavior, PermissionBehavior::Deny);
+}
+
+#[tokio::test]
+async fn test_deny_overrides_allow_pattern() {
+    // Allow Bash(git*) + Deny Bash(git push*) → deny wins for git push
+    let rules = vec![
+        PermissionRule {
+            tool_name: "Bash".into(),
+            pattern: Some("git*".into()),
+            behavior: PermissionBehavior::Allow,
+        },
+        PermissionRule {
+            tool_name: "Bash".into(),
+            pattern: Some("git push*".into()),
+            behavior: PermissionBehavior::Deny,
+        },
+    ];
+    let checker = PermissionChecker::new(PermissionMode::Default, rules);
+    let r = checker
+        .check(&shell_tool(), &json!({"command": "git push origin main"}), None)
+        .await;
+    assert_eq!(r.behavior, PermissionBehavior::Deny);
+    // git status should still be allowed (no deny rule matches)
+    let r2 = checker
+        .check(&shell_tool(), &json!({"command": "git status"}), None)
+        .await;
+    assert_eq!(r2.behavior, PermissionBehavior::Allow);
 }
 
 // ── DontAsk mode ──────────────────────────────────────────────────────

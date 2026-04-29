@@ -295,6 +295,11 @@ pub fn query_stream_with_injection(
                         ApiErrorAction::Fatal => {}
                     }
                     state.write().await.messages = messages.clone();
+                    // Fire StopFailure hook before breaking
+                    if hooks.has_hooks(HookEvent::StopFailure) {
+                        let ctx = hooks.prompt_ctx(HookEvent::StopFailure, Some(format!("{:#}", e)));
+                        let _ = hooks.run(HookEvent::StopFailure, ctx).await;
+                    }
                     yield AgentEvent::Error(format!("API error: {:#}", e));
                     break;
                 }
@@ -478,6 +483,11 @@ pub fn query_stream_with_injection(
                         }
 
                         state.write().await.messages = messages.clone();
+                        // Fire StopFailure hook before breaking
+                        if hooks.has_hooks(HookEvent::StopFailure) {
+                            let ctx = hooks.prompt_ctx(HookEvent::StopFailure, Some(format!("Stream error: {}", e)));
+                            let _ = hooks.run(HookEvent::StopFailure, ctx).await;
+                        }
                         yield AgentEvent::Error(format!("Stream error: {}", e));
                         break;
                     }

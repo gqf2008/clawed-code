@@ -50,6 +50,7 @@ use clawed_core::message::{ContentBlock, ImageSource};
 use clawed_mcp::McpBusAdapter;
 
 use crate::engine::QueryEngine;
+use crate::hooks::HookEvent;
 use crate::query::AgentEvent;
 
 /// Bridges an existing [`QueryEngine`] to a [`BusHandle`].
@@ -303,6 +304,13 @@ impl AgentCoreAdapter {
             }
         }
 
+        // Fire SessionEnd hook after the adapter loop exits
+        let hooks = self.engine.hooks();
+        if hooks.has_hooks(HookEvent::SessionEnd) {
+            let ctx = hooks.lifecycle_ctx(HookEvent::SessionEnd);
+            let _ = hooks.run(HookEvent::SessionEnd, ctx).await;
+        }
+
         info!("AgentCoreAdapter stopped");
     }
 
@@ -465,6 +473,16 @@ impl AgentCoreAdapter {
                     message: msg,
                 },
             };
+
+            // Fire Notification hook on turn completion (so scripts can e.g. send
+            // desktop notifications when Claude finishes a turn).
+            if matches!(notification, AgentNotification::TurnComplete { .. }) {
+                let hooks = self.engine.hooks();
+                if hooks.has_hooks(HookEvent::Notification) {
+                    let ctx = hooks.prompt_ctx(HookEvent::Notification, None);
+                    let _ = hooks.run(HookEvent::Notification, ctx).await;
+                }
+            }
 
             let bus = self.bus.lock().await;
             bus.notify(notification);

@@ -345,14 +345,20 @@ impl QueryEngine {
 
     /// Run SessionStart hooks — call once at startup.
     pub async fn run_session_start(&self) -> Option<String> {
-        if !self.hooks.has_hooks(HookEvent::SessionStart) {
-            return None;
+        let mut appended = None;
+        if self.hooks.has_hooks(HookEvent::SessionStart) {
+            let ctx = self.hooks.prompt_ctx(HookEvent::SessionStart, None);
+            match self.hooks.run(HookEvent::SessionStart, ctx).await {
+                HookDecision::AppendContext { text } => appended = Some(text),
+                _ => {}
+            }
         }
-        let ctx = self.hooks.prompt_ctx(HookEvent::SessionStart, None);
-        match self.hooks.run(HookEvent::SessionStart, ctx).await {
-            HookDecision::AppendContext { text } => Some(text),
-            _ => None,
+        // Fire InstructionsLoaded after session start — system prompt is now assembled.
+        if self.hooks.has_hooks(HookEvent::InstructionsLoaded) {
+            let ctx = self.hooks.lifecycle_ctx(HookEvent::InstructionsLoaded);
+            let _ = self.hooks.run(HookEvent::InstructionsLoaded, ctx).await;
         }
+        appended
     }
 
     // ── Accessors and runtime config ─────────────────────────────────────────
@@ -370,6 +376,12 @@ impl QueryEngine {
         // note that context was reloaded.
         s.context_reloaded = true;
         s.claude_md_content = claude_md.to_string();
+        drop(s);
+        // Fire InstructionsLoaded hook — instructions were reloaded at runtime.
+        if self.hooks.has_hooks(HookEvent::InstructionsLoaded) {
+            let ctx = self.hooks.lifecycle_ctx(HookEvent::InstructionsLoaded);
+            let _ = self.hooks.run(HookEvent::InstructionsLoaded, ctx).await;
+        }
     }
 
     /// Get the current thinking configuration.

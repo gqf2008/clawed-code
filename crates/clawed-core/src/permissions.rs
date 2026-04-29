@@ -45,28 +45,39 @@ pub enum AutoModeDecision {
 /// Tools that are intrinsically safe and should be auto-approved in Auto mode
 /// without consulting the classifier. Mirrors TS `SAFE_YOLO_ALLOWLISTED_TOOLS`.
 pub const SAFE_AUTO_TOOLS: &[&str] = &[
-    // Read-only file operations
-    "FileReadTool",
-    "GrepTool",
-    "GlobTool",
-    "LSTool",
+    // Read-only file operations (canonical Rust registry names)
+    "Read",
+    "Grep",
+    "Glob",
+    "LS",
     // Task management (metadata-only)
-    "TodoWriteTool",
-    "TaskCreateTool",
-    "TaskGetTool",
-    "TaskUpdateTool",
-    "TaskListTool",
-    "TaskStopTool",
-    "TaskOutputTool",
+    "TodoWrite",
+    "TodoRead",
+    "task_create",
+    "task_get",
+    "task_update",
+    "task_list",
+    "task_stop",
+    "task_output",
     // User interaction / plan mode
-    "AskUserQuestionTool",
+    "AskUser",
+    "Brief",
+    // Agent orchestration
+    "Skill",
+    "EnterPlanMode",
+    "ExitPlanMode",
     // Swarm coordination
     "TeamCreateTool",
     "TeamDeleteTool",
-    "SendMessageTool",
+    "SendUserMessage",
     // MCP read resources
-    "ListMcpResourcesTool",
-    "ReadMcpResourceTool",
+    "mcp_list_resources",
+    "mcp_read_resource",
+    // Search
+    "ToolSearch",
+    // Context inspection
+    "ContextInspect",
+    "Verify",
 ];
 
 /// Check if a tool name is on the intrinsic safe allowlist.
@@ -371,19 +382,20 @@ mod tests {
 
     #[test]
     fn test_safe_auto_tools_contains_expected() {
-        assert!(is_safe_auto_tool("FileReadTool"));
-        assert!(is_safe_auto_tool("GrepTool"));
-        assert!(is_safe_auto_tool("GlobTool"));
-        assert!(is_safe_auto_tool("LSTool"));
-        assert!(is_safe_auto_tool("TodoWriteTool"));
-        assert!(is_safe_auto_tool("TaskCreateTool"));
-        assert!(is_safe_auto_tool("AskUserQuestionTool"));
+        // Canonical Rust registry names
+        assert!(is_safe_auto_tool("Read"));
+        assert!(is_safe_auto_tool("Grep"));
+        assert!(is_safe_auto_tool("Glob"));
+        assert!(is_safe_auto_tool("LS"));
+        assert!(is_safe_auto_tool("TodoWrite"));
+        assert!(is_safe_auto_tool("task_create"));
+        assert!(is_safe_auto_tool("AskUser"));
         assert!(is_safe_auto_tool("TeamCreateTool"));
         // Not safe:
-        assert!(!is_safe_auto_tool("BashTool"));
-        assert!(!is_safe_auto_tool("FileEditTool"));
-        assert!(!is_safe_auto_tool("FileWriteTool"));
-        assert!(!is_safe_auto_tool("WebFetchTool"));
+        assert!(!is_safe_auto_tool("Bash"));
+        assert!(!is_safe_auto_tool("Edit"));
+        assert!(!is_safe_auto_tool("Write"));
+        assert!(!is_safe_auto_tool("WebFetch"));
     }
 
     #[test]
