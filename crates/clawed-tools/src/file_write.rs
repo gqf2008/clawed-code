@@ -77,6 +77,11 @@ impl Tool for FileWriteTool {
             }
         };
 
+        // Check path safety — block writing to protected directories and config files
+        if let Some(reason) = crate::path_safety::check_path_safety(&path) {
+            return Ok(ToolResult::error(reason));
+        }
+
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }

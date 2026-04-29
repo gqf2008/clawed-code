@@ -174,6 +174,11 @@ impl Tool for FileEditTool {
             Err(e) => return Ok(ToolResult::error(format!("{e}"))),
         };
 
+        // Check path safety — block editing protected directories and config files
+        if let Some(reason) = crate::path_safety::check_path_safety(&path) {
+            return Ok(ToolResult::error(reason));
+        }
+
         let content = tokio::fs::read_to_string(&path).await?;
 
         // Check for external modifications

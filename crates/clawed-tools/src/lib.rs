@@ -74,6 +74,7 @@ pub mod mcp_auth;
 pub mod attribution;
 
 // ── Internal utilities (not tools) ──────────────────────────────────────────
+pub mod path_safety;
 pub mod path_util;
 pub mod remote_trigger;
 pub mod teleport;
