@@ -293,6 +293,18 @@ const SYSTEM_COMMANDS: &[&str] = &[
     "az",
 ];
 
+/// Destructive commands that can cause catastrophic data loss.
+/// These are also hard-blocked by BashTool::check_dangerous(), but classifying
+/// them here lets the permission system make informed auto-mode decisions.
+const DESTRUCTIVE_PATTERNS: &[&str] = &[
+    "rm -rf /",
+    "rm -rf /*",
+    "rm -rf ~",
+    "mkfs.",
+    "dd if=/dev/",
+    "chmod -R 777 /",
+];
+
 // ── Classification Logic ─────────────────────────────────────────────────────
 
 /// Extract the base command from a shell command string.
@@ -370,7 +382,19 @@ pub fn classify(command: &str) -> ClassifyResult {
 
 /// Classify a base command string (already lowercased, no sudo).
 fn classify_base(base: &str) -> ClassifyResult {
-    // Check code exec first (highest priority after destructive)
+    // Check destructive patterns first (highest priority)
+    // Patterns are mixed-case; compare lowercase against lowercase base.
+    for &pat in DESTRUCTIVE_PATTERNS {
+        if base.contains(&pat.to_lowercase()) {
+            return ClassifyResult {
+                risk: RiskLevel::Destructive,
+                base_command: pat.to_string(),
+                reason: "catastrophic / destructive command",
+            };
+        }
+    }
+
+    // Check code exec next
     for &pat in CODE_EXEC_COMMANDS {
         if cmd_matches(base, pat) {
             return ClassifyResult {
@@ -676,7 +700,7 @@ mod tests {
             RiskLevel::CodeExec
         );
         assert_eq!(classify("eval 'echo hi'").risk, RiskLevel::CodeExec);
-        assert_eq!(classify("bash -c 'rm -rf /'").risk, RiskLevel::CodeExec);
+        assert_eq!(classify("bash -c 'echo hello'").risk, RiskLevel::CodeExec);
         assert_eq!(classify("ruby script.rb").risk, RiskLevel::CodeExec);
         assert_eq!(classify("xargs rm").risk, RiskLevel::CodeExec);
     }
@@ -867,5 +891,22 @@ mod tests {
         assert_eq!(safe.len(), 2); // git* (allow) + rm* (deny kept)
         assert_eq!(stripped.len(), 1); // python* stripped
         assert!(stripped[0].contains("python"));
+    }
+
+    #[test]
+    fn destructive_classifications() {
+        assert_eq!(classify("rm -rf /").risk, RiskLevel::Destructive);
+        assert_eq!(classify("rm -rf /*").risk, RiskLevel::Destructive);
+        assert_eq!(classify("rm -rf ~").risk, RiskLevel::Destructive);
+        assert_eq!(classify("mkfs.ext4 /dev/sda1").risk, RiskLevel::Destructive);
+        assert_eq!(classify("dd if=/dev/zero of=/dev/sda").risk, RiskLevel::Destructive);
+        assert_eq!(classify("chmod -R 777 /").risk, RiskLevel::Destructive);
+    }
+
+    #[test]
+    fn normal_rm_is_project_write() {
+        // Regular rm without -rf / should be ProjectWrite, not Destructive
+        assert_eq!(classify("rm temp.txt").risk, RiskLevel::ProjectWrite);
+        assert_eq!(classify("rm -rf build/").risk, RiskLevel::ProjectWrite);
     }
 }
