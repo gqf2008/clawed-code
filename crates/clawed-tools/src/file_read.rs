@@ -130,11 +130,21 @@ impl Tool for FileReadTool {
     }
 
     fn description(&self) -> &'static str {
-        "Reads a file from the local filesystem. The file_path must be an absolute path. \
-         By default reads up to 2000 lines from the beginning. Use offset/limit to read \
-         specific portions. Results use cat -n format with line numbers starting at 1. \
-         Can read images (PNG, JPG) and Jupyter notebooks (.ipynb). \
-         Can only read files, not directories — use Bash ls for directories."
+        "Reads a file from the local filesystem. You can access any file directly by using this tool.\n\
+         Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid.\n\
+         It is okay to read a file that does not exist; an error will be returned.\n\n\
+         Usage:\n\
+         - The file_path parameter must be an absolute path, not a relative path.\n\
+         - By default, it reads up to 2000 lines starting from the beginning of the file.\n\
+         - You can optionally provide offset and limit parameters to read specific portions.\n\
+         - Any optional parameters can be omitted.\n\
+         - Results are returned using cat -n format, with line numbers starting at 1.\n\
+         - This tool reads files, not directories. To list files in a directory, use Bash ls.\n\
+         - This tool can read images (PNG, JPG, JPEG, GIF, WebP) and presents them visually.\n\
+         - For PDF files (.pdf), use the pages parameter to specify page ranges (e.g., \"1-5\"). \
+         Maximum 20 pages per request.\n\
+         - This tool can read Jupyter notebooks (.ipynb files) and returns all cells with their outputs.\n\
+         - If you read a file that exists but has empty contents you will receive a system reminder."
     }
 
     fn input_schema(&self) -> Value {

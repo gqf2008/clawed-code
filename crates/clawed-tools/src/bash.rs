@@ -346,16 +346,41 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &'static str {
-        "Execute a shell command in the working directory. Use for system commands, \
-         git operations, build commands, and running programs. \
-         Do NOT use this tool for read-only file operations when a dedicated tool exists: \
-         use Glob (not find/ls) for file search, Grep (not grep/rg) for content search, \
-         Read (not cat/head/tail) for reading files, Edit (not sed/awk) for editing files, \
-         Write (not echo/cat heredoc) for writing files. \
-         Git safety: NEVER update git config, NEVER run destructive git commands \
-         (force push, reset --hard, clean -f) unless explicitly requested, NEVER skip hooks, \
-         always create NEW commits (not amend) unless asked, prefer staging specific files \
-         over 'git add -A'."
+        "Executes a given bash command and returns its output.\n\n\
+         IMPORTANT: Do NOT use this tool to run commands when a relevant dedicated tool is provided. \
+         Using dedicated tools allows the user to better understand and review your work. This is CRITICAL to assisting the user:\n\
+         - To read files use Read instead of cat, head, tail, or sed\n\
+         - To edit files use Edit instead of sed or awk\n\
+         - To create files use Write instead of cat with heredoc or echo redirection\n\
+         - To search for files use Glob instead of find or ls\n\
+         - To search the content of files, use Grep instead of grep or rg\n\
+         - Reserve using the Bash exclusively for system commands and terminal operations \
+         that require shell execution. If you are unsure and there is a relevant dedicated tool, \
+         default to using the dedicated tool and only fallback on using the Bash tool for these \
+         if it is absolutely necessary.\n\n\
+         You can call multiple tools in a single response. If you intend to call multiple tools \
+         and there are no dependencies between them, make all independent tool calls in parallel. \
+         However, if some tool calls depend on previous calls to inform dependent values, do NOT \
+         call these tools in parallel and instead call them sequentially.\n\n\
+         Committing changes with git:\n\
+         Only create commits when requested by the user. When creating a commit:\n\
+         1. Run `git status` to see all untracked files and `git diff` to see staged and unstaged changes.\n\
+         2. Analyze all changes and draft a commit message.\n\
+         3. Stage relevant files with `git add`. Prefer adding specific files by name rather than \
+         `git add -A` or `git add .` which can accidentally include sensitive files.\n\
+         4. Create the commit with `git commit`. ALWAYS pass the commit message via a HEREDOC:\n\
+         ```
+         git commit -m \"$(cat <<'EOF\n   Commit message here.\n   EOF\n   )\"\n\
+         ```\n\
+         NEVER use the -i flag. NEVER use --no-verify. NEVER use --no-gpg-sign.\n\
+         5. Run `git status` after the commit to verify success.\n\n\
+         Git safety:\n\
+         - NEVER update the git config\n\
+         - NEVER run destructive git commands (push --force, reset --hard, checkout ., clean -f, branch -D) unless explicitly requested\n\
+         - NEVER force push to main/master — warn the user if they request it\n\
+         - CRITICAL: Always create NEW commits rather than amending, unless explicitly requested. \
+         When a pre-commit hook fails, the commit did NOT happen — so --amend would modify the PREVIOUS commit.\n\n\
+         Avoid unnecessary sleep commands. Do not sleep between commands that can run immediately."
     }
 
     fn to_auto_classifier_input(&self, input: &Value) -> Value {

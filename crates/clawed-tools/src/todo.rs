@@ -67,11 +67,17 @@ impl Tool for TodoWriteTool {
     }
 
     fn description(&self) -> &'static str {
-        "Create or update the structured task list for this session. The list is the \
-         single source of truth for what needs to be done. Always call TodoRead first to \
-         understand the current state before calling TodoWrite. Replace the entire list on \
-         each write. Allowed statuses: pending | in_progress | completed. \
-         Only one task should be in_progress at a time."
+        "Create or update the structured task list for this session.\n\n\
+         Use this tool to plan your work and help the user track your progress. \
+         Mark each task as completed as soon as you are done with the task. \
+         Do not batch up multiple tasks before marking them as completed.\n\n\
+         Always call TodoRead first to understand the current state before calling TodoWrite. \
+         Replace the entire list on each write.\n\n\
+         Allowed statuses: pending | in_progress | completed.\n\
+         Only one task should be in_progress at a time. \
+         When you start a task, mark it in_progress. When you finish, mark it completed.\n\n\
+         Each task has a subject (brief imperative title), description (what needs to be done), \
+         and status. Keep subjects concise and actionable."
     }
 
     fn input_schema(&self) -> Value {

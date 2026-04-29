@@ -129,9 +129,31 @@ impl Tool for TaskCreateTool {
     }
 
     fn description(&self) -> &'static str {
-        "Create a new task for tracking progress. Use this when breaking down a complex \
-         problem into steps. Each task has a subject (brief title) and description (what \
-         to do). Returns the task ID for use with task_update."
+        "Use this tool to create a structured task list for your current coding session. \
+         This helps you track progress, organize complex tasks, and demonstrate thoroughness \
+         to the user.\n\
+         It also helps the user understand the progress of the task and overall progress of \
+         their requests.\n\n\
+         ## When to Use\n\n\
+         - Complex multi-step tasks - When a task requires 3 or more distinct steps or actions\n\
+         - Non-trivial and complex tasks - Tasks that require careful planning or multiple operations\n\
+         - Plan mode - When using plan mode, create a task list to track the work\n\
+         - User explicitly requests todo list - When the user directly asks you to use the todo list\n\
+         - Multiple tasks - When users provide a list of things to be done (numbered or comma-separated)\n\
+         - After receiving new instructions - Immediately capture user requirements as tasks\n\n\
+         ## When NOT to Use\n\n\
+         - Skip using this tool when there is only a single, straightforward task\n\
+         - The task is trivial and tracking it provides no organizational benefit\n\
+         - The task can be completed in less than 3 trivial steps\n\
+         - The task is purely conversational or informational\n\n\
+         ## Task Fields\n\n\
+         - `subject`: A brief, actionable title in imperative form (e.g., \"Fix authentication bug\")\n\
+         - `description`: What needs to be done\n\
+         - `blocked_by`: Task IDs that must complete before this one can start\n\n\
+         ## Tips\n\n\
+         - Create tasks with clear, specific subjects that describe the outcome\n\
+         - After creating tasks, use TaskUpdate to set up dependencies if needed\n\
+         - Check TaskList first to avoid creating duplicate tasks"
     }
 
     fn input_schema(&self) -> Value {

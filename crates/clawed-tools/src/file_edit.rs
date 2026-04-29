@@ -39,7 +39,7 @@ fn file_state_cache() -> &'static Mutex<HashMap<String, FileState>> {
 }
 
 /// Check if a file has been modified externally since we last saw it.
-fn check_external_modification(path: &std::path::Path, content: &str) -> Option<String> {
+pub(crate) fn check_external_modification(path: &std::path::Path, content: &str) -> Option<String> {
     let key = path.to_string_lossy().to_string();
     let cache = file_state_cache().lock().unwrap_or_else(|p| p.into_inner());
 
@@ -102,10 +102,19 @@ impl Tool for FileEditTool {
     }
 
     fn description(&self) -> &'static str {
-        "Performs exact string replacements in files. You must use Read at least once before \
-         editing. The edit will FAIL if old_string is not unique in the file — provide more \
-         surrounding context to make it unique. \
-         Preserve exact indentation from the file content (after the line number prefix)."
+        "Performs exact string replacements in files.\n\n\
+         Usage:\n\
+         - You must use your Read tool at least once in the conversation before you use this tool. \
+         If you haven't read the file, read it first.\n\
+         - ALWAYS prefer editing existing files in the codebase. Do NOT create new files \
+         unless explicitly required.\n\
+         - When using this tool, provide enough context in old_string to uniquely identify the target. \
+         Include surrounding lines if the target line is ambiguous.\n\
+         - The edit will FAIL if old_string is not unique in the file. Use replace_all to change \
+         every instance of old_string.\n\
+         - Preserve exact indentation from the file content after the line number prefix. \
+         The line number prefix format is: line number + tab. Never include any part of the \
+         line number prefix in the old_string or new_string."
     }
 
     fn to_auto_classifier_input(&self, input: &Value) -> Value {
@@ -130,7 +139,11 @@ impl Tool for FileEditTool {
             "properties": {
                 "file_path": { "type": "string" },
                 "old_string": { "type": "string" },
-                "new_string": { "type": "string" }
+                "new_string": { "type": "string" },
+                "replace_all": {
+                    "type": "boolean",
+                    "description": "Replace all occurrences of old_string (default false)"
+                }
             },
             "required": ["file_path", "old_string", "new_string"]
         })
@@ -150,6 +163,11 @@ impl Tool for FileEditTool {
         if old_string.is_empty() {
             return Ok(ToolResult::error("old_string must not be empty"));
         }
+        if old_string == new_string {
+            return Ok(ToolResult::error(
+                "old_string and new_string are identical — no change needed.",
+            ));
+        }
 
         let path = match path_util::resolve_path(file_path, &context.cwd) {
             Ok(p) => p,
@@ -164,17 +182,23 @@ impl Tool for FileEditTool {
             eprintln!("{warning}");
         }
 
+        let replace_all = input["replace_all"].as_bool().unwrap_or(false);
         let count = content.matches(old_string).count();
         if count == 0 {
             return Ok(ToolResult::error("old_string not found in file."));
         }
-        if count > 1 {
+        if !replace_all && count > 1 {
             return Ok(ToolResult::error(format!(
-                "old_string found {count} times — must be unique."
+                "old_string found {count} times — must be unique. \
+                 Use replace_all to change every instance of old_string."
             )));
         }
 
-        let new_content = content.replacen(old_string, new_string, 1);
+        let new_content = if replace_all {
+            content.replace(old_string, new_string)
+        } else {
+            content.replacen(old_string, new_string, 1)
+        };
 
         // Count line changes
         let (added, removed) = count_line_changes(&content, &new_content);

@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use clawed_core::tool::{Tool, ToolCategory, ToolContext, ToolResult};
 use serde_json::{json, Value};
 
+use crate::file_edit::{check_external_modification, update_file_state};
 use crate::path_util;
 
 /// Applies multiple consecutive string replacements to a single file atomically.
@@ -85,6 +86,10 @@ impl Tool for MultiEditTool {
 
         let original = tokio::fs::read_to_string(&path).await?;
 
+        if let Some(warning) = check_external_modification(&path, &original) {
+            eprintln!("{warning}");
+        }
+
         // Pre-validate: check all old_strings are present and unique in original
         // and detect overlapping regions before modifying anything
         let mut regions: Vec<(usize, usize, usize)> = Vec::new(); // (start, end, edit_index)
@@ -149,6 +154,8 @@ impl Tool for MultiEditTool {
         }
 
         tokio::fs::write(&path, &content).await?;
+
+        update_file_state(&path, &content);
 
         // Print diff of net changes (original → final)
         crate::diff_ui::print_diff(file_path, &original, &content);
