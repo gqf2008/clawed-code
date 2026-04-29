@@ -713,3 +713,53 @@ async fn test_auto_mode_rules_still_apply() {
         .await;
     assert_eq!(r.behavior, PermissionBehavior::Deny);
 }
+
+// ── DontAsk mode ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dont_ask_denies_write_tools() {
+    let checker = PermissionChecker::new(PermissionMode::DontAsk, vec![]);
+    let r = checker.check(&write_tool(), &json!({}), None).await;
+    assert_eq!(r.behavior, PermissionBehavior::Deny);
+    assert!(r.reason.as_deref().unwrap_or("").contains("dont-ask"));
+}
+
+#[tokio::test]
+async fn test_dont_ask_allows_read_only() {
+    let checker = PermissionChecker::new(PermissionMode::DontAsk, vec![]);
+    let r = checker.check(&read_tool(), &json!({}), None).await;
+    assert_eq!(r.behavior, PermissionBehavior::Allow);
+}
+
+#[tokio::test]
+async fn test_dont_ask_allows_rule_allowed() {
+    let rules = vec![PermissionRule {
+        tool_name: "Bash".into(),
+        pattern: Some("git*".into()),
+        behavior: PermissionBehavior::Allow,
+    }];
+    let checker = PermissionChecker::new(PermissionMode::DontAsk, rules);
+    let r = checker
+        .check(&shell_tool(), &json!({"command": "git status"}), None)
+        .await;
+    assert_eq!(r.behavior, PermissionBehavior::Allow);
+}
+
+#[tokio::test]
+async fn test_dont_ask_denies_rule_denied() {
+    let rules = vec![PermissionRule {
+        tool_name: "Bash".into(),
+        pattern: None,
+        behavior: PermissionBehavior::Deny,
+    }];
+    let checker = PermissionChecker::new(PermissionMode::DontAsk, rules);
+    let r = checker.check(&shell_tool(), &json!({}), None).await;
+    assert_eq!(r.behavior, PermissionBehavior::Deny);
+}
+
+#[tokio::test]
+async fn test_dont_ask_denies_shell_without_rule() {
+    let checker = PermissionChecker::new(PermissionMode::DontAsk, vec![]);
+    let r = checker.check(&shell_tool(), &json!({}), None).await;
+    assert_eq!(r.behavior, PermissionBehavior::Deny);
+}

@@ -122,7 +122,7 @@ impl PermissionChecker {
         runtime_mode: Option<PermissionMode>,
     ) -> PermissionResult {
         let mode = runtime_mode.unwrap_or(self.mode);
-        if mode == PermissionMode::BypassAll || mode == PermissionMode::DontAsk {
+        if mode == PermissionMode::BypassAll {
             return PermissionResult::allow();
         }
         if mode == PermissionMode::Plan && !tool.is_read_only() {
@@ -185,6 +185,14 @@ impl PermissionChecker {
                     return PermissionResult::allow();
                 }
             }
+        }
+
+        // DontAsk mode: deny anything that would require a prompt
+        if mode == PermissionMode::DontAsk {
+            return PermissionResult::deny(format!(
+                "'{}' requires permission but dont-ask mode is active",
+                tool.name()
+            ));
         }
 
         // Build suggestions based on tool type
