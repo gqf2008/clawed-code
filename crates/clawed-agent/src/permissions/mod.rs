@@ -67,6 +67,8 @@ impl PermissionPrompter for TerminalPrompter {
 pub struct PermissionChecker {
     rules: Vec<PermissionRule>,
     mode: PermissionMode,
+    /// Tools that are always denied (from settings.json denied_tools).
+    denied_tools: Vec<String>,
     /// Tracks tools the user has permanently allowed during this session.
     pub(crate) session_allowed: std::sync::Mutex<std::collections::HashSet<String>>,
     /// Auto-mode denial tracking for fallback to manual prompting.
@@ -79,6 +81,11 @@ pub struct PermissionChecker {
 
 impl PermissionChecker {
     pub fn new(mode: PermissionMode, rules: Vec<PermissionRule>) -> Self {
+        Self::with_denied_tools(mode, rules, Vec::new())
+    }
+
+    /// Create with explicit denied_tools list (from settings.json).
+    pub fn with_denied_tools(mode: PermissionMode, rules: Vec<PermissionRule>, denied_tools: Vec<String>) -> Self {
         // In AcceptEdits mode, strip dangerous permission rules that would
         // bypass security (e.g., python:*, eval:*, sudo:*)
         let effective_rules = if mode == PermissionMode::AcceptEdits {
@@ -90,6 +97,7 @@ impl PermissionChecker {
         Self {
             rules: effective_rules,
             mode,
+            denied_tools,
             session_allowed: std::sync::Mutex::new(std::collections::HashSet::new()),
             denial_state: std::sync::Mutex::new(DenialState::default()),
             classifier_client: None,
@@ -138,6 +146,16 @@ impl PermissionChecker {
             if allowed.contains(tool.name()) {
                 return PermissionResult::allow();
             }
+        }
+
+        // Check denied_tools list (from settings.json) — hard deny, cannot be overridden
+        if self.denied_tools.iter().any(|d| {
+            d == tool.name() || d == "*" || d == &format!("category:{}", tool.category())
+        }) {
+            return PermissionResult::deny(format!(
+                "'{}' denied by settings.denied_tools",
+                tool.name()
+            ));
         }
 
         // Check configured rules — deny always wins over allow regardless of

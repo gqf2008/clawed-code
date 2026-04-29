@@ -832,3 +832,66 @@ async fn test_dont_ask_denies_shell_without_rule() {
     let r = checker.check(&shell_tool(), &json!({}), None).await;
     assert_eq!(r.behavior, PermissionBehavior::Deny);
 }
+
+// ── denied_tools ─────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_denied_tools_blocks_explicit() {
+    let checker = PermissionChecker::with_denied_tools(
+        PermissionMode::Default,
+        vec![],
+        vec!["Bash".into()],
+    );
+    let r = checker.check(&shell_tool(), &json!({}), None).await;
+    assert_eq!(r.behavior, PermissionBehavior::Deny);
+    assert!(r.reason.as_deref().unwrap_or("").contains("denied_tools"));
+}
+
+#[tokio::test]
+async fn test_denied_tools_wildcard_blocks_all() {
+    let checker = PermissionChecker::with_denied_tools(
+        PermissionMode::Default,
+        vec![],
+        vec!["*".into()],
+    );
+    let r = checker.check(&write_tool(), &json!({}), None).await;
+    assert_eq!(r.behavior, PermissionBehavior::Deny);
+}
+
+#[tokio::test]
+async fn test_denied_tools_category_blocks_category() {
+    let checker = PermissionChecker::with_denied_tools(
+        PermissionMode::Default,
+        vec![],
+        vec!["category:shell".into()],
+    );
+    let r = checker.check(&shell_tool(), &json!({}), None).await;
+    assert_eq!(r.behavior, PermissionBehavior::Deny);
+    // File system tool should still be allowed (read-only)
+    let r2 = checker.check(&read_tool(), &json!({}), None).await;
+    assert_eq!(r2.behavior, PermissionBehavior::Allow);
+}
+
+#[tokio::test]
+async fn test_denied_tools_overrides_allow_rule() {
+    // An allow rule should not override denied_tools
+    let rules = vec![PermissionRule {
+        tool_name: "Bash".into(),
+        pattern: None,
+        behavior: PermissionBehavior::Allow,
+    }];
+    let checker = PermissionChecker::with_denied_tools(
+        PermissionMode::Default,
+        rules,
+        vec!["Bash".into()],
+    );
+    let r = checker.check(&shell_tool(), &json!({}), None).await;
+    assert_eq!(r.behavior, PermissionBehavior::Deny);
+}
+
+#[tokio::test]
+async fn test_denied_tools_not_set_allows() {
+    let checker = PermissionChecker::new(PermissionMode::Default, vec![]);
+    let r = checker.check(&shell_tool(), &json!({}), None).await;
+    assert_eq!(r.behavior, PermissionBehavior::Ask);
+}
