@@ -358,21 +358,37 @@ impl Tool for BashTool {
          that require shell execution. If you are unsure and there is a relevant dedicated tool, \
          default to using the dedicated tool and only fallback on using the Bash tool for these \
          if it is absolutely necessary.\n\n\
+         The working directory persists between commands, but shell state does not. \
+         The shell environment is initialized from the user's profile (bash or zsh).\n\n\
          You can call multiple tools in a single response. If you intend to call multiple tools \
          and there are no dependencies between them, make all independent tool calls in parallel. \
          However, if some tool calls depend on previous calls to inform dependent values, do NOT \
-         call these tools in parallel and instead call them sequentially.\n\n\
+         call these tools in parallel and instead call them sequentially. \
+         For commands that depend on each other, chain them with `&&` (stop on failure) \
+         or `;` (run regardless). Only use `;` when you don't care if earlier commands fail.\n\n\
+         Use the `timeout` parameter for commands that may take longer than the default 2 minutes. \
+         If your command will create new directories or files, first use `ls` to verify the parent \
+         directory exists and is the correct location.\n\n\
+         Use `run_in_background` for long-running commands that you don't need the result \
+         immediately. Background commands run without blocking and you will be notified when they \
+         finish. Only use `run_in_background` if you don't need the result right away and are OK \
+         being notified when the command completes. Do not use `run_in_background` with a command \
+         that exits immediately — just run it normally.\n\n\
          Committing changes with git:\n\
-         Only create commits when requested by the user. When creating a commit:\n\
-         1. Run `git status` to see all untracked files and `git diff` to see staged and unstaged changes.\n\
-         2. Analyze all changes and draft a commit message.\n\
-         3. Stage relevant files with `git add`. Prefer adding specific files by name rather than \
-         `git add -A` or `git add .` which can accidentally include sensitive files.\n\
+         Only create commits when requested by the user. If unclear, ask first. When the user \
+         asks you to create a new git commit, follow these steps carefully:\n\n\
+         1. Run the following bash commands in parallel: `git status` to see all untracked files, \
+         `git diff` to see both staged and unstaged changes that will be committed, and `git log` \
+         to see recent commit messages so you can follow the repository's commit message style.\n\
+         2. Analyze all staged changes (both previously staged and newly added) and draft a commit \
+         message. The message should accurately reflect the changes and their purpose.\n\
+         3. Stage relevant untracked files by name. Prefer adding specific files by name rather than \
+         `git add -A` or `git add .` which can accidentally include sensitive files (.env, \
+         credentials.json, etc.). Warn the user if they specifically request committing those files.\n\
          4. Create the commit with `git commit`. ALWAYS pass the commit message via a HEREDOC:\n\
          ```
          git commit -m \"$(cat <<'EOF\n   Commit message here.\n   EOF\n   )\"\n\
          ```\n\
-         NEVER use the -i flag. NEVER use --no-verify. NEVER use --no-gpg-sign.\n\
          5. Run `git status` after the commit to verify success.\n\n\
          Git safety:\n\
          - NEVER update the git config\n\
@@ -394,12 +410,16 @@ impl Tool for BashTool {
             "type": "object",
             "properties": {
                 "command": { "type": "string", "description": "The command to execute" },
-                "timeout": { "type": "integer", "description": "Timeout in ms (default 120000)" },
+                "timeout": { "type": "integer", "description": "Optional timeout in milliseconds (up to 600000ms / 10 minutes). By default, commands will timeout after 120000ms (2 minutes)." },
                 "working_directory": { "type": "string", "description": "Override working directory" },
                 "environment": {
                     "type": "object",
                     "description": "Additional environment variables",
                     "additionalProperties": { "type": "string" }
+                },
+                "run_in_background": {
+                    "type": "boolean",
+                    "description": "Set to true to run this command in the background. Only use when you don't need the result immediately and are OK being notified when it finishes."
                 }
             },
             "required": ["command"]

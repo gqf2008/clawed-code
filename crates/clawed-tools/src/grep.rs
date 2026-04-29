@@ -57,7 +57,8 @@ impl Tool for GrepTool {
     fn description(&self) -> &'static str {
         "A powerful search tool built on ripgrep.\n\n\
          Usage:\n\
-         - ALWAYS use Grep for search tasks. NEVER invoke grep or rg as a Bash command.\n\
+         - ALWAYS use Grep for search tasks. NEVER invoke grep or rg as a Bash command. \
+         The Grep tool has been optimized for correct permissions and access.\n\
          - Supports full regex syntax (e.g., \"log.*Error\", \"function\\s+\\w+\").\n\
          - Filter files with include parameter (glob) or type parameter (e.g. \"py\", \"rust\").\n\
          - Output modes: \"content\" shows matching lines, \"files_with_matches\" shows only file \
@@ -66,7 +67,9 @@ impl Tool for GrepTool {
          - Pattern syntax: Uses ripgrep — literal braces need escaping (e.g., use \
          \"interface\\{\\}\" to find \"interface{}\" in code).\n\
          - Multiline matching: By default patterns match within single lines only. For cross-line \
-         patterns, use multiline: true."
+         patterns, use multiline: true.\n\
+         - For broad codebase exploration or research that'll take more than 3 queries, \
+         use the Agent tool with subagent_type=Explore instead of running many Grep calls yourself."
     }
 
     fn input_schema(&self) -> Value {

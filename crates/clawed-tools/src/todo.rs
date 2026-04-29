@@ -67,17 +67,34 @@ impl Tool for TodoWriteTool {
     }
 
     fn description(&self) -> &'static str {
-        "Create or update the structured task list for this session.\n\n\
-         Use this tool to plan your work and help the user track your progress. \
-         Mark each task as completed as soon as you are done with the task. \
-         Do not batch up multiple tasks before marking them as completed.\n\n\
+        "Create or update the structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.\n\n\
+         When to Use:\n\
+         - Complex multi-step tasks — when a task requires 3 or more distinct steps or actions\n\
+         - Non-trivial and complex tasks — tasks that require careful planning or multiple operations\n\
+         - Plan mode — when using plan mode, create a task list to track the work\n\
+         - User explicitly requests todo list — when the user directly asks you to use the todo list\n\
+         - User provides multiple tasks — when users provide a list of things to be done\n\n\
+         When NOT to Use:\n\
+         - Single, straightforward tasks — only one trivial task to do\n\
+         - Purely conversational or informational tasks\n\n\
          Always call TodoRead first to understand the current state before calling TodoWrite. \
          Replace the entire list on each write.\n\n\
-         Allowed statuses: pending | in_progress | completed.\n\
-         Only one task should be in_progress at a time. \
-         When you start a task, mark it in_progress. When you finish, mark it completed.\n\n\
-         Each task has a subject (brief imperative title), description (what needs to be done), \
-         and status. Keep subjects concise and actionable."
+         Task states: pending -> in_progress -> completed. \
+         Status progresses linearly. Use `deleted` to permanently remove a task.\n\n\
+         Rules:\n\
+         - Mark tasks as in_progress BEFORE beginning work. When you finish, mark them completed.\n\
+         - Only mark a task as completed when you have FULLY accomplished it.\n\
+         - If you encounter errors or blockers, keep the task in_progress and create a new task describing what needs to be resolved.\n\
+         - Do not add features, refactor, or introduce abstractions beyond what the task requires.\n\n\
+         Each task has:\n\
+         - subject: a brief, actionable title in imperative form (e.g., \"Fix authentication bug\")\n\
+         - description: what needs to be done\n\
+         - activeForm (optional): present continuous form shown in spinner when in_progress (e.g., \"Fixing authentication bug\")\n\n\
+         Tips:\n\
+         - Keep subjects concise and actionable\n\
+         - Create tasks with clear, specific subjects that describe the outcome\n\
+         - After creating tasks, use TaskUpdate to set up dependencies (blocks/blockedBy) if needed\n\
+         - Check TaskList first to avoid creating duplicate tasks"
     }
 
     fn input_schema(&self) -> Value {

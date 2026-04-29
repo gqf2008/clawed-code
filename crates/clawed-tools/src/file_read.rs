@@ -136,15 +136,19 @@ impl Tool for FileReadTool {
          Usage:\n\
          - The file_path parameter must be an absolute path, not a relative path.\n\
          - By default, it reads up to 2000 lines starting from the beginning of the file.\n\
-         - You can optionally provide offset and limit parameters to read specific portions.\n\
+         - You can optionally provide offset and limit parameters to read specific portions of \
+         a large file. Only provide the offset and limit if you know which part you need.\n\
          - Any optional parameters can be omitted.\n\
          - Results are returned using cat -n format, with line numbers starting at 1.\n\
          - This tool reads files, not directories. To list files in a directory, use Bash ls.\n\
-         - This tool can read images (PNG, JPG, JPEG, GIF, WebP) and presents them visually.\n\
-         - For PDF files (.pdf), use the pages parameter to specify page ranges (e.g., \"1-5\"). \
-         Maximum 20 pages per request.\n\
-         - This tool can read Jupyter notebooks (.ipynb files) and returns all cells with their outputs.\n\
-         - If you read a file that exists but has empty contents you will receive a system reminder."
+         - This tool can read images (PNG, JPG, JPEG, GIF, WebP, BMP, SVG) and presents them visually.\n\
+         - If the user provides a path to a screenshot, ALWAYS use this tool to view the file at the path. \
+         This tool will work with all temporary file paths.\n\
+         - For PDF files (.pdf), use the pages parameter to specify page ranges (e.g., \"1-5\", \"3\", \"10-20\"). \
+         Only applicable to PDF files. Maximum 20 pages per request.\n\
+         - This tool can read Jupyter notebooks (.ipynb files) and returns all cells with their outputs, \
+         combining code, text, and visualizations.\n\
+         - If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents."
     }
 
     fn input_schema(&self) -> Value {
