@@ -126,21 +126,18 @@ async fn resolve_main_branch(cwd: &Path) -> Option<String> {
     None
 }
 
-async fn git_output(cwd: &Path, args: &[&str]) -> Result<String, std::io::Error> {
-
+async fn git_output(cwd: &Path, args: &[&str]) -> Result<String, ()> {
     let output = tokio::process::Command::new("git")
         .args(args)
         .current_dir(cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output()
-        .await?;
+        .await
+        .map_err(|_| ())?;
 
     if !output.status.success() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("git {:?} exited with {}", args, output.status),
-        ));
+        return Err(());
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
