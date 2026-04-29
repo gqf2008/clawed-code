@@ -178,6 +178,14 @@ impl ToolRegistry {
             "WebSearchTool" => "WebSearch",
             "TodoWriteTool" => "TodoWrite",
             "TodoReadTool" => "TodoRead",
+            // PascalCase aliases from system prompt / TS conventions
+            "SendMessage" => "SendUserMessage",
+            "TaskCreate" => "task_create",
+            "TaskUpdate" => "task_update",
+            "TaskGet" => "task_get",
+            "TaskList" => "task_list",
+            "TaskOutput" => "task_output",
+            "TaskStop" => "task_stop",
             other => other,
         }
     }
