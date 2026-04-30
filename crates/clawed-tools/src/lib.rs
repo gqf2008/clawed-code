@@ -42,6 +42,7 @@ pub mod worktree;
 // ── Interaction tools ───────────────────────────────────────────────────────
 pub mod ask_user;
 pub mod brief;
+pub mod push_notification;
 pub mod send_message;
 
 // ── Agent / orchestration tools ─────────────────────────────────────────────
@@ -129,7 +130,7 @@ pub fn tool_category(name: &str) -> ToolCategory {
 
         "Git" | "GitStatus" | "EnterWorktree" | "ExitWorktree" => ToolCategory::Git,
 
-        "AskUser" | "SendUserMessage" => ToolCategory::Interaction,
+        "AskUser" | "SendUserMessage" | "PushNotification" => ToolCategory::Interaction,
 
         "TaskCreate" | "TaskUpdate" | "TaskGet" | "TaskList" | "TaskOutput" | "TaskStop"
         | "Skill" | "Agent" | "task_create" | "task_update" | "task_get" | "task_list"
@@ -277,6 +278,7 @@ impl ToolRegistry {
         registry.register(ask_user::AskUserTool);
         registry.register(send_message::SendUserMessageTool);
         registry.register(brief::BriefTool);
+        registry.register(push_notification::PushNotificationTool);
 
         // Agent / orchestration (always included)
         registry.register(task::TaskCreateTool);
