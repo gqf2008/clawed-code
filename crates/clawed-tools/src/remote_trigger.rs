@@ -171,6 +171,7 @@ impl Tool for RemoteTriggerTool {
     }
 
     fn is_enabled(&self) -> bool {
+        // Evaluated once per process — mid-session /login won't re-check.
         static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *CACHED.get_or_init(|| {
             std::env::var("CLAWED_ENABLE_REMOTE_TRIGGER").is_ok()

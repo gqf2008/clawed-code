@@ -160,9 +160,6 @@ struct ResolvedAgentConfig {
     initial_prompt: Option<String>,
 }
 
-fn tool_in_list(tool_name: &str, list: &[String]) -> bool {
-    clawed_core::tool::tool_in_list(tool_name, list)
-}
 
 /// Resolve a model alias ("haiku", "sonnet", "opus") to a concrete model name.
 /// If `alias` is None or "inherit", returns the `parent_model` unchanged.
@@ -385,18 +382,18 @@ impl Tool for DispatchAgentTool {
             .filter(|t| {
                 // 1. Definition disallowed_tools (lowest priority exclusion)
                 if let Some(ref disallowed) = cfg.disallowed_tools {
-                    if tool_in_list(t.name(), disallowed) {
+                    if clawed_core::tool::tool_in_list(t.name(), disallowed) {
                         return false;
                     }
                 }
                 // 2. Input parameter allowed_tools (highest priority)
                 if let Some(ref allowed) = allowed_tools {
-                    return tool_in_list(t.name(), allowed);
+                    return clawed_core::tool::tool_in_list(t.name(), allowed);
                 }
                 // 3. Definition allowed_tools
                 if let Some(ref allowed_def) = cfg.allowed_tools {
                     if !allowed_def.is_empty() && !allowed_def.iter().any(|a| a == "*") {
-                        return tool_in_list(t.name(), allowed_def);
+                        return clawed_core::tool::tool_in_list(t.name(), allowed_def);
                     }
                 }
                 // 4. Agent-type read_only default
