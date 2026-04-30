@@ -352,7 +352,22 @@ impl QueryEngine {
     }
 
     /// Run SessionStart hooks — call once at startup.
+    /// Also fires Setup hook on first use of this project.
     pub async fn run_session_start(&self) -> Option<String> {
+        // ── Setup hook (first use only) ─────────────────────────────────────
+        let setup_marker = self.cwd.join(".claude").join("setup_complete");
+        if !setup_marker.exists() {
+            if self.hooks.has_hooks(HookEvent::Setup) {
+                let ctx = self.hooks.lifecycle_ctx(HookEvent::Setup);
+                let _ = self.hooks.run(HookEvent::Setup, ctx).await;
+            }
+            // Create marker so Setup never fires again for this project
+            if let Some(parent) = setup_marker.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&setup_marker, "done");
+        }
+
         let mut appended = None;
         if self.hooks.has_hooks(HookEvent::SessionStart) {
             let ctx = self.hooks.prompt_ctx(HookEvent::SessionStart, None);
