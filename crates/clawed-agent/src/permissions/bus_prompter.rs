@@ -139,7 +139,6 @@ impl PermissionPrompter for BusPermissionPrompter {
     }
 }
 
-/// Classify tool risk level from tool name and input.
 fn classify_tool_risk(tool_name: &str, input: &serde_json::Value) -> RiskLevel {
     match tool_name {
         "Bash" | "PowerShell" => {

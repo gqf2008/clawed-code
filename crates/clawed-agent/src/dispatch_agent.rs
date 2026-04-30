@@ -161,7 +161,7 @@ struct ResolvedAgentConfig {
 }
 
 fn tool_in_list(tool_name: &str, list: &[String]) -> bool {
-    list.iter().any(|a| a.eq_ignore_ascii_case(tool_name))
+    clawed_core::tool::tool_in_list(tool_name, list)
 }
 
 /// Resolve a model alias ("haiku", "sonnet", "opus") to a concrete model name.

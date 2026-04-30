@@ -208,6 +208,11 @@ pub trait Tool: Send + Sync {
 /// Type-erased tool behind an `Arc` for dynamic dispatch.
 pub type DynTool = Arc<dyn Tool>;
 
+/// Case-insensitive check whether a tool name appears in an allow/deny list.
+pub fn tool_in_list(tool_name: &str, list: &[String]) -> bool {
+    list.iter().any(|a| a.eq_ignore_ascii_case(tool_name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -171,10 +171,11 @@ impl Tool for RemoteTriggerTool {
     }
 
     fn is_enabled(&self) -> bool {
-        // Enabled when the user has authenticated or when explicitly opted-in.
-        // Skip expensive feature-flag / policy lookups in the open-source port.
-        std::env::var("CLAWED_ENABLE_REMOTE_TRIGGER").is_ok()
-            || Self::load_token_from_disk().ok().flatten().is_some()
+        static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *CACHED.get_or_init(|| {
+            std::env::var("CLAWED_ENABLE_REMOTE_TRIGGER").is_ok()
+                || Self::load_token_from_disk().ok().flatten().is_some()
+        })
     }
 
     async fn call(&self, input: Value, _context: &ToolContext) -> anyhow::Result<ToolResult> {
