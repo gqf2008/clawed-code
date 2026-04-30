@@ -34,55 +34,45 @@ pub async fn build_session_context(cwd: &Path) -> Option<String> {
     Some(parts.join("\n\n"))
 }
 
-/// Format the current local date as `YYYY/MM/DD`.
 fn local_date_string() -> Option<String> {
     Some(format!("Today's date is {}.", chrono::Local::now().format("%Y/%m/%d")))
 }
 
 /// Collect a git status snapshot: branch, main branch, status, recent commits.
 async fn git_status_snapshot(cwd: &Path) -> Option<String> {
-    // Quick check: is this a git repo?
-    let check = tokio::process::Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .current_dir(cwd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .status()
-        .await
-        .ok()?;
-    if !check.success() {
-        return None;
-    }
-
-    // Run all git commands concurrently
+    // Run all git commands concurrently (all local — no network I/O).
+    // If cwd is not a git repo, `branch` will fail and we return None.
     let branch_fut = git_output(cwd, &["branch", "--show-current"]);
-    let remote_fut = git_output(cwd, &["remote", "show", "origin"]);
+    let main_ref_fut = git_output(cwd, &["symbolic-ref", "refs/remotes/origin/HEAD"]);
     let status_fut = git_output(cwd, &["--no-optional-locks", "status", "--short"]);
     let log_fut = git_output(cwd, &["log", "--oneline", "-n", "5"]);
     let user_fut = git_output(cwd, &["config", "user.name"]);
 
-    let (branch, remote_show, status, log, user_name) =
-        tokio::join!(branch_fut, remote_fut, status_fut, log_fut, user_fut);
+    let (branch, main_ref, status, log, user_name) =
+        tokio::join!(branch_fut, main_ref_fut, status_fut, log_fut, user_fut);
 
-    // Resolve main branch from remote or fallback to common names
-    let main_branch = match remote_show {
-        Ok(show) => show
-            .lines()
-            .find(|l| l.contains("HEAD branch"))
-            .and_then(|l| l.split(':').last())
-            .map(|s| s.trim().to_string()),
-        Err(_) => resolve_main_branch(cwd).await,
-    };
+    // symbolic-ref returns e.g. "refs/remotes/origin/main" — extract branch name.
+    // Falls back to checking common names if no origin HEAD ref exists.
+    let main_branch = main_ref
+        .ok()
+        .and_then(|s| s.trim().strip_prefix("refs/remotes/origin/").map(String::from));
 
     let branch = branch.ok()?;
     let status = status.unwrap_or_default();
     let log = log.unwrap_or_default();
 
+    // Resolve main branch: prefer symbolic-ref result, fallback to checking common names
+    let main_branch = match main_branch {
+        Some(mb) => Some(mb),
+        None => resolve_main_branch(cwd).await,
+    };
+
     let truncated_status = if status.len() > MAX_STATUS_CHARS {
-        format!(
-            "{}\n... (truncated because it exceeds 2k characters. \
+        clawed_core::text_util::truncate_chars(
+            &status,
+            MAX_STATUS_CHARS,
+            "\n... (truncated because it exceeds 2k characters. \
              If you need more information, run \"git status\" using Bash)",
-            &status[..MAX_STATUS_CHARS]
         )
     } else {
         status
@@ -115,7 +105,6 @@ async fn git_status_snapshot(cwd: &Path) -> Option<String> {
     Some(lines.join("\n\n"))
 }
 
-/// Try to find the default branch name by checking common names.
 async fn resolve_main_branch(cwd: &Path) -> Option<String> {
     for name in &["main", "master"] {
         let check = git_output(cwd, &["rev-parse", "--verify", name]).await;

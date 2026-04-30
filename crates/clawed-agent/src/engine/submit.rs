@@ -10,18 +10,27 @@ use crate::query::{query_stream, AgentEvent};
 use super::QueryEngine;
 
 impl QueryEngine {
+    /// Prepend session context (git status + date) if this is the first message.
+    async fn prepend_session_context(&self, messages: &mut Vec<Message>) {
+        if messages.is_empty() {
+            if let Some(ctx_msg) = self.session_context_message().await {
+                messages.push(Message::User(UserMessage {
+                    uuid: Uuid::new_v4().to_string(),
+                    content: vec![ContentBlock::Text { text: ctx_msg }],
+                }));
+            }
+        }
+    }
+
     /// Submit a user message and get back a stream of AgentEvents.
     pub async fn submit(
         &self,
         user_prompt: impl Into<String>,
     ) -> std::pin::Pin<Box<dyn futures::Stream<Item = AgentEvent> + Send>> {
-        // Reset the abort signal so a previous Esc/abort doesn't immediately
-        // cancel this new submission.
         self.abort_signal.reset();
 
         let mut prompt_text: String = user_prompt.into();
 
-        // ── Empty prompt validation ──────────────────────────────────────────
         if prompt_text.trim().is_empty() {
             let err_stream = async_stream::stream! {
                 yield AgentEvent::Error("Prompt cannot be empty".to_string());
@@ -29,7 +38,6 @@ impl QueryEngine {
             return Box::pin(err_stream);
         }
 
-        // ── UserPromptSubmit hook ────────────────────────────────────────────
         if self.hooks.has_hooks(HookEvent::UserPromptSubmit) {
             let ctx = self
                 .hooks
@@ -53,15 +61,7 @@ impl QueryEngine {
             (s.permission_mode, s.messages.clone())
         };
 
-        // Inject session context (git status + date) before the first user message
-        if messages.is_empty() {
-            if let Some(ctx_msg) = self.session_context_message().await {
-                messages.push(Message::User(UserMessage {
-                    uuid: Uuid::new_v4().to_string(),
-                    content: vec![ContentBlock::Text { text: ctx_msg }],
-                }));
-            }
-        }
+        self.prepend_session_context(&mut messages).await;
 
         let user_msg = UserMessage {
             uuid: Uuid::new_v4().to_string(),
@@ -91,16 +91,10 @@ impl QueryEngine {
     }
 
     /// Submit a user message with mixed content blocks (text + images).
-    ///
-    /// Use this when the user attaches images via `@path/to/image.png` syntax.
-    /// The content blocks should be pre-built (text blocks for text, image blocks
-    /// for attached images).
     pub async fn submit_with_content(
         &self,
         content: Vec<ContentBlock>,
     ) -> std::pin::Pin<Box<dyn futures::Stream<Item = AgentEvent> + Send>> {
-        // Reset the abort signal so a previous Esc/abort doesn't immediately
-        // cancel this new submission.
         self.abort_signal.reset();
 
         if content.is_empty() {
@@ -110,7 +104,6 @@ impl QueryEngine {
             return Box::pin(err_stream);
         }
 
-        // Run UserPromptSubmit hook with text from first text block
         let text_preview: String = content
             .iter()
             .filter_map(|b| match b {
@@ -145,15 +138,7 @@ impl QueryEngine {
             (s.permission_mode, s.messages.clone())
         };
 
-        // Inject session context (git status + date) before the first user message
-        if messages.is_empty() {
-            if let Some(ctx_msg) = self.session_context_message().await {
-                messages.push(Message::User(UserMessage {
-                    uuid: Uuid::new_v4().to_string(),
-                    content: vec![ContentBlock::Text { text: ctx_msg }],
-                }));
-            }
-        }
+        self.prepend_session_context(&mut messages).await;
 
         let user_msg = UserMessage {
             uuid: Uuid::new_v4().to_string(),

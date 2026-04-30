@@ -375,8 +375,7 @@ impl QueryEngine {
     /// `<system-reminder>` message, ready to prepend to the message list.
     /// Returns `None` if no context could be collected.
     pub async fn session_context_message(&self) -> Option<String> {
-        if self.session_context.get().is_some() {
-            let cached = self.session_context.get().unwrap();
+        if let Some(cached) = self.session_context.get() {
             if cached.is_empty() {
                 return None;
             }
