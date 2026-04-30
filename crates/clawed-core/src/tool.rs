@@ -167,6 +167,14 @@ pub trait Tool: Send + Sync {
         self.is_read_only()
     }
 
+    /// Input-aware concurrency safety check.
+    /// Some tools (e.g., Bash) are concurrency-safe only for certain inputs
+    /// (read-only commands). The default delegates to the static `is_concurrency_safe()`.
+    fn is_concurrency_safe_for_input(&self, input: &Value) -> bool {
+        let _ = input;
+        self.is_concurrency_safe()
+    }
+
     fn is_enabled(&self) -> bool {
         true
     }

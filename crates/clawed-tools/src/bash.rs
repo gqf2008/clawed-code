@@ -349,6 +349,12 @@ impl Tool for BashTool {
         ToolCategory::Shell
     }
 
+    fn is_concurrency_safe_for_input(&self, input: &Value) -> bool {
+        let command = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
+        clawed_core::bash_classifier::classify(command).risk
+            == clawed_core::bash_classifier::RiskLevel::Safe
+    }
+
     fn description(&self) -> &'static str {
         "Executes a given bash command and returns its output.\n\n\
          IMPORTANT: Do NOT use this tool to run commands when a relevant dedicated tool is provided. \

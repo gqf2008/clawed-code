@@ -476,7 +476,7 @@ fn partition_tool_calls(
     for (id, name, input) in tool_uses {
         let safe = registry
             .get(name)
-            .map(|t| t.is_concurrency_safe())
+            .map(|t| t.is_concurrency_safe_for_input(input))
             .unwrap_or(false);
 
         match batches.last_mut() {
