@@ -1,6 +1,6 @@
 use clawed_core::message::Message;
 use clawed_core::permissions::PermissionMode;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -45,6 +45,18 @@ pub struct AppState {
     pub context_reloaded: bool,
     /// Cached CLAUDE.md content (refreshed by /reload-context).
     pub claude_md_content: String,
+    /// Tool usage counters: tool_name -> count.
+    pub tool_usage_counts: HashMap<String, u32>,
+    /// Tool success counters: tool_name -> success count.
+    pub tool_success_counts: HashMap<String, u32>,
+    /// Files touched during this session (read or modified).
+    pub files_touched: HashSet<String>,
+    /// Number of auto-compactions performed.
+    pub compaction_count: u32,
+    /// Number of permission prompts shown to the user.
+    pub permission_prompt_count: u32,
+    /// Number of hook executions.
+    pub hook_executions: u32,
 }
 
 impl AppState {
@@ -178,6 +190,7 @@ impl AppState {
             ai_title: None,
             summary: None,
             last_prompt: self.last_user_prompt(),
+            insights: Some(self.to_insights()),
         }
     }
 
@@ -255,6 +268,84 @@ impl Default for AppState {
             total_tool_duration_ms: 0,
             context_reloaded: false,
             claude_md_content: String::new(),
+            tool_usage_counts: HashMap::new(),
+            tool_success_counts: HashMap::new(),
+            files_touched: HashSet::new(),
+            compaction_count: 0,
+            permission_prompt_count: 0,
+            hook_executions: 0,
+        }
+    }
+}
+
+// ── Analytics helpers ────────────────────────────────────────────────────────
+
+impl AppState {
+    /// Record a tool invocation.
+    pub fn record_tool_use(&mut self, tool_name: &str, success: bool) {
+        *self.tool_usage_counts.entry(tool_name.to_string()).or_insert(0) += 1;
+        if success {
+            *self.tool_success_counts.entry(tool_name.to_string()).or_insert(0) += 1;
+        }
+    }
+
+    /// Record that a file was touched (read or modified).
+    pub fn record_file_touched(&mut self, path: &str) {
+        self.files_touched.insert(path.to_string());
+    }
+
+    /// Record a compaction event.
+    pub fn record_compaction(&mut self) {
+        self.compaction_count += 1;
+    }
+
+    /// Record a permission prompt being shown.
+    pub fn record_permission_prompt(&mut self) {
+        self.permission_prompt_count += 1;
+    }
+
+    /// Record a hook execution.
+    pub fn record_hook_execution(&mut self) {
+        self.hook_executions += 1;
+    }
+
+    /// Build a SessionInsights struct from current analytics.
+    pub fn to_insights(&self) -> clawed_core::session::SessionInsights {
+        use clawed_core::session::SessionInsights;
+
+        let total_tool_calls: u32 = self.tool_usage_counts.values().sum();
+        let total_success: u32 = self.tool_success_counts.values().sum();
+        let tool_success_rate = if total_tool_calls > 0 {
+            total_success as f64 / total_tool_calls as f64
+        } else {
+            1.0
+        };
+
+        // Most used tool
+        let most_used_tool = self
+            .tool_usage_counts
+            .iter()
+            .max_by_key(|(&_, &count)| count)
+            .map(|(name, _)| name.clone());
+
+        // Average tokens per turn
+        let avg_tokens_per_turn = if self.turn_count > 0 {
+            (self.total_input_tokens + self.total_output_tokens) as f64 / self.turn_count as f64
+        } else {
+            0.0
+        };
+
+        SessionInsights {
+            tool_success_rate,
+            most_used_tool,
+            total_files_touched: self.files_touched.len() as u32,
+            total_tool_calls,
+            compaction_count: self.compaction_count,
+            permission_prompt_count: self.permission_prompt_count,
+            hook_executions: self.hook_executions,
+            avg_tokens_per_turn,
+            total_lines_added: self.total_lines_added,
+            total_lines_removed: self.total_lines_removed,
         }
     }
 }
@@ -397,6 +488,7 @@ mod tests {
             ai_title: None,
             summary: None,
             last_prompt: None,
+            insights: None,
         };
 
         let mut state = AppState::default();

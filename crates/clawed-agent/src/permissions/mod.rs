@@ -308,6 +308,16 @@ impl PermissionChecker {
             return PermissionResult::allow();
         }
 
+        // Stage 4.5: Local fast-path heuristics (avoids expensive remote classifier calls)
+        if tool.category() == ToolCategory::Shell {
+            if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
+                if local_fast_path_approves(cmd, &self.recent_tools) {
+                    self.record_auto_approval();
+                    return PermissionResult::allow();
+                }
+            }
+        }
+
         // Stage 5: Remote classifier side-query
         if let Some(ref client) = self.classifier_client {
             let classifier_input = tool.to_auto_classifier_input(input);
@@ -500,4 +510,204 @@ impl PermissionChecker {
             }
         }
     }
+}
+
+// ── Local fast-path heuristics for auto-mode ─────────────────────────────────
+
+/// Check whether a shell command should be auto-approved via local heuristics.
+///
+/// These rules avoid expensive remote classifier calls for common, safe
+/// development operations. They are intentionally conservative: when in doubt,
+/// return `false` and let the remote classifier or interactive prompt decide.
+fn local_fast_path_approves(
+    cmd: &str,
+    recent_tools: &std::sync::Mutex<Vec<(String, serde_json::Value)>>,
+) -> bool {
+    let trimmed = cmd.trim();
+    let lower = trimmed.to_lowercase();
+
+    // 1. Git fast-path: safe read-only or project-local git operations
+    if is_safe_git_command(&lower) {
+        return true;
+    }
+
+    // 2. Network download fast-path: curl/wget with HTTPS to known-safe domains
+    if is_safe_download(&lower) {
+        return true;
+    }
+
+    // 3. Common dev tool-chain fast-path
+    if is_common_dev_command(&lower) {
+        return true;
+    }
+
+    // 4. Recent history fast-path: same base command was recently approved
+    if recent_history_approves(&lower, recent_tools) {
+        return true;
+    }
+
+    false
+}
+
+/// Safe git commands that only read or modify project-local state.
+fn is_safe_git_command(cmd: &str) -> bool {
+    let safe_git_prefixes: &[&str] = &[
+        "git fetch",
+        "git pull",
+        "git clone",
+        "git status",
+        "git log",
+        "git diff",
+        "git show",
+        "git branch",
+        "git tag",
+        "git remote -v",
+        "git config --local",
+        "git stash list",
+        "git merge --abort",
+        "git rebase --abort",
+    ];
+
+    for prefix in safe_git_prefixes {
+        if cmd.starts_with(prefix) {
+            return true;
+        }
+    }
+
+    // git push to well-known hosts
+    if cmd.starts_with("git push") {
+        // Allow push if the remote URL is a well-known host (extracted from args)
+        if cmd.contains("github.com")
+            || cmd.contains("gitlab.com")
+            || cmd.contains("bitbucket.org")
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Safe network downloads: curl/wget/fetch with HTTPS to non-suspicious URLs.
+fn is_safe_download(cmd: &str) -> bool {
+    let lower = cmd.to_lowercase();
+
+    // HEAD-only requests are read-only
+    if lower.starts_with("curl -i ") || lower.starts_with("curl --head ") {
+        return lower.contains("https://");
+    }
+
+    if !lower.starts_with("curl ") && !lower.starts_with("wget ") {
+        return false;
+    }
+
+    // Must use HTTPS
+    if !lower.contains("https://") {
+        return false;
+    }
+    // Must have explicit output destination
+    if !lower.contains("-o ") && !lower.contains("--output ") {
+        return false;
+    }
+    let has_project_or_temp_path = lower.contains("./") || lower.contains("/tmp/")
+        || lower.contains("/var/tmp/") || lower.contains("target/")
+        || lower.contains("node_modules/");
+    if !has_project_or_temp_path {
+        return false;
+    }
+
+    // Reject suspicious pipe-to-shell patterns
+    !matches_any(&lower,
+        &["| sh", "| bash", "| python", "| node", "| ruby"],
+    )
+}
+
+fn matches_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|n| haystack.contains(n))
+}
+
+/// Common development commands that are safe in project context.
+fn is_common_dev_command(cmd: &str) -> bool {
+    let dev_prefixes: &[&str] = &[
+        "npm run ",
+        "npm test",
+        "npm ci",
+        "yarn ",
+        "pnpm ",
+        "cargo test",
+        "cargo bench",
+        "cargo doc",
+        "cargo check",
+        "cargo clippy",
+        "cargo fmt",
+        "cargo run",
+        "go test",
+        "go vet",
+        "go fmt",
+        "go mod ",
+        "pytest",
+        "python -m pytest",
+        "python -m unittest",
+        "tox",
+        "make test",
+        "make build",
+        "make check",
+        "cmake --build",
+        "docker compose build",
+        "docker compose up",
+        "terraform plan",
+        "terraform validate",
+        "terraform fmt",
+        "bundle install",
+        "bundle exec rake",
+        "gem install",
+        "pip install",
+        "pipenv install",
+        "poetry install",
+        "mvn test",
+        "mvn compile",
+        "gradle test",
+        "gradle build",
+    ];
+
+    for prefix in dev_prefixes {
+        if cmd.starts_with(prefix) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Check if a similar command was recently approved.
+fn recent_history_approves(
+    cmd: &str,
+    recent_tools: &std::sync::Mutex<Vec<(String, serde_json::Value)>>,
+) -> bool {
+    let current_base = cmd.split_whitespace().next().unwrap_or("");
+    if current_base.is_empty() {
+        return false;
+    }
+
+    let Ok(history) = recent_tools.lock() else {
+        return false;
+    };
+
+    history
+        .iter()
+        .rev()
+        .take(5)
+        .any(|(name, input)| {
+            if name != "Bash" {
+                return false;
+            }
+            let Some(prev_cmd) = input.get("command").and_then(|v| v.as_str()) else {
+                return false;
+            };
+            prev_cmd
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .eq_ignore_ascii_case(current_base)
+        })
 }

@@ -22,6 +22,7 @@
 //! Hook config lives in `settings.json` under the `hooks` key — see
 //! `clawed_core::config::HooksConfig` for the format.
 
+mod evaluator;
 mod execution;
 mod types;
 
@@ -36,6 +37,7 @@ use tracing::{debug, warn};
 
 use clawed_core::config::{HookRule, HooksConfig};
 
+use evaluator::evaluate_condition;
 use execution::{interpret_output, run_http_hook, run_shell_hook, tool_matches};
 
 // ── HookRegistry ─────────────────────────────────────────────────────────────
@@ -117,6 +119,13 @@ impl HookRegistry {
 
         for rule in rules {
             if !tool_matches(&rule.matcher, tool_name) {
+                continue;
+            }
+            if !evaluate_condition(rule.condition.as_ref(), &ctx) {
+                debug!(
+                    "Hook {:?} skipped: condition not satisfied",
+                    event.as_str()
+                );
                 continue;
             }
             for cmd_def in &rule.hooks {

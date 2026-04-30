@@ -41,6 +41,7 @@ impl QueryEngine {
             ai_title: None,
             summary: None,
             last_prompt: None,
+            insights: None,
         };
         save_session(&snapshot)
     }
@@ -83,6 +84,7 @@ impl QueryEngine {
             ai_title: None,
             summary: None,
             last_prompt: None,
+            insights: None,
         };
         save_session(&snapshot)
     }

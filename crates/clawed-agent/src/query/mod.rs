@@ -6,7 +6,9 @@ use std::sync::Arc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::compact::{compact_context_message, compact_conversation, AutoCompactState};
+use crate::compact::{
+    compact_context_message, compact_conversation, partial_compact_conversation, AutoCompactState,
+};
 use crate::executor::ToolExecutor;
 use crate::hooks::{HookDecision, HookEvent, HookRegistry};
 use crate::state::SharedState;
@@ -208,6 +210,7 @@ pub fn query_stream_with_injection(
         const COMPACT_HIGH_WATER_RATIO: f64 = 0.90;
         const COMPACT_CLEAR_RETAIN_COUNT: usize = 3;
         let mut inject_rx = inject_rx;
+        let mut reminders = crate::system_reminder::ReminderCollector::default();
 
         // Channel for streaming tool output lines during execution.
         // The executor's output_tx is set to this channel; during tool execution,
@@ -571,10 +574,31 @@ pub fn query_stream_with_injection(
                     HookEvent::PostSampling,
                     if assistant_text.is_empty() { None } else { Some(assistant_text.clone()) },
                 );
-                if let HookDecision::Block { reason } = hooks.run(HookEvent::PostSampling, ctx).await {
-                    yield AgentEvent::Error(format!("[PostSampling hook blocked]: {}", reason));
-                    state.write().await.messages = messages.clone();
-                    break;
+                match hooks.run(HookEvent::PostSampling, ctx).await {
+                    HookDecision::Block { reason } => {
+                        reminders.push(crate::system_reminder::SystemReminder::HookResult {
+                            success: false,
+                            feedback: Some(format!("PostSampling hook blocked: {reason}")),
+                        });
+                        yield AgentEvent::Error(format!("[PostSampling hook blocked]: {}", reason));
+                        state.write().await.messages = messages.clone();
+                        break;
+                    }
+                    HookDecision::FeedbackAndContinue { feedback } => {
+                        reminders.push(crate::system_reminder::SystemReminder::HookResult {
+                            success: true,
+                            feedback: Some(format!("PostSampling hook feedback: {feedback}")),
+                        });
+                    }
+                    HookDecision::AppendContext { text } => {
+                        reminders.push(crate::system_reminder::SystemReminder::Custom(
+                            format!("PostSampling hook appended context: {text}"),
+                        ));
+                    }
+                    HookDecision::ModifyInput { .. } => {
+                        // PostSampling doesn't operate on tool input; ignore.
+                    }
+                    HookDecision::Continue => {}
                 }
             }
 
@@ -605,6 +629,9 @@ pub fn query_stream_with_injection(
                 drop(s);
 
                 yield AgentEvent::UsageUpdate(u.clone());
+
+                // Queue token usage reminder for injection into next tool result
+                reminders.push_token_usage(u, config.context_window);
 
                 // Emit per-turn token event for budget tracking
                 yield AgentEvent::TurnTokens {
@@ -646,7 +673,7 @@ pub fn query_stream_with_injection(
                 StopReason::ToolUse if early_exec.is_some() || !tool_uses.is_empty() => {
                     // called_tool_names was already captured from assistant_blocks above.
 
-                    let results = if let Some(handle) = early_exec.take() {
+                    let mut results = if let Some(handle) = early_exec.take() {
                         // Tool execution was already started eagerly — drain output
                         // while waiting for it to complete.
                         let mut handle = std::pin::pin!(handle);
@@ -690,6 +717,9 @@ pub fn query_stream_with_injection(
                         }
                     };
 
+                    // Inject pending system reminders into tool results
+                    reminders.inject_into(&mut results);
+
                     let tool_result_msg = UserMessage {
                         uuid: Uuid::new_v4().to_string(),
                         content: results.clone(),
@@ -714,11 +744,13 @@ pub fn query_stream_with_injection(
                                         let mut s = state.write().await;
                                         s.enter_plan_mode();
                                         tool_context.permission_mode = clawed_core::permissions::PermissionMode::Plan;
+                                        reminders.push(crate::system_reminder::SystemReminder::PlanModeChange { active: true });
                                         info!("Plan mode activated via EnterPlanMode tool");
                                     } else if name == "ExitPlanMode" {
                                         let mut s = state.write().await;
                                         let restored = s.exit_plan_mode();
                                         tool_context.permission_mode = restored;
+                                        reminders.push(crate::system_reminder::SystemReminder::PlanModeChange { active: false });
                                         info!("Plan mode deactivated via ExitPlanMode tool, restored to {:?}", restored);
                                     }
                                 }
@@ -806,14 +838,32 @@ pub fn query_stream_with_injection(
                             }
 
                             let model = { state.read().await.model.clone() };
-                            match compact_conversation(&client, &messages, &model, None).await {
-                                Ok(summary) => {
-                                    let summary_len = summary.len();
-                                    let context_msg = compact_context_message(&summary, None);
-                                    let mut new_messages = vec![Message::User(UserMessage {
-                                        uuid: Uuid::new_v4().to_string(),
-                                        content: vec![ContentBlock::Text { text: context_msg }],
-                                    })];
+                            // Try partial compaction first (keep last 10 messages),
+                            // fall back to full compaction if partial fails or is insufficient.
+                            let compact_result = if messages.len() > 10 {
+                                partial_compact_conversation(&client, &messages, &model, 10, None).await
+                            } else {
+                                // Too few messages for partial — go straight to full
+                                compact_conversation(&client, &messages, &model, None)
+                                    .await
+                                    .map(|summary| {
+                                        let context_msg = compact_context_message(&summary, None);
+                                        vec![Message::User(UserMessage {
+                                            uuid: Uuid::new_v4().to_string(),
+                                            content: vec![ContentBlock::Text { text: context_msg }],
+                                        })]
+                                    })
+                            };
+
+                            match compact_result {
+                                Ok(mut new_messages) => {
+                                    let summary_len = new_messages.iter().map(|m| match m {
+                                        Message::User(u) => u.content.iter().map(|c| match c {
+                                            ContentBlock::Text { text } => text.len(),
+                                            _ => 0,
+                                        }).sum::<usize>(),
+                                        _ => 0,
+                                    }).sum::<usize>();
                                     // Re-inject session context (date + git status) post-compact
                                     if let Some(ref ctx) = config.session_context {
                                         if !ctx.is_empty() {
@@ -838,6 +888,10 @@ pub fn query_stream_with_injection(
                                     last_warning_level = None; // reset after compaction
                                     has_attempted_reactive_compact = false;
                                     info!("Proactive auto-compact succeeded (summary {} chars)", summary_len);
+                                    reminders.push(crate::system_reminder::SystemReminder::Custom(
+                                        "Conversation history has been compacted. Earlier messages are now summarized. \
+                                         If you need to re-read specific files, use the Read tool.".into(),
+                                    ));
                                     yield AgentEvent::CompactComplete { summary_len };
                                 }
                                 Err(e) => {

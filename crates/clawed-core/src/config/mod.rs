@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
 mod hooks;
-pub use hooks::{merge_hooks, HookCommandDef, HookRule, HooksConfig};
+pub use hooks::{merge_hooks, HookCommandDef, HookCondition, HookRule, HooksConfig};
 
 #[cfg(test)]
 mod tests;
@@ -102,6 +102,12 @@ pub struct Settings {
     /// Auto-approve mode configuration (from settings.json `autoMode`).
     #[serde(default, rename = "autoMode")]
     pub auto_mode: Option<crate::permissions::AutoModeConfig>,
+    /// Learning mode: agent provides more explanatory, pedagogical responses.
+    #[serde(default, rename = "learningMode")]
+    pub learning_mode: Option<bool>,
+    /// Minimal mode: trim system prompt to essential sections only, reducing tokens.
+    #[serde(default, rename = "minimalMode")]
+    pub minimal_mode: Option<bool>,
     /// Terminal theme preference (e.g. `"dark"`, `"light"`, `"auto"`).
     #[serde(default)]
     pub theme: Option<String>,
@@ -197,6 +203,8 @@ fn merge_settings(base: Settings, overlay: &Settings) -> Settings {
             env
         },
         auto_mode: overlay.auto_mode.clone().or(base.auto_mode),
+        learning_mode: overlay.learning_mode.or(base.learning_mode),
+        minimal_mode: overlay.minimal_mode.or(base.minimal_mode),
         theme: overlay.theme.clone().or(base.theme),
     }
 }

@@ -95,11 +95,34 @@ impl AgentType {
 
     fn system_prompt(&self, base: &str) -> String {
         match self {
-            Self::General | Self::Worker => base.to_string(),
+            Self::General => base.to_string(),
+            Self::Worker => format!(
+                "{}\n\nYou are a worker agent spawned by a coordinator. Your job is to execute \
+                 a single directive assigned to you by the coordinator. You do NOT interact with \
+                 the user — report results back to the coordinator via your final response.\n\n\
+                 Guidelines:\n\
+                 - Focus on the assigned task; do not scope-creep\n\
+                 - Report what you did, what you found, and any issues encountered\n\
+                 - If you need clarification, note it in your report rather than asking\n\
+                 - Do not create summary files — the coordinator will synthesize worker outputs\n\
+                 - Run tools in parallel where possible to maximize throughput",
+                base
+            ),
             Self::Explore => format!(
-                "{}\n\nYou are an exploration agent. Your job is to investigate the codebase \
-                 and gather information. You should ONLY read files and search — do not modify \
-                 anything. Be thorough but concise in your findings. Summarize what you discover.",
+                "{}\n\nYou are an exploration agent specialized in codebase navigation. Your job \
+                 is to investigate codebases, find files by pattern, search for keywords, and \
+                 answer questions about how things work. You do NOT create or modify files.\n\n\
+                 CRITICAL: READ-ONLY MODE — you are STRICTLY PROHIBITED from creating, editing, \
+                 deleting, or moving files, and from running any command that modifies system state.\n\n\
+                 Guidelines:\n\
+                 - Use Read when you know the specific file path\n\
+                 - Use Glob for file pattern searches (e.g., src/**/*.rs)\n\
+                 - Use Grep for keyword and symbol searches across files\n\
+                 - Use Bash only for read-only operations (ls, git status, git log, find, cat, head, tail)\n\
+                 - Make efficient use of parallel tool calls for searching and reading\n\
+                 - Adapt thoroughness to the caller's request: quick for basic searches, medium for \
+                   moderate exploration, very thorough for comprehensive cross-file analysis\n\
+                 - Report findings directly in your response — do not create output files",
                 base
             ),
             Self::Plan => format!(
@@ -115,9 +138,27 @@ impl AgentType {
                 base
             ),
             Self::Verification => format!(
-                "{}\n\nYou are a verification agent. Your job is to run tests, check builds, \
-                 and verify correctness of changes. Report pass/fail status clearly. \
-                 Do not modify source code — only run diagnostics.",
+                "{}\n\nYou are a verification specialist. Your job is NOT to confirm work — \
+                 your job is to BREAK it. Adversarially test implementations by running builds, \
+                 test suites, linters, and probes, then issue a PASS/FAIL/PARTIAL verdict.\n\n\
+                 CRITICAL: DO NOT MODIFY THE PROJECT. You are prohibited from creating, editing, \
+                 or deleting files, installing dependencies, or running git write operations.\n\n\
+                 Self-awareness (common failure modes):\n\
+                 - You read code and write 'PASS' without running it. DO NOT do this.\n\
+                 - You trust self-reports like 'all tests pass.' Run them yourself.\n\
+                 - You see polished first 80% and feel inclined to pass. Your value is the last 20%.\n\
+                 - The parent agent may have circular tests, heavy mocks, or assert what the code does \
+                   instead of what it should do. Volume is not evidence of correctness.\n\
+                 - When uncertain, do not hedge with PARTIAL. If you ran the check, decide PASS or FAIL.\n\n\
+                 Strategy by change type:\n\
+                 - Code changes: run tests, check builds, verify actual behavior\n\
+                 - Bug fixes: reproduce the original bug, verify the fix, run regression tests\n\
+                 - Refactoring: existing tests must pass unchanged, spot-check observable behavior\n\
+                 - Frontend: run dev server if possible, verify with curl/fetch, check for console errors\n\
+                 - Config changes: validate syntax, dry-run where possible\n\n\
+                 Before verifying, scan what was actually changed (git diff or tool_use blocks). \
+                 Then exercise the change directly, check outputs against expectations, and try to \
+                 break it with inputs the implementer did not test.",
                 base
             ),
         }
@@ -822,7 +863,9 @@ mod tests {
     fn agent_type_system_prompt_explore_contains_keywords() {
         let prompt = AgentType::Explore.system_prompt("Base");
         assert!(prompt.contains("exploration agent"));
-        assert!(prompt.contains("ONLY read"));
+        assert!(prompt.contains("READ-ONLY MODE"));
+        assert!(prompt.contains("Glob"));
+        assert!(prompt.contains("parallel"));
         assert!(prompt.starts_with("Base"));
     }
 
@@ -838,6 +881,23 @@ mod tests {
         let prompt = AgentType::CodeReview.system_prompt("Base");
         assert!(prompt.contains("code review agent"));
         assert!(prompt.contains("Do not modify"));
+    }
+
+    #[test]
+    fn agent_type_system_prompt_verification_contains_keywords() {
+        let prompt = AgentType::Verification.system_prompt("Base");
+        assert!(prompt.contains("verification specialist"));
+        assert!(prompt.contains("PASS/FAIL/PARTIAL"));
+        assert!(prompt.contains("Run them yourself"));
+        assert!(prompt.contains("last 20%"));
+    }
+
+    #[test]
+    fn agent_type_system_prompt_worker_contains_keywords() {
+        let prompt = AgentType::Worker.system_prompt("Base");
+        assert!(prompt.contains("worker agent"));
+        assert!(prompt.contains("coordinator"));
+        assert!(prompt.contains("single directive"));
     }
 
     // ── resolve_agent_model ──────────────────────────────────────────────

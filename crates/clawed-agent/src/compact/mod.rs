@@ -17,6 +17,7 @@
 //! ```
 
 pub mod memory;
+pub mod memory_maintenance;
 pub mod micro;
 
 // Re-export commonly used items from submodules
@@ -24,6 +25,7 @@ pub use memory::{
     build_memory_extraction_prompt, parse_extracted_memories, save_extracted_memories,
     ExtractedMemory,
 };
+pub use memory_maintenance::{consolidate_memories, synthesize_memories};
 pub use micro::{
     clear_old_tool_results, snip_old_messages, truncate_large_tool_results, MAX_TOOL_RESULT_CHARS,
     TOOL_RESULT_CLEARED,
@@ -389,6 +391,38 @@ pub async fn compact_conversation(
     }
 
     Ok(summary)
+}
+
+/// Partially compact a conversation, preserving the last N messages.
+pub async fn partial_compact_conversation(
+    client: &ApiClient,
+    messages: &[Message],
+    model: &str,
+    preserve_last_n: usize,
+    custom_instructions: Option<&str>,
+) -> anyhow::Result<Vec<Message>> {
+    if messages.len() <= preserve_last_n {
+        // Nothing to compact — return original messages unchanged
+        return Ok(messages.to_vec());
+    }
+
+    let split_point = messages.len() - preserve_last_n;
+    let head = &messages[..split_point];
+    let tail = &messages[split_point..];
+
+    let summary = compact_conversation(client, head, model, custom_instructions).await?;
+    let summary_msg = compact_context_message(&summary, None);
+
+    let mut result = Vec::with_capacity(1 + tail.len());
+    result.push(Message::User(clawed_core::message::UserMessage {
+        uuid: uuid::Uuid::new_v4().to_string(),
+        content: vec![clawed_core::message::ContentBlock::Text {
+            text: summary_msg,
+        }],
+    }));
+    result.extend_from_slice(tail);
+
+    Ok(result)
 }
 
 /// Build the system message text that replaces old conversation history.

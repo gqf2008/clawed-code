@@ -31,8 +31,33 @@ pub struct SessionModelUsage {
     pub cost_usd: f64,
 }
 
+/// Aggregated session insights and analytics.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SessionInsights {
+    /// Ratio of successful tool calls to total calls (0.0-1.0).
+    pub tool_success_rate: f64,
+    /// Most frequently used tool name.
+    pub most_used_tool: Option<String>,
+    /// Number of unique files read or modified.
+    pub total_files_touched: u32,
+    /// Total tool invocations across the session.
+    pub total_tool_calls: u32,
+    /// Number of auto-compactions performed.
+    pub compaction_count: u32,
+    /// Number of permission prompts shown to the user.
+    pub permission_prompt_count: u32,
+    /// Number of hook executions.
+    pub hook_executions: u32,
+    /// Average tokens consumed per turn.
+    pub avg_tokens_per_turn: f64,
+    /// Lines added during the session.
+    pub total_lines_added: u64,
+    /// Lines removed during the session.
+    pub total_lines_removed: u64,
+}
+
 /// A persisted session snapshot.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionSnapshot {
     /// Unique session identifier.
     pub id: String,
@@ -74,10 +99,13 @@ pub struct SessionSnapshot {
     /// Last user prompt (truncated, for resume picker).
     #[serde(default)]
     pub last_prompt: Option<String>,
+    /// Session analytics and insights.
+    #[serde(default)]
+    pub insights: Option<SessionInsights>,
 }
 
 /// Lightweight session metadata for listing (without messages).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionMeta {
     pub id: String,
     pub title: String,
@@ -97,6 +125,8 @@ pub struct SessionMeta {
     pub summary: Option<String>,
     #[serde(default)]
     pub last_prompt: Option<String>,
+    #[serde(default)]
+    pub insights: Option<SessionInsights>,
 }
 
 /// Manifest file for fast session listing.
@@ -236,6 +266,7 @@ pub fn save_session(session: &SessionSnapshot) -> anyhow::Result<()> {
         custom_title: session.custom_title.clone(),
         summary: session.summary.clone(),
         last_prompt: session.last_prompt.clone(),
+        insights: None,
     };
     update_manifest_entry(&meta);
     Ok(())
@@ -321,6 +352,7 @@ fn read_session_meta(path: &Path) -> Option<SessionMeta> {
         custom_title: snap.custom_title,
         summary: snap.summary,
         last_prompt: snap.last_prompt,
+        insights: None,
     })
 }
 
@@ -621,6 +653,7 @@ pub fn rebuild_from_transcript(id: &str, model: &str) -> anyhow::Result<SessionS
         ai_title,
         summary,
         last_prompt,
+        insights: None,
     })
 }
 
@@ -1173,6 +1206,7 @@ pub fn read_tail_metadata(id: &str) -> anyhow::Result<SessionMeta> {
         custom_title: None,
         summary: None,
         last_prompt: None,
+        insights: None,
     };
 
     for line in tail.lines() {
@@ -1428,6 +1462,7 @@ mod tests {
             ai_title: Some("AI title".to_string()),
             summary: None,
             last_prompt: Some("Hi".to_string()),
+            insights: None,
         };
         let json = serde_json::to_string(&snap).expect("serialize");
         let deser: SessionSnapshot = serde_json::from_str(&json).expect("deserialize");
@@ -1458,6 +1493,7 @@ mod tests {
             custom_title: None,
             summary: None,
             last_prompt: None,
+            insights: None,
         };
         let json = serde_json::to_string(&meta).expect("serialize");
         let deser: SessionMeta = serde_json::from_str(&json).expect("deserialize");
@@ -2028,6 +2064,7 @@ mod tests {
             custom_title: None,
             summary: Some("Moved JWT logic into services/auth.rs".to_string()),
             last_prompt: Some("refactor the auth".to_string()),
+            insights: None,
         };
         // search_sessions uses list_sessions() which reads from disk;
         // instead we test the filter logic directly here
@@ -2086,6 +2123,7 @@ mod tests {
             custom_title: Some("Important Fix".to_string()),
             summary: None,
             last_prompt: None,
+            insights: None,
         };
         let sessions = vec![s];
         let query = "uppercase";

@@ -691,6 +691,19 @@ pub fn section_security_monitor() -> String {
     )
 }
 
+/// Learning mode section — guides the agent to be more pedagogical.
+pub fn section_learning_mode() -> &'static str {
+    "\n# Learning Mode\n\n\
+     The user is in learning mode. Adjust your behavior:\n\
+     1. Explain WHY before WHAT — concepts and reasoning come before implementation.\n\
+     2. Use analogies and concrete examples when introducing new concepts.\n\
+     3. Walk through code step-by-step rather than presenting the final solution.\n\
+     4. Highlight common pitfalls and how to avoid them.\n\
+     5. Ask clarifying questions if the user's intent is ambiguous — don't assume.\n\
+     6. When fixing bugs, explain the root cause, not just the fix.\n\
+     7. Prefer educational rewrites over minimal diffs when the user is exploring.\n"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

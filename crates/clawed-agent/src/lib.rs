@@ -21,6 +21,7 @@ pub mod plugin;
 pub mod query;
 pub mod state;
 pub mod system_prompt;
+pub mod system_reminder;
 pub mod task_runner;
 pub mod tool_result_storage;
 pub mod traits;

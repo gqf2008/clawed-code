@@ -197,6 +197,7 @@ fn merge_hooks_overlay_extends_base() {
         hooks: HooksConfig {
             pre_tool_use: vec![HookRule {
                 matcher: Some(".*".into()),
+                condition: None,
                 hooks: vec![HookCommandDef {
                     hook_type: "command".into(),
                     command: "echo base".into(),
@@ -211,6 +212,7 @@ fn merge_hooks_overlay_extends_base() {
         hooks: HooksConfig {
             stop: vec![HookRule {
                 matcher: Some(".*".into()),
+                condition: None,
                 hooks: vec![HookCommandDef {
                     hook_type: "command".into(),
                     command: "echo overlay".into(),
@@ -239,6 +241,7 @@ fn merge_hooks_empty_overlay_keeps_base() {
         hooks: HooksConfig {
             pre_tool_use: vec![HookRule {
                 matcher: Some(".*".into()),
+                condition: None,
                 hooks: vec![HookCommandDef {
                     hook_type: "command".into(),
                     command: "echo base".into(),

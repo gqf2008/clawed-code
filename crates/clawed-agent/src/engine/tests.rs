@@ -355,6 +355,7 @@ fn test_builder_hooks_config_applied() {
     let mut hooks = HooksConfig::default();
     hooks.pre_tool_use = vec![HookRule {
         matcher: Some("Bash".into()),
+        condition: None,
         hooks: vec![HookCommandDef {
             hook_type: "command".into(),
             command: "echo hello".into(),

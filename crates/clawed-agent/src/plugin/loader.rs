@@ -127,6 +127,7 @@ impl PluginLoader {
             for hook in &plugin.manifest.hooks {
                 let rule = HookRule {
                     matcher: None, // plugin hooks match all tools
+                    condition: None,
                     hooks: vec![HookCommandDef {
                         hook_type: "command".into(),
                         command: hook.command.clone(),

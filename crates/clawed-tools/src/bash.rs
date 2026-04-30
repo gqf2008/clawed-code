@@ -407,6 +407,7 @@ impl Tool for BashTool {
          - CRITICAL: Always create NEW commits rather than amending, unless explicitly requested. \
          When a pre-commit hook fails, the commit did NOT happen — so --amend would modify the PREVIOUS commit.\n\n\
          Avoid unnecessary sleep commands. Do not sleep between commands that can run immediately."
+
     }
 
     fn to_auto_classifier_input(&self, input: &Value) -> Value {

@@ -126,6 +126,8 @@ pub struct DynamicSections<'a> {
     pub proactive_mode: bool,
     /// Enable coordinator mode section
     pub coordinator_mode: bool,
+    /// Enable learning mode section (pedagogical, explanatory responses)
+    pub learning_mode: bool,
     /// Include file editing best practices (default: true)
     pub include_editing_guidance: bool,
     /// Include git operations guidance (default: true)
@@ -149,6 +151,7 @@ impl<'a> Default for DynamicSections<'a> {
             token_budget: 0,
             proactive_mode: false,
             coordinator_mode: false,
+            learning_mode: false,
             include_editing_guidance: true,
             include_git_guidance: true,
             include_testing_guidance: true,
@@ -273,6 +276,11 @@ pub fn build_system_prompt_ext(
     // Coordinator mode (worker orchestration) — dropped at Minimal trim level
     if dynamic.coordinator_mode && dynamic.trim_level != SectionTrimLevel::Minimal {
         dynamic_parts.push(section_coordinator().to_string());
+    }
+
+    // Learning mode — pedagogical guidance, kept at all trim levels
+    if dynamic.learning_mode {
+        dynamic_parts.push(section_learning_mode().to_string());
     }
 
     // Editing + git are kept at Standard; all four are dropped at Minimal.

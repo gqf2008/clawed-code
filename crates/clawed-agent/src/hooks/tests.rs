@@ -278,6 +278,7 @@ fn make_rule(matcher: Option<&str>, command: &str) -> HookRule {
 fn make_typed_rule(matcher: Option<&str>, hook_type: &str, command: &str) -> HookRule {
     HookRule {
         matcher: matcher.map(|s| s.to_string()),
+        condition: None,
         hooks: vec![HookCommandDef {
             hook_type: hook_type.into(),
             command: command.into(),

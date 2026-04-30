@@ -20,13 +20,33 @@ fn default_hook_type() -> String {
     "command".into()
 }
 
-/// A hook rule: an optional tool-name matcher + one or more hook commands.
+/// A logical condition for hook activation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum HookCondition {
+    /// Context contains the given substring (case-insensitive).
+    Contains { text: String },
+    /// Context matches the given regex.
+    Regex { pattern: String },
+    /// All sub-conditions must be true.
+    All { conditions: Vec<HookCondition> },
+    /// At least one sub-condition must be true.
+    Any { conditions: Vec<HookCondition> },
+    /// Natural-language semantic condition (LLM-evaluated when an API client is available).
+    Semantic { description: String },
+}
+
+/// A hook rule: an optional tool-name matcher + optional condition + one or more hook commands.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HookRule {
     /// Optional regex / glob pattern applied to the tool name.
     /// `None` or `"*"` matches every tool.
     #[serde(default)]
     pub matcher: Option<String>,
+    /// Optional logical condition evaluated against the hook context.
+    /// If present, the hook only runs when this condition is true.
+    #[serde(default)]
+    pub condition: Option<HookCondition>,
     /// Commands to run when this rule matches.
     #[serde(default)]
     pub hooks: Vec<HookCommandDef>,

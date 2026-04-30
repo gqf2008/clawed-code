@@ -308,7 +308,7 @@ pub fn primary_memory_dir(cwd: &Path) -> Option<PathBuf> {
 // ── Reading memory content ───────────────────────────────────────────────────
 
 /// Read the body of a memory file (after frontmatter), truncated to limit.
-fn read_memory_body(path: &Path) -> (String, bool) {
+pub fn read_memory_body(path: &Path) -> (String, bool) {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) => {
@@ -434,6 +434,213 @@ pub fn ensure_user_memory_dir() -> anyhow::Result<PathBuf> {
         .join("memory");
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
+}
+
+// ── Pruning ──────────────────────────────────────────────────────────────────
+
+/// Configuration for memory pruning.
+#[derive(Debug, Clone)]
+pub struct PruneConfig {
+    /// Delete memories older than this many days (None = no age limit).
+    pub max_age_days: Option<u64>,
+    /// Keep at most this many files (delete oldest if exceeded).
+    pub max_total_files: usize,
+    /// Keep at most this many total bytes (delete oldest if exceeded).
+    pub max_total_bytes: usize,
+    /// Similarity threshold (0.0-1.0) for deduplication. 0.85 is a good default.
+    pub similarity_threshold: f64,
+}
+
+impl Default for PruneConfig {
+    fn default() -> Self {
+        Self {
+            max_age_days: Some(90),
+            max_total_files: 200,
+            max_total_bytes: 500_000,
+            similarity_threshold: 0.85,
+        }
+    }
+}
+
+/// Prune memories in a directory according to the config.
+///
+/// Applies three strategies in order:
+/// 1. Age pruning — delete memories older than `max_age_days`
+/// 2. Quota pruning — delete oldest memories if file count or total bytes exceeds limits
+/// 3. Deduplication — delete redundant memories with high textual similarity
+///
+/// Returns `(files_deleted, bytes_freed)`.
+pub fn prune_memories(dir: &Path, config: &PruneConfig) -> std::io::Result<(usize, u64)> {
+    let mut headers = scan_memory_dir(dir);
+    if headers.is_empty() {
+        return Ok((0, 0));
+    }
+
+    // Sort oldest-first for pruning order
+    headers.sort_by(|a, b| a.mtime.cmp(&b.mtime));
+
+    let mut deleted = 0usize;
+    let mut bytes_freed = 0u64;
+    let mut survivors: Vec<MemoryHeader> = Vec::new();
+
+    // ── 1. Age pruning ───────────────────────────────────────────────
+    if let Some(max_days) = config.max_age_days {
+        let cutoff = SystemTime::now() - std::time::Duration::from_secs(max_days * 86400);
+        for h in headers {
+            if h.mtime < cutoff {
+                if let Ok(meta) = std::fs::metadata(&h.file_path) {
+                    bytes_freed += meta.len();
+                }
+                let _ = std::fs::remove_file(&h.file_path);
+                deleted += 1;
+            } else {
+                survivors.push(h);
+            }
+        }
+    } else {
+        survivors = headers;
+    }
+
+    // ── 2. Quota pruning ─────────────────────────────────────────────
+    let mut total_bytes: usize = survivors
+        .iter()
+        .filter_map(|h| std::fs::metadata(&h.file_path).ok().map(|m| m.len() as usize))
+        .sum();
+
+    while survivors.len() > config.max_total_files || total_bytes > config.max_total_bytes {
+        if let Some(oldest) = survivors.first() {
+            if let Ok(meta) = std::fs::metadata(&oldest.file_path) {
+                bytes_freed += meta.len();
+                total_bytes = total_bytes.saturating_sub(meta.len() as usize);
+            }
+            let _ = std::fs::remove_file(&oldest.file_path);
+            deleted += 1;
+            survivors.remove(0);
+        } else {
+            break;
+        }
+    }
+
+    // ── 3. Deduplication ─────────────────────────────────────────────
+    let dup_groups = find_duplicate_groups(&survivors, config.similarity_threshold);
+    let mut keep: Vec<bool> = vec![true; survivors.len()];
+
+    for group in &dup_groups {
+        // Keep the newest (last in the oldest-first sorted list) in each group
+        if group.len() > 1 {
+            let newest_idx = *group.iter().max().unwrap();
+            for &idx in group {
+                if idx != newest_idx {
+                    keep[idx] = false;
+                }
+            }
+        }
+    }
+
+    let mut final_survivors = Vec::new();
+    for (i, h) in survivors.into_iter().enumerate() {
+        if keep[i] {
+            final_survivors.push(h);
+        } else {
+            if let Ok(meta) = std::fs::metadata(&h.file_path) {
+                bytes_freed += meta.len();
+            }
+            let _ = std::fs::remove_file(&h.file_path);
+            deleted += 1;
+        }
+    }
+
+    // Re-update index if anything was deleted
+    if deleted > 0 {
+        let _ = update_memory_index(dir);
+    }
+
+    Ok((deleted, bytes_freed))
+}
+
+/// Compute Jaccard similarity between two strings using word sets.
+fn jaccard_similarity(a: &str, b: &str) -> f64 {
+    let set_a: std::collections::HashSet<String> = a
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_string())
+        .collect();
+    let set_b: std::collections::HashSet<String> = b
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_string())
+        .collect();
+
+    if set_a.is_empty() && set_b.is_empty() {
+        return 1.0;
+    }
+    if set_a.is_empty() || set_b.is_empty() {
+        return 0.0;
+    }
+
+    let intersection: usize = set_a.intersection(&set_b).count();
+    let union: usize = set_a.union(&set_b).count();
+
+    intersection as f64 / union as f64
+}
+
+/// Find groups of duplicate memories using Jaccard similarity.
+///
+/// Returns groups of indices into the `headers` slice. Each group contains
+/// memories that are pairwise similar (transitive closure).
+pub fn find_duplicate_groups(headers: &[MemoryHeader], threshold: f64) -> Vec<Vec<usize>> {
+    if headers.len() < 2 {
+        return Vec::new();
+    }
+
+    // Read all bodies first
+    let bodies: Vec<String> = headers
+        .iter()
+        .map(|h| read_memory_body(&h.file_path).0)
+        .collect();
+
+    // Build adjacency list
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); headers.len()];
+    for i in 0..headers.len() {
+        for j in (i + 1)..headers.len() {
+            let sim = jaccard_similarity(&bodies[i], &bodies[j]);
+            if sim >= threshold {
+                adj[i].push(j);
+                adj[j].push(i);
+            }
+        }
+    }
+
+    // Find connected components via DFS
+    let mut visited = vec![false; headers.len()];
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+
+    for start in 0..headers.len() {
+        if visited[start] {
+            continue;
+        }
+        let mut stack = vec![start];
+        let mut group = Vec::new();
+        visited[start] = true;
+
+        while let Some(node) = stack.pop() {
+            group.push(node);
+            for &neighbor in &adj[node] {
+                if !visited[neighbor] {
+                    visited[neighbor] = true;
+                    stack.push(neighbor);
+                }
+            }
+        }
+
+        if group.len() > 1 {
+            groups.push(group);
+        }
+    }
+
+    groups
 }
 
 // ── MEMORY.md Index Management (TS parity: memdir.ts) ────────────────────────
@@ -1048,5 +1255,174 @@ mod tests {
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].name.as_deref(), Some("My Named Memory"));
         assert_eq!(headers[0].memory_type, Some(MemoryType::Reference));
+    }
+
+    // ── Pruning ────────────────────────────────────────────────────────
+
+    #[test]
+    fn prune_by_age_deletes_old_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let old = tmp.path().join("old.md");
+        std::fs::write(
+            &old,
+            "---\ntype: user\n---\nVery old memory",
+        )
+        .unwrap();
+        // Manually set mtime to 100 days ago
+        let old_time = SystemTime::now() - Duration::from_secs(100 * 86400);
+        let _ = filetime::set_file_mtime(&old, filetime::FileTime::from_system_time(old_time));
+
+        let config = PruneConfig {
+            max_age_days: Some(30),
+            max_total_files: 200,
+            max_total_bytes: 500_000,
+            similarity_threshold: 0.85,
+        };
+        let (deleted, _) = prune_memories(tmp.path(), &config).unwrap();
+        assert_eq!(deleted, 1);
+        assert!(!old.exists());
+    }
+
+    #[test]
+    fn prune_by_quota_keeps_newest() {
+        let tmp = tempfile::tempdir().unwrap();
+        for i in 0..5 {
+            let path = tmp.path().join(format!("note_{}.md", i));
+            std::fs::write(&path, format!("---\ntype: user\n---\nNote {}", i)).unwrap();
+            // Stagger mtimes
+            let t = SystemTime::now() - Duration::from_secs((5 - i) as u64 * 60);
+            let _ = filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(t));
+        }
+
+        let config = PruneConfig {
+            max_age_days: None,
+            max_total_files: 3,
+            max_total_bytes: 500_000,
+            similarity_threshold: 0.85,
+        };
+        let (deleted, _) = prune_memories(tmp.path(), &config).unwrap();
+        assert_eq!(deleted, 2);
+
+        let remaining: Vec<_> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
+            .filter(|e| e.file_name() != "MEMORY.md")
+            .collect();
+        assert_eq!(remaining.len(), 3);
+    }
+
+    #[test]
+    fn prune_deduplication_removes_similar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.md");
+        let b = tmp.path().join("b.md");
+        std::fs::write(&a, "---\ntype: user\n---\nUser prefers Rust for all projects").unwrap();
+        std::fs::write(&b, "---\ntype: user\n---\nUser prefers Rust for all coding work").unwrap();
+
+        let config = PruneConfig {
+            max_age_days: None,
+            max_total_files: 200,
+            max_total_bytes: 500_000,
+            similarity_threshold: 0.5, // low threshold so they match
+        };
+        let (deleted, _) = prune_memories(tmp.path(), &config).unwrap();
+        assert_eq!(deleted, 1); // one of the duplicates removed
+    }
+
+    #[test]
+    fn prune_empty_dir_is_noop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = PruneConfig::default();
+        let (deleted, _) = prune_memories(tmp.path(), &config).unwrap();
+        assert_eq!(deleted, 0);
+    }
+
+    // ── Jaccard similarity ─────────────────────────────────────────────
+
+    #[test]
+    fn jaccard_identical_strings() {
+        assert_eq!(super::jaccard_similarity("hello world", "hello world"), 1.0);
+    }
+
+    #[test]
+    fn jaccard_completely_different() {
+        let sim = super::jaccard_similarity("abc def", "xyz uvw");
+        assert_eq!(sim, 0.0);
+    }
+
+    #[test]
+    fn jaccard_partial_overlap() {
+        let sim = super::jaccard_similarity("rust cargo clippy", "rust cargo build");
+        assert!(sim > 0.3 && sim < 0.7);
+    }
+
+    #[test]
+    fn jaccard_empty_strings() {
+        assert_eq!(super::jaccard_similarity("", ""), 1.0);
+        assert_eq!(super::jaccard_similarity("", "hello"), 0.0);
+    }
+
+    // ── Duplicate group finding ────────────────────────────────────────
+
+    #[test]
+    fn find_duplicate_groups_none_when_all_unique() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.md");
+        let b = tmp.path().join("b.md");
+        std::fs::write(&a, "---\ntype: user\n---\nUser likes Rust").unwrap();
+        std::fs::write(&b, "---\ntype: project\n---\nProject uses Python").unwrap();
+
+        let headers = vec![
+            MemoryHeader {
+                filename: "a.md".to_string(),
+                file_path: a,
+                mtime: SystemTime::now(),
+                name: None,
+                description: None,
+                memory_type: None,
+            },
+            MemoryHeader {
+                filename: "b.md".to_string(),
+                file_path: b,
+                mtime: SystemTime::now(),
+                name: None,
+                description: None,
+                memory_type: None,
+            },
+        ];
+        let groups = find_duplicate_groups(&headers, 0.9);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn find_duplicate_groups_finds_similar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.md");
+        let b = tmp.path().join("b.md");
+        std::fs::write(&a, "---\ntype: user\n---\nUser prefers Rust for all projects").unwrap();
+        std::fs::write(&b, "---\ntype: user\n---\nUser prefers Rust for all coding work").unwrap();
+
+        let headers = vec![
+            MemoryHeader {
+                filename: "a.md".to_string(),
+                file_path: a,
+                mtime: SystemTime::now(),
+                name: None,
+                description: None,
+                memory_type: None,
+            },
+            MemoryHeader {
+                filename: "b.md".to_string(),
+                file_path: b,
+                mtime: SystemTime::now(),
+                name: None,
+                description: None,
+                memory_type: None,
+            },
+        ];
+        let groups = find_duplicate_groups(&headers, 0.5);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].len(), 2);
     }
 }

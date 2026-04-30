@@ -25,7 +25,7 @@ use crate::permissions::PermissionChecker;
 use crate::query::QueryConfig;
 use crate::state::new_shared_state_with_model;
 use crate::system_prompt::{
-    build_system_prompt_ext, coordinator_system_prompt, sections, DynamicSections,
+    build_system_prompt_ext, coordinator_system_prompt, sections, DynamicSections, SectionTrimLevel,
 };
 
 use super::QueryEngine;
@@ -326,6 +326,11 @@ impl QueryEngineBuilder {
             .map(|t| t.name().to_string())
             .collect();
 
+        // Load settings to check learning/minimal mode
+        let loaded_settings = clawed_core::config::Settings::load_merged(&self.cwd);
+        let learning_mode = loaded_settings.settings.learning_mode.unwrap_or(false);
+        let minimal_mode = loaded_settings.settings.minimal_mode.unwrap_or(false);
+
         let system_prompt = if self.coordinator_mode {
             coordinator_system_prompt()
         } else if self.system_prompt.is_empty() {
@@ -338,6 +343,12 @@ impl QueryEngineBuilder {
                 mcp_instructions: self.mcp_instructions.clone(),
                 scratchpad_dir: self.scratchpad_dir.as_deref(),
                 memory_dir: memory_dir_str.as_deref(),
+                learning_mode,
+                trim_level: if minimal_mode {
+                    SectionTrimLevel::Minimal
+                } else {
+                    SectionTrimLevel::Full
+                },
                 ..Default::default()
             };
             build_system_prompt_ext(
