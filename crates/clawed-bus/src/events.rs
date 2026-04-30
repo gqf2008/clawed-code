@@ -183,6 +183,12 @@ pub enum AgentNotification {
         is_error: bool,
     },
 
+    /// A swarm agent transitioned to idle after completing work.
+    SwarmAgentIdle {
+        team_name: String,
+        agent_id: String,
+    },
+
     // ── Extended lifecycle ──
     /// A sub-agent was explicitly terminated (abort, TaskStop, user cancel).
     /// Distinct from `AgentComplete` which signals normal completion.
@@ -491,6 +497,10 @@ mod tests {
                 agent_id: "coder@alpha".into(),
                 text_preview: "Done".into(),
                 is_error: false,
+            },
+            AgentNotification::SwarmAgentIdle {
+                team_name: "alpha".into(),
+                agent_id: "coder@alpha".into(),
             },
             AgentNotification::McpServerConnected {
                 name: "github".into(),

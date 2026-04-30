@@ -89,6 +89,14 @@ impl SwarmNotifier {
             is_error,
         });
     }
+
+    /// Emit a SwarmAgentIdle event (agent finished work and is ready for new queries).
+    pub fn agent_idle(&self, team_name: &str, agent_id: &str) {
+        self.notify(AgentNotification::SwarmAgentIdle {
+            team_name: team_name.to_string(),
+            agent_id: agent_id.to_string(),
+        });
+    }
 }
 
 /// Create a `SwarmNotifier` from a `BusHandle` (extracts the broadcast sender).

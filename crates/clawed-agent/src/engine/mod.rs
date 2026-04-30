@@ -312,6 +312,77 @@ impl QueryEngine {
         &self.hooks
     }
 
+    /// Called by the settings watcher after a write to settings.json is detected.
+    pub async fn fire_config_change_hook(&self) {
+        if self.hooks.has_hooks(HookEvent::ConfigChange) {
+            let ctx = self.hooks.lifecycle_ctx(HookEvent::ConfigChange);
+            let _ = self.hooks.run(HookEvent::ConfigChange, ctx).await;
+        }
+    }
+
+    /// Called by the file watcher when a watched file is modified.
+    pub async fn fire_file_changed_hook(&self, path: &str) {
+        if self.hooks.has_hooks(HookEvent::FileChanged) {
+            let ctx = self.hooks.tool_ctx(
+                HookEvent::FileChanged,
+                "file_watcher",
+                Some(serde_json::json!({ "path": path })),
+                None,
+                None,
+            );
+            let _ = self.hooks.run(HookEvent::FileChanged, ctx).await;
+        }
+    }
+
+    /// Fire the CwdChanged hook with the new directory path.
+    pub async fn fire_cwd_changed_hook(&self, new_cwd: &str) {
+        if self.hooks.has_hooks(HookEvent::CwdChanged) {
+            let ctx = self.hooks.tool_ctx(
+                HookEvent::CwdChanged,
+                "cwd",
+                Some(serde_json::json!({ "cwd": new_cwd })),
+                None,
+                None,
+            );
+            let _ = self.hooks.run(HookEvent::CwdChanged, ctx).await;
+        }
+    }
+
+    /// Fire an Elicitation hook before showing a prompt to the user.
+    /// Returns the hook decision (hooks can block or append context).
+    pub async fn fire_elicitation_hook(&self, message: &str, schema: &serde_json::Value) -> HookDecision {
+        if !self.hooks.has_hooks(HookEvent::Elicitation) {
+            return HookDecision::Continue;
+        }
+        let ctx = self.hooks.tool_ctx(
+            HookEvent::Elicitation,
+            "elicitation",
+            Some(serde_json::json!({ "message": message, "requestedSchema": schema })),
+            None,
+            None,
+        );
+        self.hooks.run(HookEvent::Elicitation, ctx).await
+    }
+
+    /// Fire an ElicitationResult hook after the user responds.
+    pub async fn fire_elicitation_result_hook(&self, action: &str, content: Option<&serde_json::Value>) {
+        if !self.hooks.has_hooks(HookEvent::ElicitationResult) {
+            return;
+        }
+        let mut input = serde_json::json!({ "action": action });
+        if let Some(c) = content {
+            input["content"] = c.clone();
+        }
+        let ctx = self.hooks.tool_ctx(
+            HookEvent::ElicitationResult,
+            "elicitation",
+            Some(input),
+            None,
+            None,
+        );
+        let _ = self.hooks.run(HookEvent::ElicitationResult, ctx).await;
+    }
+
     /// Run a task autonomously to completion, streaming progress events.
     ///
     /// This is the primary entry point for non-interactive / programmatic use.

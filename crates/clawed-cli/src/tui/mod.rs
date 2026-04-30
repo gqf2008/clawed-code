@@ -1516,6 +1516,14 @@ impl App {
                     "  ↳ [{team_name}/{agent_id}] {icon} {text_preview}",
                 )));
             }
+            AgentNotification::SwarmAgentIdle {
+                team_name,
+                agent_id,
+            } => {
+                self.push_message(MessageContent::System(format!(
+                    "  ↳ [{team_name}/{agent_id}] idle",
+                )));
+            }
         }
         None
     }

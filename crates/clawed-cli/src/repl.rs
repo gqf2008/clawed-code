@@ -1071,6 +1071,9 @@ pub async fn run(
                 if let Some(ref mut watcher) = config_watcher {
                     let changes = watcher.drain();
                     if !changes.is_empty() {
+                        let has_settings = changes.iter().any(|e| {
+                            matches!(e, clawed_core::file_watcher::ConfigChangeEvent::Settings(_))
+                        });
                         let changed_files: Vec<String> = changes
                             .iter()
                             .map(|e| match e {
@@ -1087,6 +1090,19 @@ pub async fn run(
                             changed_files.join(", ")
                         );
                         handle_reload_context(&engine, &cwd).await;
+                        // Fire hook events for config/file changes
+                        if has_settings {
+                            engine.fire_config_change_hook().await;
+                        }
+                        for change in &changes {
+                            let path = match change {
+                                clawed_core::file_watcher::ConfigChangeEvent::ClaudeMd(p)
+                                | clawed_core::file_watcher::ConfigChangeEvent::Settings(p) => {
+                                    p.to_string_lossy().to_string()
+                                }
+                            };
+                            engine.fire_file_changed_hook(&path).await;
+                        }
                     }
                 }
 

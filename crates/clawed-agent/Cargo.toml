@@ -27,6 +27,7 @@ chrono = { workspace = true }
 tokio-util = { workspace = true }
 crossterm = { workspace = true }
 dirs = { workspace = true }
+reqwest = { workspace = true }
 
 [lints]
 workspace = true

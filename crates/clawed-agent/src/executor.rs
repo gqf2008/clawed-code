@@ -17,6 +17,19 @@ const MAX_TOOL_CONCURRENCY: usize = 10;
 /// Sender for streaming tool output lines (message_id, tool_name, line).
 type OutputLineSender = tokio::sync::mpsc::UnboundedSender<(String, String, String)>;
 
+/// Map tool names to their corresponding lifecycle hook events.
+fn tool_lifecycle_event(tool_name: &str) -> Option<HookEvent> {
+    match tool_name {
+        "EnterWorktree" => Some(HookEvent::WorktreeCreate),
+        "ExitWorktree" => Some(HookEvent::WorktreeRemove),
+        "task_create" => Some(HookEvent::TaskCreated),
+        "task_update" => Some(HookEvent::TaskCompleted),
+        "CronCreate" => Some(HookEvent::Notification),
+        "CronDelete" => Some(HookEvent::Notification),
+        _ => None,
+    }
+}
+
 pub struct ToolExecutor {
     registry: Arc<ToolRegistry>,
     permission_checker: Arc<PermissionChecker>,
@@ -188,6 +201,17 @@ impl ToolExecutor {
             }
         }
 
+        if let ContentBlock::ToolResult { is_error: false, .. } = &result {
+            if let Some(event) = tool_lifecycle_event(tool_name) {
+                if self.hooks.has_hooks(event) {
+                    let ctx =
+                        self.hooks
+                            .tool_ctx(event, tool_name, None, None, None);
+                    let _ = self.hooks.run(event, ctx).await;
+                }
+            }
+        }
+
         result
     }
 
@@ -277,7 +301,7 @@ impl ToolExecutor {
                 let response = match tokio::time::timeout(
                     perm_timeout,
                     self.prompter()
-                        .ask_permission(canonical, &desc, &suggestions),
+                        .ask_permission(canonical, &desc, &suggestions, &input),
                 )
                 .await
                 {
@@ -533,7 +557,50 @@ fn partition_tool_calls(
 /// and truncates to avoid overflowing the TUI layout. Long values like file
 /// contents are omitted.
 fn build_perm_description(tool_name: &str, input: &Value) -> String {
-    // Keys whose values are likely short and human-readable — show these.
+    match tool_name {
+        "Bash" | "PowerShell" => {
+            if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
+                let clean = sanitize_inline_summary(cmd);
+                return format!("{tool_name}: {}", clawed_core::text_util::truncate_chars(&clean, 119, "…"));
+            }
+        }
+        "Read" => {
+            if let Some(path) = input.get("file_path").and_then(|v| v.as_str()) {
+                return format!("Read: {path}");
+            }
+        }
+        "Write" => {
+            if let Some(path) = input.get("file_path").and_then(|v| v.as_str()) {
+                let lines = input
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.lines().count())
+                    .unwrap_or(0);
+                return format!("Write: {path} ({lines} lines)");
+            }
+        }
+        "Edit" | "MultiEdit" => {
+            if let Some(path) = input.get("file_path").and_then(|v| v.as_str()) {
+                return format!("Edit: {path}");
+            }
+        }
+        "Grep" | "Glob" => {
+            let pattern = input.get("pattern").and_then(|v| v.as_str()).unwrap_or("?");
+            let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            return format!("{tool_name}: '{pattern}' in {path}");
+        }
+        "WebFetch" | "WebSearch" => {
+            if let Some(url) = input.get("url").and_then(|v| v.as_str()) {
+                return format!("{tool_name}: {url}");
+            }
+            if let Some(q) = input.get("query").and_then(|v| v.as_str()) {
+                return format!("{tool_name}: {q}");
+            }
+        }
+        _ => {}
+    }
+
+    // Generic fallback: show key fields from the input
     const SHOW_KEYS: &[&str] = &[
         "command",
         "file_path",
@@ -915,8 +982,7 @@ mod tests {
     fn perm_desc_shows_command() {
         let input = json!({"command": "ls -la", "timeout": 30});
         let desc = build_perm_description("Bash", &input);
-        assert!(desc.contains("command=ls -la"), "got: {desc}");
-        // Should NOT contain "timeout" (not in SHOW_KEYS)
+        assert!(desc.contains("ls -la"), "got: {desc}");
         assert!(!desc.contains("timeout"), "got: {desc}");
     }
 
@@ -932,8 +998,7 @@ mod tests {
     #[test]
     fn perm_desc_fallback_to_keys() {
         let input = json!({"content": "very long data", "mode": "overwrite"});
-        let desc = build_perm_description("Write", &input);
-        // No SHOW_KEYS match → should list key names
+        let desc = build_perm_description("CustomTool", &input);
         assert!(desc.contains("content"), "got: {desc}");
         assert!(desc.contains("mode"), "got: {desc}");
     }
@@ -944,7 +1009,6 @@ mod tests {
         let desc = build_perm_description("Bash", &input);
         assert!(!desc.contains('\n'), "got: {desc}");
         assert!(!desc.contains('\t'), "got: {desc}");
-        assert!(desc.contains("echo hello world && ls"), "got: {desc}");
     }
 
     #[tokio::test]

@@ -21,7 +21,25 @@ struct OAuthTokenStub {
     access_token: String,
 }
 
+/// Response from the `/v1/account` endpoint.
+#[derive(Debug, Deserialize)]
+struct AccountInfo {
+    #[serde(default)]
+    org_uuid: Option<String>,
+}
+
 pub struct RemoteTriggerTool;
+
+/// Shared HTTP client for connection pooling across all RemoteTrigger requests.
+static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+fn shared_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .build()
+            .expect("reqwest Client builder failed")
+    })
+}
 
 impl RemoteTriggerTool {
     fn base_api_url() -> String {
@@ -56,14 +74,52 @@ impl RemoteTriggerTool {
         }
     }
 
-    fn get_org_uuid() -> Option<String> {
+    /// Resolve the organization UUID.
+    /// Priority: env var → cached successful lookup → fresh /account lookup.
+    /// Only successful lookups are cached so transient failures can retry.
+    async fn get_org_uuid(access_token: &str) -> Option<String> {
         // 1. Explicit env var (enterprise/CI)
         if let Ok(uuid) = std::env::var("CLAUDE_ORG_UUID") {
             return Some(uuid);
         }
-        // 2. TODO: query the OAuth /account endpoint to resolve org UUID.
-        //    For now, the user must supply it via env or the tool will warn.
-        None
+
+        // 2. Cache only successful lookups
+        static CACHED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        if let Some(cached) = CACHED.get() {
+            return Some(cached.clone());
+        }
+
+        // 3. Query /v1/account
+        let result = Self::fetch_org_uuid(access_token).await;
+        if let Some(ref uuid) = result {
+            let _ = CACHED.set(uuid.clone());
+        }
+        result
+    }
+
+    async fn fetch_org_uuid(access_token: &str) -> Option<String> {
+        let base = Self::base_api_url();
+        let url = format!("{}/v1/account", base);
+
+        let send_future = shared_client()
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", access_token))
+            .header("Content-Type", "application/json")
+            .send();
+
+        let resp = tokio::time::timeout(std::time::Duration::from_secs(10), send_future)
+            .await
+            .ok()?
+            .ok()?;
+
+        if !resp.status().is_success() {
+            debug!("/v1/account returned {}", resp.status());
+            return None;
+        }
+
+        let info: AccountInfo = resp.json().await.ok()?;
+        debug!("Resolved org UUID from /v1/account: {:?}", info.org_uuid);
+        info.org_uuid
     }
 }
 
@@ -131,13 +187,11 @@ impl Tool for RemoteTriggerTool {
         let body = input.get("body");
 
         let access_token = Self::get_access_token()?;
-        let org_uuid = Self::get_org_uuid();
+        let org_uuid = Self::get_org_uuid(&access_token).await;
 
         let base = format!("{}/v1/code/triggers", Self::base_api_url());
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(20))
-            .build()?;
+        let client = shared_client();
 
         let mut req_builder = match action {
             "list" => client.get(&base),

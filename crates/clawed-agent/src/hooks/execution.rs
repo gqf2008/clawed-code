@@ -103,6 +103,36 @@ fn glob_to_regex(glob: &str) -> String {
 
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 
+/// Reuse a single `reqwest::Client` across all HTTP hook invocations for connection pooling.
+static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+pub(super) async fn run_http_hook(
+    cmd_def: &HookCommandDef,
+    ctx: &HookContext,
+) -> anyhow::Result<(i16, String)> {
+    let client = HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .build()
+            .expect("reqwest Client builder failed")
+    });
+
+    let timeout = Duration::from_millis(cmd_def.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
+
+    let send_future = client
+        .post(&cmd_def.command)
+        .header("Content-Type", "application/json")
+        .json(ctx)
+        .send();
+
+    let resp = tokio::time::timeout(timeout, send_future)
+        .await
+        .map_err(|_| anyhow::anyhow!("HTTP hook timed out after {}ms", timeout.as_millis()))??;
+
+    let status = resp.status().as_u16() as i16;
+    let body = resp.text().await.unwrap_or_default();
+    Ok((status, body))
+}
+
 pub(super) async fn run_shell_hook(
     cmd_def: &HookCommandDef,
     ctx: &HookContext,

@@ -1,6 +1,6 @@
-//! External shell-command hook system.
+//! External hook system supporting command and prompt hook types.
 //!
-//! Hooks let users run arbitrary shell scripts at lifecycle events:
+//! Hooks let users run arbitrary scripts or inject static text at lifecycle events:
 //!
 //! | Event                | When                              | exit 2 behaviour                  |
 //! |----------------------|-----------------------------------|-----------------------------------|
@@ -36,7 +36,7 @@ use tracing::{debug, warn};
 
 use clawed_core::config::{HookRule, HooksConfig};
 
-use execution::{interpret_output, run_shell_hook, tool_matches};
+use execution::{interpret_output, run_http_hook, run_shell_hook, tool_matches};
 
 // ── HookRegistry ─────────────────────────────────────────────────────────────
 
@@ -120,41 +120,83 @@ impl HookRegistry {
                 continue;
             }
             for cmd_def in &rule.hooks {
-                if cmd_def.hook_type != "command" {
-                    continue;
-                }
-                match run_shell_hook(cmd_def, &ctx, &self.cwd).await {
-                    Ok((exit_code, stdout)) => {
-                        debug!(
-                            "Hook {:?} cmd='{}' exit={} stdout_len={}",
-                            event.as_str(),
-                            cmd_def.command,
-                            exit_code,
-                            stdout.len()
-                        );
-                        let decision = interpret_output(event, exit_code, stdout);
-                        match decision {
-                            HookDecision::Continue => {}
-                            HookDecision::Allow => {
-                                return decision;
+                let decision = match cmd_def.hook_type.as_str() {
+                    "command" => {
+                        match run_shell_hook(cmd_def, &ctx, &self.cwd).await {
+                            Ok((exit_code, stdout)) => {
+                                debug!(
+                                    "Hook {:?} cmd='{}' exit={} stdout_len={}",
+                                    event.as_str(),
+                                    cmd_def.command,
+                                    exit_code,
+                                    stdout.len()
+                                );
+                                interpret_output(event, exit_code, stdout)
                             }
-                            HookDecision::Block { .. } => {
-                                // Block wins immediately — short-circuit
-                                return decision;
-                            }
-                            HookDecision::AppendContext { text } => {
-                                accumulated_context.push(text);
-                            }
-                            HookDecision::FeedbackAndContinue { feedback } => {
-                                accumulated_feedback.push(feedback);
-                            }
-                            HookDecision::ModifyInput { new_input } => {
-                                final_modify = Some(new_input);
+                            Err(e) => {
+                                warn!("Hook execution error ({}): {}", cmd_def.command, e);
+                                continue;
                             }
                         }
                     }
-                    Err(e) => {
-                        warn!("Hook execution error ({}): {}", cmd_def.command, e);
+                    "prompt" => {
+                        if cmd_def.command.is_empty() {
+                            continue;
+                        }
+                        debug!(
+                            "Hook {:?} type=prompt text_len={}",
+                            event.as_str(),
+                            cmd_def.command.len()
+                        );
+                        HookDecision::AppendContext {
+                            text: cmd_def.command.clone(),
+                        }
+                    }
+                    "http" => {
+                        match run_http_hook(cmd_def, &ctx).await {
+                            Ok((status, body)) => {
+                                debug!(
+                                    "Hook {:?} type=http url='{}' status={} body_len={}",
+                                    event.as_str(),
+                                    cmd_def.command,
+                                    status,
+                                    body.len()
+                                );
+                                // 2xx → treat like exit 0, use body as stdout
+                                // 3xx/4xx/5xx → treat like non-zero exit
+                                let exit_code = if (200..300).contains(&status) { 0 } else { 1 };
+                                interpret_output(event, exit_code, body)
+                            }
+                            Err(e) => {
+                                warn!("HTTP hook error ({}): {}", cmd_def.command, e);
+                                continue;
+                            }
+                        }
+                    }
+                    _ => {
+                        debug!(
+                            "Skipping hook with unsupported type '{}'",
+                            cmd_def.hook_type
+                        );
+                        continue;
+                    }
+                };
+                match decision {
+                    HookDecision::Continue => {}
+                    HookDecision::Allow => {
+                        return decision;
+                    }
+                    HookDecision::Block { .. } => {
+                        return decision;
+                    }
+                    HookDecision::AppendContext { text } => {
+                        accumulated_context.push(text);
+                    }
+                    HookDecision::FeedbackAndContinue { feedback } => {
+                        accumulated_feedback.push(feedback);
+                    }
+                    HookDecision::ModifyInput { new_input } => {
+                        final_modify = Some(new_input);
                     }
                 }
             }

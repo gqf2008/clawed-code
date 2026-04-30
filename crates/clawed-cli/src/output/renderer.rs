@@ -356,6 +356,9 @@ impl OutputRenderer {
                 let icon = if is_error { "❌" } else { "→" };
                 eprintln!("\x1b[2m🐝 {} {} {}\x1b[0m", agent_id, icon, text_preview);
             }
+            AgentNotification::SwarmAgentIdle { agent_id, .. } => {
+                eprintln!("\x1b[2m🐝 {} idle\x1b[0m", agent_id);
+            }
 
             // ── Extended lifecycle events ──
             AgentNotification::AgentTerminated { agent_id, reason } => {

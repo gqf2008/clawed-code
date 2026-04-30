@@ -148,6 +148,22 @@ impl AgentType {
     }
 }
 
+/// Resolved agent configuration from either a custom definition or built-in type.
+struct ResolvedAgentConfig {
+    system_prompt: String,
+    max_turns: u32,
+    model_alias: Option<String>,
+    read_only: bool,
+    background_default: bool,
+    allowed_tools: Option<Vec<String>>,
+    disallowed_tools: Option<Vec<String>>,
+    initial_prompt: Option<String>,
+}
+
+fn tool_in_list(tool_name: &str, list: &[String]) -> bool {
+    list.iter().any(|a| a.eq_ignore_ascii_case(tool_name))
+}
+
 /// Resolve a model alias ("haiku", "sonnet", "opus") to a concrete model name.
 /// If `alias` is None or "inherit", returns the `parent_model` unchanged.
 pub fn resolve_agent_model(alias: Option<&str>, parent_model: &str) -> String {
@@ -200,13 +216,15 @@ impl Tool for DispatchAgentTool {
          agentic loop with its own conversation and tool permissions, then returns its \
          output. Use for parallel work, research, verification, or when isolation is needed. \
          The sub-agent cannot interact with the user.\n\n\
-         Agent types:\n\
+         Built-in agent types:\n\
          - \"general\" (default): Full tool access, up to 20 turns\n\
          - \"explore\": Read-only, fast investigation, up to 10 turns\n\
          - \"plan\": Read + task management, up to 15 turns\n\
          - \"code-review\": Read-only code analysis, up to 15 turns\n\
          - \"verification\": Run tests and check correctness, up to 10 turns\n\
-         - \"worker\": Full tool access, spawned by coordinator"
+         - \"worker\": Full tool access, spawned by coordinator\n\n\
+         Custom agent types can be defined in `.claude/agents/*.md` and are referenced \
+         by their `name` field (e.g. \"my-custom-reviewer\")."
     }
 
     fn to_auto_classifier_input(&self, input: &Value) -> Value {
@@ -233,8 +251,10 @@ impl Tool for DispatchAgentTool {
                 "agent_type": {
                     "type": "string",
                     "enum": ["general", "explore", "plan", "code-review", "verification", "worker"],
-                    "description": "The type of agent to launch. Determines available tools \
-                                    and system prompt. Default: general."
+                    "description": "The type of agent to launch. Built-in types: general, \
+                                    explore, plan, code-review, verification, worker. You can \
+                                    also use custom types defined in `.claude/agents/*.md`. \
+                                    Default: general."
                 },
                 "name": {
                     "type": "string",
@@ -279,10 +299,50 @@ impl Tool for DispatchAgentTool {
             .ok_or_else(|| anyhow::anyhow!("Missing 'prompt'"))?
             .to_string();
 
-        let agent_type = input["agent_type"]
-            .as_str()
-            .map(AgentType::from_str)
-            .unwrap_or(AgentType::General);
+        let agent_type_str = input["agent_type"].as_str().unwrap_or("general");
+
+        // Try custom agent definitions first (project-level shadow user-level)
+        let custom_agents = clawed_core::agents::get_agents(&context.cwd);
+        let custom_agent = custom_agents.iter().find(|a| a.agent_type == agent_type_str);
+
+        let cfg = match custom_agent {
+            Some(def) => {
+                let sys = if def.system_prompt.trim().is_empty() {
+                    self.config.system_prompt.clone()
+                } else {
+                    def.system_prompt.clone()
+                };
+                let mt = def.max_turns.unwrap_or(self.config.max_turns);
+                let model = if def.inherits_model() { None } else { def.model.clone() };
+                // Agent is read-only only when all its allowed tools are themselves read-only.
+                let ro = !def.allowed_tools.is_empty() && def.allowed_tools.iter().all(|name| {
+                    self.registry.get(name).map(|t| t.is_read_only()).unwrap_or(false)
+                });
+                ResolvedAgentConfig {
+                    system_prompt: sys,
+                    max_turns: mt,
+                    model_alias: model,
+                    read_only: ro,
+                    background_default: def.background,
+                    allowed_tools: Some(def.allowed_tools.clone()),
+                    disallowed_tools: Some(def.disallowed_tools.clone()),
+                    initial_prompt: def.initial_prompt.clone(),
+                }
+            }
+            None => {
+                let at = AgentType::from_str(agent_type_str);
+                ResolvedAgentConfig {
+                    system_prompt: at.system_prompt(&self.config.system_prompt),
+                    max_turns: at.max_turns(self.config.max_turns),
+                    model_alias: at.preferred_model().map(|s| s.to_string()),
+                    read_only: at.read_only(),
+                    background_default: at.default_background(),
+                    allowed_tools: None,
+                    disallowed_tools: None,
+                    initial_prompt: None,
+                }
+            }
+        };
 
         let allowed_tools: Option<Vec<String>> = input["allowed_tools"].as_array().map(|arr| {
             arr.iter()
@@ -293,13 +353,20 @@ impl Tool for DispatchAgentTool {
         let system_prompt = input["system_prompt"]
             .as_str()
             .map(String::from)
-            .unwrap_or_else(|| agent_type.system_prompt(&self.config.system_prompt));
+            .unwrap_or(cfg.system_prompt);
 
         let run_in_background =
-            input["run_in_background"].as_bool().unwrap_or(false) || self.agent_tracker.is_some(); // coordinator mode → always background
+            input["run_in_background"].as_bool().unwrap_or(cfg.background_default)
+                || self.agent_tracker.is_some();
 
         let agent_name = input["name"].as_str().map(String::from);
         let agent_description = input["description"].as_str().map(String::from);
+
+        let prompt = if let Some(ref ip) = cfg.initial_prompt {
+            format!("{}\n\n{}", ip, prompt)
+        } else {
+            prompt
+        };
 
         // Build tool definitions for the sub-agent (optionally filtered)
         let all_tool_defs: Vec<ToolDefinition> = self
@@ -314,12 +381,26 @@ impl Tool for DispatchAgentTool {
                     "AskUserQuestion" | "Agent" | "SendMessage" | "TaskStop"
                 )
             })
-            // Agent-type based filtering
+            // Agent-type / definition based filtering
             .filter(|t| {
-                if let Some(ref allowed) = allowed_tools {
-                    return allowed.contains(&t.name().to_string());
+                // 1. Definition disallowed_tools (lowest priority exclusion)
+                if let Some(ref disallowed) = cfg.disallowed_tools {
+                    if tool_in_list(t.name(), disallowed) {
+                        return false;
+                    }
                 }
-                if agent_type.read_only() {
+                // 2. Input parameter allowed_tools (highest priority)
+                if let Some(ref allowed) = allowed_tools {
+                    return tool_in_list(t.name(), allowed);
+                }
+                // 3. Definition allowed_tools
+                if let Some(ref allowed_def) = cfg.allowed_tools {
+                    if !allowed_def.is_empty() && !allowed_def.iter().any(|a| a == "*") {
+                        return tool_in_list(t.name(), allowed_def);
+                    }
+                }
+                // 4. Agent-type read_only default
+                if cfg.read_only {
                     return t.is_read_only();
                 }
                 true
@@ -338,12 +419,12 @@ impl Tool for DispatchAgentTool {
         ));
         let state = new_shared_state();
 
-        // Resolve model: agent type preferred model → input model → parent model
+        // Resolve model: input model → agent definition model / agent type preferred model → parent model
         let agent_model = input["model"]
             .as_str()
             .map(|m| resolve_agent_model(Some(m), &self.config.model))
             .unwrap_or_else(|| {
-                resolve_agent_model(agent_type.preferred_model(), &self.config.model)
+                resolve_agent_model(cfg.model_alias.as_deref(), &self.config.model)
             });
 
         {
@@ -371,7 +452,7 @@ impl Tool for DispatchAgentTool {
 
         let query_config = QueryConfig {
             system_prompt,
-            max_turns: agent_type.max_turns(self.config.max_turns),
+            max_turns: cfg.max_turns,
             max_tokens: self.config.max_tokens,
             temperature: None,
             thinking: None,
@@ -453,7 +534,7 @@ impl Tool for DispatchAgentTool {
                     let _ = tx.send(AgentNotification::AgentSpawned {
                         agent_id: agent_id.clone(),
                         name: agent_name.clone(),
-                        agent_type: format!("{:?}", agent_type).to_lowercase(),
+                        agent_type: agent_type_str.to_string(),
                         background: true,
                     });
                 }
@@ -619,7 +700,7 @@ impl Tool for DispatchAgentTool {
         );
 
         // Show a header so the user knows the sub-agent has started.
-        let type_label = format!("{:?}", agent_type).to_lowercase();
+        let type_label = agent_type_str.to_string();
         let agent_label = agent_description
             .as_deref()
             .or(agent_name.as_deref())
@@ -824,6 +905,8 @@ mod tests {
         assert_eq!(tool.name(), "Agent");
         assert!(!tool.is_read_only());
         assert!(tool.description().contains("sub-agent"));
+        assert!(tool.description().contains("Built-in agent types"));
+        assert!(tool.description().contains("Custom agent types"));
     }
 
     #[test]
@@ -846,5 +929,21 @@ mod tests {
         }
         let required = schema["required"].as_array().unwrap();
         assert!(required.iter().any(|v| v == "prompt"));
+        // agent_type description mentions custom types
+        let agent_type_desc = props["agent_type"]["description"].as_str().unwrap();
+        assert!(
+            agent_type_desc.contains("custom types"),
+            "agent_type description should mention custom types: {}",
+            agent_type_desc
+        );
+    }
+
+    // ── Custom agent integration ─────────────────────────────────────────
+
+    #[test]
+    fn agent_type_from_str_unknown_falls_back_to_general() {
+        // This is the fallback behavior when no custom agent definition matches
+        assert_eq!(AgentType::from_str("my-custom-agent"), AgentType::General);
+        assert_eq!(AgentType::from_str(""), AgentType::General);
     }
 }

@@ -79,7 +79,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_existing() {
         let dir = TempDir::new().unwrap();
-        let id = add_cron_task("*/5 * * * *", "check", true, dir.path())
+        let id = add_cron_task("*/5 * * * *", "check", true, true, dir.path())
             .await
             .unwrap();
 

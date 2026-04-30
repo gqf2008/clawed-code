@@ -121,6 +121,7 @@ impl Message<AgentQuery> for AgentActor {
         };
 
         self.state = AgentState::Idle;
+        self.notifier.agent_idle(&self.team_name, &self.agent_id);
         match result {
             Ok(text) => {
                 self.total_tokens += text.len() as u64 / 4;

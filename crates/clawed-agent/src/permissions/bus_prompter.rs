@@ -75,13 +75,15 @@ impl PermissionPrompter for BusPermissionPrompter {
         tool_name: &str,
         description: &str,
         _suggestions: &[PermissionSuggestion],
+        input: &serde_json::Value,
     ) -> PermissionResponse {
         let request_id = Uuid::new_v4().to_string();
+        let risk_level = classify_tool_risk(tool_name, input);
         let req = BusPermissionRequest {
             request_id: request_id.clone(),
             tool_name: tool_name.to_string(),
-            input: serde_json::Value::Null,
-            risk_level: RiskLevel::Medium,
+            input: input.clone(),
+            risk_level,
             description: description.to_string(),
         };
 
@@ -134,5 +136,26 @@ impl PermissionPrompter for BusPermissionPrompter {
                 PermissionResponse::deny()
             }
         }
+    }
+}
+
+/// Classify tool risk level from tool name and input.
+fn classify_tool_risk(tool_name: &str, input: &serde_json::Value) -> RiskLevel {
+    match tool_name {
+        "Bash" | "PowerShell" => {
+            if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
+                let classification = clawed_core::bash_classifier::classify(cmd);
+                if classification.risk.always_ask() {
+                    return RiskLevel::High;
+                }
+                if classification.risk.auto_approvable() {
+                    return RiskLevel::Low;
+                }
+            }
+            RiskLevel::Medium
+        }
+        "Write" | "MultiEdit" | "NotebookEdit" => RiskLevel::Medium,
+        _ if tool_name.starts_with("mcp__") => RiskLevel::Medium,
+        _ => RiskLevel::Low,
     }
 }

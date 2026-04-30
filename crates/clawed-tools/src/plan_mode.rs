@@ -9,15 +9,16 @@ use clawed_core::tool::{Tool, ToolContext, ToolResult};
 use serde_json::{json, Value};
 
 /// Tools that are available during plan mode (read-only operations).
+/// Names must match the canonical registered tool names (not TS SDK aliases).
 pub const PLAN_MODE_ALLOWED_TOOLS: &[&str] = &[
-    "FileReadTool",
-    "GrepTool",
-    "GlobTool",
-    "LSTool",
-    "WebFetchTool",
-    "WebSearchTool",
-    "TodoWriteTool",
-    "AskUserQuestionTool",
+    "Read",
+    "Grep",
+    "Glob",
+    "LS",
+    "WebFetch",
+    "WebSearch",
+    "TodoWrite",
+    "AskUserQuestion",
     "EnterPlanMode",
     "ExitPlanMode",
 ];
@@ -38,15 +39,15 @@ Plan mode activated. You are now in the exploration and planning phase.
 ## What Happens in Plan Mode
 
 In plan mode, only read-only tools are available:
-- **FileReadTool** — Read file contents
-- **GrepTool** — Search file contents with regex
-- **GlobTool** — Find files by name pattern
-- **LSTool** — List directory contents
-- **WebFetchTool** — Fetch web pages
-- **WebSearchTool** — Search the web
-- **TodoWriteTool** — Track tasks
+- **Read** — Read file contents
+- **Grep** — Search file contents with regex
+- **Glob** — Find files by name pattern
+- **LS** — List directory contents
+- **WebFetch** — Fetch web pages
+- **WebSearch** — Search the web
+- **TodoWrite** — Track tasks
 
-File modification tools (FileEditTool, FileWriteTool, BashTool, etc.) are disabled.
+File modification tools (Edit, Write, Bash, etc.) are disabled.
 
 ## Your Workflow
 
@@ -249,13 +250,13 @@ mod tests {
 
     #[test]
     fn plan_mode_allowed_tools_includes_expected() {
-        assert!(is_plan_mode_tool("FileReadTool"));
-        assert!(is_plan_mode_tool("GrepTool"));
-        assert!(is_plan_mode_tool("GlobTool"));
-        assert!(is_plan_mode_tool("LSTool"));
+        assert!(is_plan_mode_tool("Read"));
+        assert!(is_plan_mode_tool("Grep"));
+        assert!(is_plan_mode_tool("Glob"));
+        assert!(is_plan_mode_tool("LS"));
         assert!(is_plan_mode_tool("ExitPlanMode"));
-        assert!(!is_plan_mode_tool("FileEditTool"));
-        assert!(!is_plan_mode_tool("BashTool"));
-        assert!(!is_plan_mode_tool("FileWriteTool"));
+        assert!(!is_plan_mode_tool("Edit"));
+        assert!(!is_plan_mode_tool("Bash"));
+        assert!(!is_plan_mode_tool("Write"));
     }
 }

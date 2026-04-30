@@ -2,13 +2,14 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A single shell-command hook definition.
+/// A single hook definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookCommandDef {
-    /// Hook type — currently only `"command"` is supported.
+    /// Hook type: `"command"` (shell execution, default), `"prompt"` (static text injection),
+    /// or `"http"` (POST to URL with context as JSON body).
     #[serde(rename = "type", default = "default_hook_type")]
     pub hook_type: String,
-    /// Shell command to execute (passed to `sh -c` on Unix, `cmd /C` on Windows).
+    /// For `"command"`: shell command. For `"prompt"`: text to inject. For `"http"`: URL to POST to.
     pub command: String,
     /// Optional timeout in milliseconds (default: 60 000).
     #[serde(default)]

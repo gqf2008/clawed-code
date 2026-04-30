@@ -88,10 +88,10 @@ mod tests {
     #[tokio::test]
     async fn test_list_with_tasks() {
         let dir = TempDir::new().unwrap();
-        add_cron_task("*/5 * * * *", "check", true, dir.path())
+        add_cron_task("*/5 * * * *", "check", true, true, dir.path())
             .await
             .unwrap();
-        add_cron_task("0 9 * * *", "morning", false, dir.path())
+        add_cron_task("0 9 * * *", "morning", false, true, dir.path())
             .await
             .unwrap();
 

@@ -658,6 +658,19 @@ pub fn notification_to_jsonrpc(notif: &AgentNotification) -> Notification {
                 ],
             ),
         ),
+        AgentNotification::SwarmAgentIdle {
+            team_name,
+            agent_id,
+        } => Notification::new(
+            "swarm.agent_idle",
+            json_obj(
+                2,
+                &[
+                    ("team_name", Value::String(team_name.clone())),
+                    ("agent_id", Value::String(agent_id.clone())),
+                ],
+            ),
+        ),
 
         // ── Extended lifecycle ──
         AgentNotification::AgentTerminated { agent_id, reason } => Notification::new(

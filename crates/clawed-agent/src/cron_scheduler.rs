@@ -341,6 +341,7 @@ mod tests {
             last_fired_at: None,
             recurring: false,
             permanent: false,
+            durable: true,
         };
         clawed_core::cron_tasks::write_cron_tasks(&[task], dir.path())
             .await

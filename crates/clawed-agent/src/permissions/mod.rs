@@ -33,6 +33,7 @@ pub trait PermissionPrompter: Send + Sync {
         tool_name: &str,
         description: &str,
         suggestions: &[PermissionSuggestion],
+        input: &serde_json::Value,
     ) -> PermissionResponse;
 }
 
@@ -48,6 +49,7 @@ impl PermissionPrompter for TerminalPrompter {
         tool_name: &str,
         description: &str,
         suggestions: &[PermissionSuggestion],
+        _input: &serde_json::Value,
     ) -> PermissionResponse {
         let tn = tool_name.to_string();
         let desc = description.to_string();

@@ -32,12 +32,16 @@ fn test_event_as_str_roundtrip() {
         HookEvent::ConfigChange,
         HookEvent::TaskCreated,
         HookEvent::TaskCompleted,
+        HookEvent::TeammateIdle,
+        HookEvent::Elicitation,
+        HookEvent::ElicitationResult,
+        HookEvent::WorktreeCreate,
+        HookEvent::WorktreeRemove,
     ];
-    // All 23 events have unique string representations
     let strs: Vec<&str> = events.iter().map(|e| e.as_str()).collect();
-    assert_eq!(strs.len(), 23);
+    assert_eq!(strs.len(), 28);
     let unique: std::collections::HashSet<_> = strs.iter().collect();
-    assert_eq!(unique.len(), 23, "All event names should be unique");
+    assert_eq!(unique.len(), 28, "All event names should be unique");
 }
 
 #[test]
@@ -268,10 +272,14 @@ fn test_interpret_modify_without_input_no_panic() {
 // ── HookRegistry ─────────────────────────────────────────────────────
 
 fn make_rule(matcher: Option<&str>, command: &str) -> HookRule {
+    make_typed_rule(matcher, "command", command)
+}
+
+fn make_typed_rule(matcher: Option<&str>, hook_type: &str, command: &str) -> HookRule {
     HookRule {
         matcher: matcher.map(|s| s.to_string()),
         hooks: vec![HookCommandDef {
-            hook_type: "command".into(),
+            hook_type: hook_type.into(),
             command: command.into(),
             timeout_ms: Some(1000),
         }],
@@ -301,7 +309,7 @@ fn test_registry_from_config_routes_events() {
 
 #[test]
 fn test_registry_rules_for_all_events() {
-    // Ensure rules_for handles all 23 events without panic
+    // Ensure rules_for handles all 28 events without panic
     let reg = HookRegistry::new();
     let events = [
         HookEvent::PreToolUse,
@@ -327,6 +335,11 @@ fn test_registry_rules_for_all_events() {
         HookEvent::ConfigChange,
         HookEvent::TaskCreated,
         HookEvent::TaskCompleted,
+        HookEvent::TeammateIdle,
+        HookEvent::Elicitation,
+        HookEvent::ElicitationResult,
+        HookEvent::WorktreeCreate,
+        HookEvent::WorktreeRemove,
     ];
     for event in events {
         assert!(reg.rules_for(event).is_empty());
@@ -459,6 +472,98 @@ async fn test_run_echo_hook_returns_continue() {
     // `echo hello` exits 0 with non-empty stdout, but PreToolUse is not an injection event
     let mut config = HooksConfig::default();
     config.pre_tool_use.push(make_rule(None, "echo hello"));
+    let reg = HookRegistry::from_config(config, ".", "test");
+    let ctx = reg.tool_ctx(HookEvent::PreToolUse, "Bash", None, None, None);
+    let decision = reg.run(HookEvent::PreToolUse, ctx).await;
+    assert!(matches!(decision, HookDecision::Continue));
+}
+
+// ── Prompt-type hook tests ────────────────────────────────────────────
+
+fn make_prompt_rule(matcher: Option<&str>, text: &str) -> HookRule {
+    make_typed_rule(matcher, "prompt", text)
+}
+
+#[tokio::test]
+async fn test_prompt_hook_injects_text() {
+    let mut config = HooksConfig::default();
+    config
+        .session_start
+        .push(make_prompt_rule(None, "Remember to be concise"));
+    let reg = HookRegistry::from_config(config, ".", "test");
+    let ctx = reg.prompt_ctx(HookEvent::SessionStart, None);
+    let decision = reg.run(HookEvent::SessionStart, ctx).await;
+    match decision {
+        HookDecision::AppendContext { text } => {
+            assert_eq!(text, "Remember to be concise");
+        }
+        _ => panic!("expected AppendContext, got {:?}", decision),
+    }
+}
+
+#[tokio::test]
+async fn test_prompt_hook_empty_command_skipped() {
+    let mut config = HooksConfig::default();
+    config
+        .session_start
+        .push(make_prompt_rule(None, ""));
+    let reg = HookRegistry::from_config(config, ".", "test");
+    let ctx = reg.prompt_ctx(HookEvent::SessionStart, None);
+    let decision = reg.run(HookEvent::SessionStart, ctx).await;
+    assert!(matches!(decision, HookDecision::Continue));
+}
+
+#[tokio::test]
+async fn test_prompt_hook_respects_matcher() {
+    let mut config = HooksConfig::default();
+    config
+        .pre_tool_use
+        .push(make_prompt_rule(Some("Edit"), "Only for Edit"));
+    let reg = HookRegistry::from_config(config, ".", "test");
+
+    // Should not fire for Bash
+    let ctx = reg.tool_ctx(HookEvent::PreToolUse, "Bash", None, None, None);
+    let decision = reg.run(HookEvent::PreToolUse, ctx).await;
+    assert!(matches!(decision, HookDecision::Continue));
+
+    // Should fire for Edit
+    let ctx = reg.tool_ctx(HookEvent::PreToolUse, "Edit", None, None, None);
+    let decision = reg.run(HookEvent::PreToolUse, ctx).await;
+    assert!(matches!(decision, HookDecision::AppendContext { .. }));
+}
+
+// ── HTTP-type hook tests ──────────────────────────────────────────────
+
+fn make_http_rule(matcher: Option<&str>, url: &str) -> HookRule {
+    let mut rule = make_typed_rule(matcher, "http", url);
+    rule.hooks[0].timeout_ms = Some(2000);
+    rule
+}
+
+#[tokio::test]
+async fn test_http_hook_unreachable_url_continues() {
+    // An unreachable URL should fail gracefully and not block the hook chain.
+    let mut config = HooksConfig::default();
+    config
+        .pre_tool_use
+        .push(make_http_rule(None, "http://127.0.0.1:1/invalid"));
+    let reg = HookRegistry::from_config(config, ".", "test");
+    let ctx = reg.tool_ctx(HookEvent::PreToolUse, "Bash", None, None, None);
+    let decision = reg.run(HookEvent::PreToolUse, ctx).await;
+    assert!(matches!(decision, HookDecision::Continue));
+}
+
+#[tokio::test]
+async fn test_unknown_hook_type_skipped() {
+    let mut config = HooksConfig::default();
+    config.pre_tool_use.push(HookRule {
+        matcher: None,
+        hooks: vec![HookCommandDef {
+            hook_type: "webhook".into(),
+            command: "http://example.com".into(),
+            timeout_ms: None,
+        }],
+    });
     let reg = HookRegistry::from_config(config, ".", "test");
     let ctx = reg.tool_ctx(HookEvent::PreToolUse, "Bash", None, None, None);
     let decision = reg.run(HookEvent::PreToolUse, ctx).await;

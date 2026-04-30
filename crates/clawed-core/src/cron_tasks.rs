@@ -32,10 +32,21 @@ pub struct CronTask {
     /// When true, exempt from auto-expiry.
     #[serde(default, skip_serializing_if = "is_false")]
     pub permanent: bool,
+    /// When true (default), persisted to disk. When false, in-memory only — dies with the session.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub durable: bool,
 }
 
 fn is_false(b: &bool) -> bool {
     !b
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,15 +87,52 @@ impl Default for CronJitterConfig {
 
 const CRON_FILE_REL: &str = ".claude/scheduled_tasks.json";
 
+/// Global in-memory store for non-durable (session-only) tasks, keyed by directory.
+type MemoryMap = std::collections::HashMap<String, Vec<CronTask>>;
+static MEMORY_TASKS: std::sync::OnceLock<std::sync::Mutex<MemoryMap>> =
+    std::sync::OnceLock::new();
+
+fn memory_tasks_map() -> &'static std::sync::Mutex<MemoryMap> {
+    MEMORY_TASKS.get_or_init(|| std::sync::Mutex::new(MemoryMap::new()))
+}
+
+fn lock_map() -> std::sync::MutexGuard<'static, MemoryMap> {
+    crate::sync::lock_or_recover(memory_tasks_map())
+}
+
+fn dir_key(dir: &Path) -> String {
+    dir.to_string_lossy().to_string()
+}
+
+fn read_memory_tasks_for(dir: &Path) -> Vec<CronTask> {
+    lock_map().get(&dir_key(dir)).cloned().unwrap_or_default()
+}
+
+fn with_memory_tasks<F, R>(dir: &Path, f: F) -> R
+where
+    F: FnOnce(&mut Vec<CronTask>) -> R,
+{
+    let key = dir_key(dir);
+    f(lock_map().entry(key).or_default())
+}
+
+pub fn clear_memory_cron_tasks_for(dir: &Path) {
+    lock_map().remove(&dir_key(dir));
+}
+
+pub fn clear_memory_cron_tasks() {
+    lock_map().clear();
+}
+
 /// Path to the cron file in the given project directory.
 pub fn get_cron_file_path(dir: &Path) -> PathBuf {
     dir.join(CRON_FILE_REL)
 }
 
-/// Read and parse .claude/scheduled_tasks.json.
+/// Read and parse .claude/scheduled_tasks.json (disk only).
 /// Returns an empty list if the file is missing, empty, or malformed.
 /// Tasks with invalid cron strings are silently dropped.
-pub async fn read_cron_tasks(dir: &Path) -> Vec<CronTask> {
+async fn read_disk_tasks(dir: &Path) -> Vec<CronTask> {
     let path = get_cron_file_path(dir);
     let raw = match tokio::fs::read_to_string(&path).await {
         Ok(s) => s,
@@ -93,14 +141,28 @@ pub async fn read_cron_tasks(dir: &Path) -> Vec<CronTask> {
     parse_cron_file(&raw)
 }
 
-/// Sync variant for startup checks.
-pub fn read_cron_tasks_sync(dir: &Path) -> Vec<CronTask> {
+/// Sync variant for disk-only read.
+fn read_disk_tasks_sync(dir: &Path) -> Vec<CronTask> {
     let path = get_cron_file_path(dir);
     let raw = match std::fs::read_to_string(&path) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
     parse_cron_file(&raw)
+}
+
+/// Read all tasks — disk (durable) + in-memory (non-durable), merged.
+pub async fn read_cron_tasks(dir: &Path) -> Vec<CronTask> {
+    let mut tasks = read_disk_tasks(dir).await;
+    tasks.extend(read_memory_tasks_for(dir));
+    tasks
+}
+
+/// Sync variant — merges disk + memory.
+pub fn read_cron_tasks_sync(dir: &Path) -> Vec<CronTask> {
+    let mut tasks = read_disk_tasks_sync(dir);
+    tasks.extend(read_memory_tasks_for(dir));
+    tasks
 }
 
 fn parse_cron_file(raw: &str) -> Vec<CronTask> {
@@ -140,10 +202,12 @@ pub async fn write_cron_tasks(tasks: &[CronTask], dir: &Path) -> std::io::Result
 }
 
 /// Append a task. Returns the generated id.
+/// If `durable` is true, persists to disk; otherwise in-memory only (session-scoped).
 pub async fn add_cron_task(
     cron: &str,
     prompt: &str,
     recurring: bool,
+    durable: bool,
     dir: &Path,
 ) -> std::io::Result<String> {
     let id = Uuid::new_v4().to_string()[..8].to_string();
@@ -155,28 +219,38 @@ pub async fn add_cron_task(
         last_fired_at: None,
         recurring,
         permanent: false,
+        durable,
     };
-    let mut tasks = read_cron_tasks(dir).await;
-    tasks.push(task);
-    write_cron_tasks(&tasks, dir).await?;
+    if durable {
+        let mut tasks = read_disk_tasks(dir).await;
+        tasks.push(task);
+        write_cron_tasks(&tasks, dir).await?;
+    } else {
+        with_memory_tasks(dir, |list| list.push(task));
+    }
     Ok(id)
 }
 
-/// Remove tasks by id. No-op if none match.
+/// Remove tasks by id from both memory and disk. No-op if none match.
 pub async fn remove_cron_tasks(ids: &[String], dir: &Path) -> std::io::Result<()> {
     if ids.is_empty() {
         return Ok(());
     }
     let id_set: std::collections::HashSet<&str> = ids.iter().map(|s| s.as_str()).collect();
-    let tasks = read_cron_tasks(dir).await;
-    let remaining: Vec<CronTask> = tasks
+
+    // Remove from memory
+    with_memory_tasks(dir, |list| list.retain(|t| !id_set.contains(t.id.as_str())));
+
+    // Remove from disk
+    let disk_tasks = read_disk_tasks(dir).await;
+    let remaining: Vec<CronTask> = disk_tasks
         .into_iter()
         .filter(|t| !id_set.contains(t.id.as_str()))
         .collect();
     write_cron_tasks(&remaining, dir).await
 }
 
-/// Stamp `lastFiredAt` on the given recurring tasks and write back.
+/// Stamp `lastFiredAt` on the given recurring tasks in both memory and disk.
 pub async fn mark_cron_tasks_fired(
     ids: &[String],
     fired_at: i64,
@@ -186,9 +260,20 @@ pub async fn mark_cron_tasks_fired(
         return Ok(());
     }
     let id_set: std::collections::HashSet<&str> = ids.iter().map(|s| s.as_str()).collect();
-    let mut tasks = read_cron_tasks(dir).await;
+
+    // Update memory tasks
+    with_memory_tasks(dir, |list| {
+        for t in list.iter_mut() {
+            if id_set.contains(t.id.as_str()) {
+                t.last_fired_at = Some(fired_at);
+            }
+        }
+    });
+
+    // Update disk tasks
+    let mut disk_tasks = read_disk_tasks(dir).await;
     let mut changed = false;
-    for t in &mut tasks {
+    for t in &mut disk_tasks {
         if id_set.contains(t.id.as_str()) {
             t.last_fired_at = Some(fired_at);
             changed = true;
@@ -197,7 +282,7 @@ pub async fn mark_cron_tasks_fired(
     if !changed {
         return Ok(());
     }
-    write_cron_tasks(&tasks, dir).await
+    write_cron_tasks(&disk_tasks, dir).await
 }
 
 /// Next fire time in epoch ms, strictly after `from_ms`.
@@ -325,7 +410,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_and_read() {
         let dir = TempDir::new().unwrap();
-        let id = add_cron_task("*/5 * * * *", "check status", true, dir.path())
+        let id = add_cron_task("*/5 * * * *", "check status", true, true, dir.path())
             .await
             .unwrap();
         assert_eq!(id.len(), 8);
@@ -340,10 +425,10 @@ mod tests {
     #[tokio::test]
     async fn test_remove() {
         let dir = TempDir::new().unwrap();
-        let id1 = add_cron_task("*/5 * * * *", "task1", false, dir.path())
+        let id1 = add_cron_task("*/5 * * * *", "task1", false, true, dir.path())
             .await
             .unwrap();
-        let _id2 = add_cron_task("0 9 * * *", "task2", true, dir.path())
+        let _id2 = add_cron_task("0 9 * * *", "task2", true, true, dir.path())
             .await
             .unwrap();
 
@@ -356,7 +441,7 @@ mod tests {
     #[tokio::test]
     async fn test_mark_fired() {
         let dir = TempDir::new().unwrap();
-        let id = add_cron_task("*/5 * * * *", "task1", true, dir.path())
+        let id = add_cron_task("*/5 * * * *", "task1", true, true, dir.path())
             .await
             .unwrap();
 
@@ -391,6 +476,7 @@ mod tests {
             last_fired_at: None,
             recurring: true,
             permanent: false,
+            durable: true,
         };
         assert!(is_recurring_task_aged(&task, now, 7 * 24 * 60 * 60 * 1000));
     }
@@ -406,6 +492,7 @@ mod tests {
             last_fired_at: None,
             recurring: true,
             permanent: true,
+            durable: true,
         };
         assert!(!is_recurring_task_aged(&task, now, 7 * 24 * 60 * 60 * 1000));
     }
@@ -421,6 +508,7 @@ mod tests {
             last_fired_at: None,
             recurring: false,
             permanent: false,
+            durable: true,
         };
         let tasks = [old_task];
         let missed = find_missed_tasks(&tasks, now);
@@ -437,6 +525,7 @@ mod tests {
             last_fired_at: None,
             recurring: false,
             permanent: false,
+            durable: true,
         };
         let notif = build_missed_task_notification(&[&task]);
         assert!(notif.contains("missed while Claude was not running"));
@@ -473,5 +562,28 @@ mod tests {
     #[test]
     fn test_default_max_age_days() {
         assert_eq!(default_max_age_days(), 7);
+    }
+
+    #[tokio::test]
+    async fn test_non_durable_in_memory_only() {
+        let dir = TempDir::new().unwrap();
+        clear_memory_cron_tasks_for(dir.path());
+
+        let id = add_cron_task("*/5 * * * *", "memory task", true, false, dir.path())
+            .await
+            .unwrap();
+
+        // read_cron_tasks merges disk + memory
+        let all = read_cron_tasks(dir.path()).await;
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, id);
+        assert!(!all[0].durable);
+
+        // Disk should be empty (non-durable not persisted)
+        let disk = read_disk_tasks(dir.path()).await;
+        assert!(disk.is_empty());
+
+        // Clean up
+        clear_memory_cron_tasks_for(dir.path());
     }
 }
