@@ -559,6 +559,7 @@ async fn test_unknown_hook_type_skipped() {
     let mut config = HooksConfig::default();
     config.pre_tool_use.push(HookRule {
         matcher: None,
+        condition: None,
         hooks: vec![HookCommandDef {
             hook_type: "webhook".into(),
             command: "http://example.com".into(),

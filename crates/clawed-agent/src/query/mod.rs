@@ -598,6 +598,9 @@ pub fn query_stream_with_injection(
                     HookDecision::ModifyInput { .. } => {
                         // PostSampling doesn't operate on tool input; ignore.
                     }
+                    HookDecision::Allow => {
+                        // Allow means proceed normally (used by PermissionRequest hooks)
+                    }
                     HookDecision::Continue => {}
                 }
             }
