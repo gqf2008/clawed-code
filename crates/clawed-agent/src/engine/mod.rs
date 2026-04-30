@@ -121,9 +121,7 @@ impl QueryEngine {
             .filter(|t| t.is_enabled())
             .filter(|t| {
                 effective_allowed.is_empty()
-                    || effective_allowed
-                        .iter()
-                        .any(|a| a.eq_ignore_ascii_case(t.name()))
+                    || clawed_core::tool::tool_in_list(t.name(), &effective_allowed)
             })
             // In plan mode, only expose read-only tools to the model
             .filter(|t| {

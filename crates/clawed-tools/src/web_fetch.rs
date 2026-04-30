@@ -232,6 +232,17 @@ fn extract_main_content(html: &str) -> String {
 
 pub struct WebFetchTool;
 
+static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+fn shared_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .user_agent("Mozilla/5.0 (compatible; ClaudeCode/1.0)")
+            .build()
+            .expect("reqwest Client builder failed")
+    })
+}
+
 #[async_trait]
 impl Tool for WebFetchTool {
     fn name(&self) -> &'static str {
@@ -290,10 +301,8 @@ impl Tool for WebFetchTool {
         let extract_main = input["extract_main_content"].as_bool().unwrap_or(false);
         let timeout_secs = input["timeout"].as_u64().unwrap_or(30);
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(timeout_secs))
-            .user_agent("Mozilla/5.0 (compatible; ClaudeCode/1.0)")
-            .build()?;
+        let client = shared_client();
+        let timeout = std::time::Duration::from_secs(timeout_secs);
 
         let mut req = client.get(url);
 
@@ -322,7 +331,9 @@ impl Tool for WebFetchTool {
             }
         }
 
-        let resp = req.send().await?;
+        let resp = tokio::time::timeout(timeout, req.send())
+            .await
+            .map_err(|_| anyhow::anyhow!("Request timed out after {}s", timeout_secs))??;
         let status = resp.status();
         let content_type = resp
             .headers()

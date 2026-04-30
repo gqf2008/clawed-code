@@ -16,6 +16,15 @@ const MAX_SNIPPET_LEN: usize = 300;
 
 pub struct WebSearchTool;
 
+static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+fn shared_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
+}
 #[async_trait]
 impl Tool for WebSearchTool {
     fn name(&self) -> &'static str {
@@ -137,22 +146,20 @@ async fn do_search(
         search_query.push_str(&format!(" -site:{domain}"));
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+    let client = shared_client();
     let url = format!(
         "{}?q={}&count={}",
         base_url,
         urlencoding::encode(&search_query),
         MAX_RESULTS
     );
-    let resp = client
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(30), client
         .get(&url)
         .header("Accept", "application/json")
         .header("X-Subscription-Token", api_key)
-        .send()
-        .await?;
+        .send())
+        .await
+        .map_err(|_| anyhow::anyhow!("Search request timed out"))??;
 
     if !resp.status().is_success() {
         anyhow::bail!("Search API returned status {}", resp.status());

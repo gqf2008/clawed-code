@@ -18,6 +18,12 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::debug;
 
+static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+fn shared_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| reqwest::Client::new())
+}
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,9 +69,7 @@ pub async fn list_environments(access_token: &str, org_uuid: &str) -> Result<Vec
         base_url.trim_end_matches('/')
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()?;
+    let client = shared_client();
 
     let resp = retry_request(|| async {
         client
@@ -313,7 +317,7 @@ async fn create_git_bundle(
 }
 
 async fn upload_bundle_file(access_token: &str, bundle_path: &Path) -> Result<String> {
-    let client = reqwest::Client::new();
+    let client = shared_client();
     let url = format!("{}/v1/files", api_base_url().trim_end_matches('/'));
 
     let file_bytes = tokio::fs::read(bundle_path).await?;

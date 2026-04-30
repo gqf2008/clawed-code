@@ -206,7 +206,7 @@ pub fn section_environment(cwd: &Path, model_id: &str) -> String {
 /// Dynamic: tool-specific guidance based on which tools are enabled.
 pub fn section_tool_guidance(enabled_tools: &[String]) -> String {
     let mut guidance = String::from("\n## Tool-Specific Guidance\n");
-    let has = |name: &str| enabled_tools.iter().any(|t| t.eq_ignore_ascii_case(name));
+    let has = |name: &str| clawed_core::tool::tool_in_list(name, enabled_tools);
 
     if has("DispatchAgent") {
         guidance.push_str(

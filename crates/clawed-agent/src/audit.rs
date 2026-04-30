@@ -77,14 +77,7 @@ struct AuditLog {
 }
 
 fn home_dir() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        std::env::var_os("USERPROFILE").map(PathBuf::from)
-    }
-    #[cfg(not(windows))]
-    {
-        std::env::var_os("HOME").map(PathBuf::from)
-    }
+    dirs::home_dir()
 }
 
 impl AuditLog {
