@@ -152,6 +152,36 @@ pub fn query_stream(
     )
 }
 
+/// Attempt to trim the system prompt before triggering expensive API compaction.
+///
+/// Returns `Some((trimmed_prompt, new_total_tokens))` if trimming saved tokens,
+/// or `None` if no trim was possible or beneficial.
+fn try_trim_system_prompt(
+    current_system_prompt: &str,
+    current_tokens: u64,
+    msg_tokens: u64,
+    context_window: u64,
+) -> Option<(String, u64)> {
+    use crate::system_prompt::{suggest_trim_level, trim_system_prompt, SectionTrimLevel};
+    let trim_level = suggest_trim_level(current_tokens, context_window);
+    if trim_level == SectionTrimLevel::Full {
+        return None;
+    }
+    let (trimmed, _) = trim_system_prompt(current_system_prompt, trim_level);
+    let new_sys_tokens = clawed_core::token_estimation::estimate_system_tokens(&trimmed);
+    let new_tokens = msg_tokens + new_sys_tokens;
+    if new_tokens >= current_tokens {
+        return None;
+    }
+    tracing::info!(
+        before = current_tokens,
+        after = new_tokens,
+        level = ?trim_level,
+        "Section trim: removed guidance sections"
+    );
+    Some((trimmed, new_tokens))
+}
+
 /// Like [`query_stream`] but accepts an optional channel for mid-stream message
 /// injection. Messages received on `inject_rx` are appended as user-role
 /// messages at the start of each turn, enabling SendMessage follow-ups.
@@ -168,11 +198,15 @@ pub fn query_stream_with_injection(
     inject_rx: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
 ) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>> {
     let stream = async_stream::stream! {
+        let mut current_system_prompt = config.system_prompt.clone();
         let mut messages = initial_messages;
         let mut tool_context = tool_context;
         let mut turn_count: u32 = 0;
         let mut stop_hook_retries: u32 = 0;
         const MAX_STOP_HOOK_RETRIES: u32 = 3;
+        const MAX_STREAM_TIMEOUT_RETRIES: u32 = 3;
+        const COMPACT_HIGH_WATER_RATIO: f64 = 0.90;
+        const COMPACT_CLEAR_RETAIN_COUNT: usize = 3;
         let mut inject_rx = inject_rx;
 
         // Channel for streaming tool output lines during execution.
@@ -230,16 +264,10 @@ pub fn query_stream_with_injection(
             }
 
             let api_messages = messages_to_api(&messages, config.break_cache);
-            // Inject plan mode context into system prompt when active
             let effective_system = if tool_context.permission_mode == clawed_core::permissions::PermissionMode::Plan {
-                format!(
-                    "{}\n\n<plan_mode>\nYou are currently in PLAN MODE. Only read-only tools are available.\n\
-                     Focus on exploration and planning. When your plan is ready, call ExitPlanMode with the plan.\n\
-                     Do NOT attempt to use file write, edit, or shell tools — they will be rejected.\n</plan_mode>",
-                    config.system_prompt
-                )
+                format!("{}\n\n{}", current_system_prompt, crate::system_prompt::sections::section_plan_mode_constraints())
             } else {
-                config.system_prompt.clone()
+                current_system_prompt.clone()
             };
             let system = build_system_blocks(&effective_system, config.break_cache);
 
@@ -409,15 +437,11 @@ pub fn query_stream_with_injection(
                             }
                         }
                         StreamEvent::MessageDelta { delta, usage: delta_usage } => {
-                            stop_reason = delta.stop_reason.as_deref().map(|r| match r {
-                                "end_turn" => StopReason::EndTurn,
-                                "tool_use" => StopReason::ToolUse,
-                                "max_tokens" => StopReason::MaxTokens,
-                                "stop_sequence" => StopReason::StopSequence,
-                                other => {
-                                    warn!("Unknown stop_reason from API: {}", other);
+                            stop_reason = delta.stop_reason.as_deref().map(|r| {
+                                r.parse::<StopReason>().unwrap_or_else(|_| {
+                                    warn!("Unknown stop_reason from API: {}", r);
                                     StopReason::EndTurn
-                                }
+                                })
                             });
                             // MessageDelta carries the final output_tokens count for the turn.
                             // MessageStart only has input_tokens (output_tokens is 0 there).
@@ -473,11 +497,11 @@ pub fn query_stream_with_injection(
                         if is_timeout {
                             consecutive_errors += 1;
                             state.write().await.record_error("stream_timeout");
-                            if consecutive_errors <= 3 {
+                            if consecutive_errors <= MAX_STREAM_TIMEOUT_RETRIES {
                                 let wait_ms = with_jitter(retry_delay_ms.min(8_000), consecutive_errors);
                                 yield AgentEvent::TextDelta(format!(
-                                    "\n\x1b[33m[Stream timeout — retrying ({}/3) in {}ms]\x1b[0m\n",
-                                    consecutive_errors, wait_ms,
+                                    "\n\x1b[33m[Stream timeout — retrying ({}/{}) in {}ms]\x1b[0m\n",
+                                    consecutive_errors, MAX_STREAM_TIMEOUT_RETRIES, wait_ms,
                                 ));
                                 tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
                                 retry_delay_ms = (retry_delay_ms * 2).min(32_000);
@@ -726,12 +750,38 @@ pub fn query_stream_with_injection(
                     // boundary and compact before next API call to avoid hitting
                     // context limits mid-conversation.
                     if let Some(ref ac_state) = config.auto_compact_state {
-                        let current_tokens = clawed_core::token_estimation::token_count_with_estimation(&messages);
-                        let should_compact = {
+                        let msg_tokens = clawed_core::token_estimation::token_count_with_estimation(&messages);
+                        let sys_tokens = clawed_core::token_estimation::estimate_system_tokens(&current_system_prompt);
+                        let current_tokens = msg_tokens + sys_tokens;
+
+                        let needs_compact = {
                             let ac = ac_state.lock().await;
                             ac.should_auto_compact(current_tokens, config.context_window)
                         };
-                        if should_compact {
+
+                        // Try section trimming before expensive API compaction.
+                        let needs_compact = if needs_compact {
+                            if let Some((trimmed, new_tokens)) = try_trim_system_prompt(
+                                &current_system_prompt,
+                                current_tokens,
+                                msg_tokens,
+                                config.context_window,
+                            ) {
+                                current_system_prompt = trimmed;
+                                let ac = ac_state.lock().await;
+                                if !ac.should_auto_compact(new_tokens, config.context_window) {
+                                    tracing::info!("Section trim avoided API compaction");
+                                    continue;
+                                }
+                                true
+                            } else {
+                                true
+                            }
+                        } else {
+                            false
+                        };
+
+                        if needs_compact {
                             yield AgentEvent::CompactStart;
 
                             // ── Pre-clean: trim history before sending to Claude ──────────
@@ -742,9 +792,9 @@ pub fn query_stream_with_injection(
                                 crate::compact::MAX_TOOL_RESULT_CHARS / 2,
                             );
                             // If context is very full (>90%), also clear stale results.
-                            let high_water = (config.context_window as f64 * 0.90) as u64;
+                            let high_water = (config.context_window as f64 * COMPACT_HIGH_WATER_RATIO) as u64;
                             let pre_cleared = if current_tokens >= high_water {
-                                crate::compact::clear_old_tool_results(&mut messages, 3)
+                                crate::compact::clear_old_tool_results(&mut messages, COMPACT_CLEAR_RETAIN_COUNT)
                             } else {
                                 0
                             };
@@ -754,15 +804,6 @@ pub fn query_stream_with_injection(
                                     pre_trunc, pre_cleared
                                 );
                             }
-
-                            // Re-estimate after pre-clean so compact_conversation
-                            // receives an accurate picture of the trimmed history.
-                            #[allow(unused_variables)]
-                            let current_tokens = if pre_trunc + pre_cleared > 0 {
-                                clawed_core::token_estimation::token_count_with_estimation(&messages)
-                            } else {
-                                current_tokens
-                            };
 
                             let model = { state.read().await.model.clone() };
                             match compact_conversation(&client, &messages, &model, None).await {
@@ -809,7 +850,7 @@ pub fn query_stream_with_injection(
                                     let emg_snipped = crate::compact::snip_old_messages(&mut messages, 8);
                                     let emg_trunc = crate::compact::truncate_large_tool_results(
                                         &mut messages,
-                                        crate::compact::MAX_TOOL_RESULT_CHARS / 4,
+                                        crate::compact::MAX_TOOL_RESULT_CHARS / 4, // half the normal limit — emergency
                                     );
                                     {
                                         let mut s = state.write().await;

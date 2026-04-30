@@ -47,9 +47,71 @@ impl SystemPrompt {
     }
 }
 
+/// Trim a pre-built system prompt by removing known section text.
+///
+/// Returns the trimmed system prompt and the estimated tokens saved.
+pub fn trim_system_prompt(system_prompt: &str, level: SectionTrimLevel) -> (String, u64) {
+    let sections_to_drop: &[&str] = match level {
+        SectionTrimLevel::Full => return (system_prompt.to_string(), 0),
+        SectionTrimLevel::Standard => &[
+            section_testing_guidance(),
+            section_debugging_guidance(),
+        ],
+        SectionTrimLevel::Minimal => &[
+            section_testing_guidance(),
+            section_debugging_guidance(),
+            section_file_editing(),
+            section_git_guidance(),
+            section_proactive_mode(),
+            section_coordinator(),
+        ],
+    };
+
+    let mut result = system_prompt.to_string();
+    for s in sections_to_drop {
+        result = result.replace(s, "");
+    }
+
+    result = clawed_core::text_util::collapse_blank_lines(&result);
+    let saved = clawed_core::token_estimation::estimate_text_tokens(system_prompt)
+        .saturating_sub(clawed_core::token_estimation::estimate_text_tokens(&result));
+    (result, saved)
+}
+
+/// Suggest a trim level based on current token usage vs context window.
+///
+/// Thresholds are aligned with [`crate::compact::calculate_token_warning`]:
+/// - `Critical` (≥75%) → `Standard` (drop testing + debugging)
+/// - `Imminent` (≥90%) → `Minimal` (drop all guidance)
+/// - `Warning` or below → `Full` (no trimming)
+pub fn suggest_trim_level(current_tokens: u64, context_window: u64) -> SectionTrimLevel {
+    use crate::compact::{calculate_token_warning, TokenWarningState};
+    match calculate_token_warning(current_tokens, context_window) {
+        TokenWarningState::Imminent => SectionTrimLevel::Minimal,
+        TokenWarningState::Critical => SectionTrimLevel::Standard,
+        TokenWarningState::Warning | TokenWarningState::Normal => SectionTrimLevel::Full,
+    }
+}
+
+/// How aggressively to trim non-essential sections from the system prompt.
+/// Used when token budget is tight to avoid expensive API compaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SectionTrimLevel {
+    /// All sections included (default).
+    #[default]
+    Full,
+    /// Omit lower-priority guidance sections (testing, debugging).
+    Standard,
+    /// Only core sections: identity, guidelines, tools, environment.
+    /// Omits file editing, git, testing, debugging, proactive, coordinator.
+    Minimal,
+}
+
 /// Optional dynamic sections for the system prompt.
 #[derive(Debug)]
 pub struct DynamicSections<'a> {
+    /// How aggressively to trim non-essential sections.
+    pub trim_level: SectionTrimLevel,
     /// Language preference (e.g. "中文", "English")
     pub language: Option<&'a str>,
     /// Output style name + prompt
@@ -79,6 +141,7 @@ pub struct DynamicSections<'a> {
 impl<'a> Default for DynamicSections<'a> {
     fn default() -> Self {
         Self {
+            trim_level: SectionTrimLevel::Full,
             language: None,
             output_style: None,
             mcp_instructions: Vec::new(),
@@ -133,6 +196,7 @@ pub fn build_system_prompt_ext(
 ) -> SystemPrompt {
     let parts: Vec<String> = vec![
         DEFAULT_PREFIX.to_string(),
+        section_security_monitor(),
         section_system_guidelines().to_string(),
         section_doing_tasks().to_string(),
         section_actions().to_string(),
@@ -201,27 +265,27 @@ pub fn build_system_prompt_ext(
         dynamic_parts.push(tb);
     }
 
-    // Proactive/autonomous mode
-    if dynamic.proactive_mode {
+    // Proactive/autonomous mode — dropped at Minimal trim level
+    if dynamic.proactive_mode && dynamic.trim_level != SectionTrimLevel::Minimal {
         dynamic_parts.push(section_proactive_mode().to_string());
     }
 
-    // Coordinator mode (worker orchestration)
-    if dynamic.coordinator_mode {
+    // Coordinator mode (worker orchestration) — dropped at Minimal trim level
+    if dynamic.coordinator_mode && dynamic.trim_level != SectionTrimLevel::Minimal {
         dynamic_parts.push(section_coordinator().to_string());
     }
 
-    // Best-practice guidance sections
-    if dynamic.include_editing_guidance {
+    // Editing + git are kept at Standard; all four are dropped at Minimal.
+    if dynamic.trim_level != SectionTrimLevel::Minimal && dynamic.include_editing_guidance {
         dynamic_parts.push(section_file_editing().to_string());
     }
-    if dynamic.include_git_guidance {
+    if dynamic.trim_level != SectionTrimLevel::Minimal && dynamic.include_git_guidance {
         dynamic_parts.push(section_git_guidance().to_string());
     }
-    if dynamic.include_testing_guidance {
+    if dynamic.trim_level == SectionTrimLevel::Full && dynamic.include_testing_guidance {
         dynamic_parts.push(section_testing_guidance().to_string());
     }
-    if dynamic.include_debugging_guidance {
+    if dynamic.trim_level == SectionTrimLevel::Full && dynamic.include_debugging_guidance {
         dynamic_parts.push(section_debugging_guidance().to_string());
     }
 
@@ -388,6 +452,8 @@ mod tests {
         assert!(prompt.text.contains("# Using your tools"));
         assert!(prompt.text.contains("# Tone and style"));
         assert!(prompt.text.contains("# Output efficiency"));
+        assert!(prompt.text.contains("# Security Monitor"));
+        assert!(prompt.text.contains("prompt injection"));
         assert!(prompt.text.contains("Environment"));
         assert!(prompt.text.contains(SUMMARIZE_TOOL_RESULTS));
         assert!(prompt.dynamic_boundary_offset > 0);
@@ -549,6 +615,68 @@ mod tests {
     }
 
     #[test]
+    fn test_trim_level_full_includes_all_guidance() {
+        let cwd = PathBuf::from(".");
+        let dynamic = DynamicSections {
+            trim_level: SectionTrimLevel::Full,
+            ..Default::default()
+        };
+        let prompt = build_system_prompt_ext(&cwd, "claude-sonnet-4-20250514", &[], "", "", &dynamic);
+        assert!(prompt.text.contains("File editing best practices"));
+        assert!(prompt.text.contains("Git operations"));
+        assert!(prompt.text.contains("Testing"));
+        assert!(prompt.text.contains("Debugging"));
+    }
+
+    #[test]
+    fn test_trim_level_standard_drops_testing_debugging() {
+        let cwd = PathBuf::from(".");
+        let dynamic = DynamicSections {
+            trim_level: SectionTrimLevel::Standard,
+            ..Default::default()
+        };
+        let prompt = build_system_prompt_ext(&cwd, "claude-sonnet-4-20250514", &[], "", "", &dynamic);
+        assert!(prompt.text.contains("File editing best practices"));
+        assert!(prompt.text.contains("Git operations"));
+        assert!(!prompt.text.contains("\n# Testing\n"));
+        assert!(!prompt.text.contains("\n# Debugging\n"));
+    }
+
+    #[test]
+    fn test_trim_level_minimal_drops_all_guidance() {
+        let cwd = PathBuf::from(".");
+        let dynamic = DynamicSections {
+            trim_level: SectionTrimLevel::Minimal,
+            proactive_mode: true,
+            coordinator_mode: true,
+            ..Default::default()
+        };
+        let prompt = build_system_prompt_ext(&cwd, "claude-sonnet-4-20250514", &[], "", "", &dynamic);
+        assert!(!prompt.text.contains("File editing best practices"));
+        assert!(!prompt.text.contains("Git operations"));
+        assert!(!prompt.text.contains("\n# Testing\n"));
+        assert!(!prompt.text.contains("\n# Debugging\n"));
+        assert!(!prompt.text.contains("Autonomous Work"));
+        assert!(!prompt.text.contains("Coordinator Mode"));
+    }
+
+    #[test]
+    fn test_plan_mode_section_content() {
+        // Plan mode is injected at query time (not build time), tested in sections.rs
+        let s = section_plan_mode_constraints();
+        assert!(s.contains("Plan Mode"));
+        assert!(s.contains("read-only tools"));
+        assert!(s.contains("Forbidden operations"));
+    }
+
+    #[test]
+    fn test_plan_mode_not_in_build() {
+        let cwd = PathBuf::from(".");
+        let prompt = build_system_prompt_ext(&cwd, "claude-sonnet-4-20250514", &[], "", "", &DynamicSections::default());
+        assert!(!prompt.text.contains("Plan Mode"));
+    }
+
+    #[test]
     fn test_guidance_sections_included_by_default() {
         let cwd = PathBuf::from(".");
         let prompt = build_system_prompt(&cwd, "claude-sonnet-4-20250514", &[], "", "");
@@ -572,5 +700,18 @@ mod tests {
         assert!(prompt.text.contains("Coordinator Mode"));
         assert!(prompt.text.contains("task-notification"));
         assert!(prompt.text.contains("SendMessage"));
+    }
+
+    #[test]
+    fn suggest_trim_level_aligned_with_token_warning() {
+        // Normal / Warning → Full
+        assert_eq!(suggest_trim_level(40_000, 100_000), SectionTrimLevel::Full);
+        assert_eq!(suggest_trim_level(55_000, 100_000), SectionTrimLevel::Full);
+        // Critical (≥75%) → Standard
+        assert_eq!(suggest_trim_level(80_000, 100_000), SectionTrimLevel::Standard);
+        // Imminent (≥90%) → Minimal
+        assert_eq!(suggest_trim_level(95_000, 100_000), SectionTrimLevel::Minimal);
+        // Zero context window → Full (safe fallback)
+        assert_eq!(suggest_trim_level(1_000_000, 0), SectionTrimLevel::Full);
     }
 }

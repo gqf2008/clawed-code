@@ -91,6 +91,7 @@ impl SwarmNetwork {
         model: Option<String>,
         prompt: Option<String>,
         cwd: Option<String>,
+        initial_context: Option<String>,
     ) -> anyhow::Result<SpawnResult> {
         let teams = self.teams.read().await;
         let coord = teams
@@ -103,6 +104,7 @@ impl SwarmNetwork {
                 model,
                 prompt,
                 cwd,
+                initial_context,
             })
             .await
             .map_err(|e| anyhow::anyhow!("Spawn failed: {}", e))?;
@@ -262,13 +264,13 @@ mod tests {
 
         // Spawn agents
         let spawn = net
-            .spawn_agent("dev", "coder", None, Some("Write code".into()), None)
+            .spawn_agent("dev", "coder", None, Some("Write code".into()), None, None)
             .await
             .unwrap();
         assert!(spawn.success);
 
         let spawn2 = net
-            .spawn_agent("dev", "reviewer", None, Some("Review code".into()), None)
+            .spawn_agent("dev", "reviewer", None, Some("Review code".into()), None, None)
             .await
             .unwrap();
         assert!(spawn2.success);
@@ -316,7 +318,7 @@ mod tests {
         let net = SwarmNetwork::new("claude-haiku".into(), "/tmp".into());
 
         assert!(net
-            .spawn_agent("nope", "agent", None, None, None)
+            .spawn_agent("nope", "agent", None, None, None, None)
             .await
             .is_err());
         assert!(net.send_message("nope", "a@b", "hi", None).await.is_err());
@@ -332,11 +334,11 @@ mod tests {
 
         // Spawn agents in separate teams
         let fe = net
-            .spawn_agent("frontend", "react-dev", None, None, None)
+            .spawn_agent("frontend", "react-dev", None, None, None, None)
             .await
             .unwrap();
         let be = net
-            .spawn_agent("backend", "api-dev", None, None, None)
+            .spawn_agent("backend", "api-dev", None, None, None, None)
             .await
             .unwrap();
         assert!(fe.success);
@@ -385,7 +387,7 @@ mod tests {
     async fn agent_status_not_found() {
         let net = SwarmNetwork::new("haiku".into(), "/tmp".into());
         net.create_team("myteam").await.unwrap();
-        net.spawn_agent("myteam", "agent1", None, None, None)
+        net.spawn_agent("myteam", "agent1", None, None, None, None)
             .await
             .unwrap();
 
@@ -405,7 +407,7 @@ mod tests {
             .map(|i| {
                 let net = net.clone();
                 tokio::spawn(async move {
-                    net.spawn_agent("concurrent", &format!("agent{i}"), None, None, None)
+                    net.spawn_agent("concurrent", &format!("agent{i}"), None, None, None, None)
                         .await
                 })
             })

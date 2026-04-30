@@ -116,6 +116,14 @@ pub fn estimate_system_tokens(system: &str) -> u64 {
     estimate_text_tokens(system) + MESSAGE_OVERHEAD
 }
 
+/// Estimate total tokens for a system prompt plus a list of messages.
+///
+/// This is the sum of [`estimate_system_tokens`] and [`estimate_messages_tokens`],
+/// used to check if a conversation fits within a context window.
+pub fn estimate_total_tokens(system: &str, messages: &[Message]) -> u64 {
+    estimate_system_tokens(system) + estimate_messages_tokens(messages)
+}
+
 /// Check if messages likely fit within a context window (with margin).
 ///
 /// Returns `(fits, estimated_tokens)` where `fits` is true if the estimated
@@ -126,9 +134,7 @@ pub fn fits_in_context(
     max_context: u64,
     safety_margin: f64,
 ) -> (bool, u64) {
-    let system_tokens = estimate_system_tokens(system);
-    let msg_tokens = estimate_messages_tokens(messages);
-    let total = system_tokens + msg_tokens;
+    let total = estimate_total_tokens(system, messages);
     let limit = (max_context as f64 * safety_margin) as u64;
     (total < limit, total)
 }

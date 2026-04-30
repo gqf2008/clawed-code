@@ -75,12 +75,19 @@ impl AgentActor {
         system_prompt: Option<String>,
         cwd: String,
         notifier: Arc<SwarmNotifier>,
+        initial_context: Option<String>,
     ) -> Self {
         let agent_id = format_agent_id(name, team_name);
         let prompt = system_prompt.unwrap_or_else(|| {
             format!("You are a specialized AI agent named '{agent_id}' in the '{team_name}' swarm team. Work collaboratively with other agents to complete tasks.")
         });
-        let session = crate::session::SwarmSession::new(model.clone(), prompt, cwd.clone(), 20);
+        let session = crate::session::SwarmSession::new_with_context(
+            model.clone(),
+            prompt,
+            cwd.clone(),
+            20,
+            initial_context,
+        );
         Self {
             agent_id,
             team_name: team_name.to_string(),
@@ -224,6 +231,7 @@ impl Message<SpawnAgent> for SwarmCoordinator {
             msg.prompt,
             cwd,
             self.notifier.clone(),
+            msg.initial_context,
         );
         let actor_ref = AgentActor::spawn(actor);
         self.agents.insert(agent_id.clone(), actor_ref);
@@ -403,6 +411,7 @@ mod tests {
             None,
             "/tmp".into(),
             test_notifier(),
+            None,
         );
         let actor_ref = AgentActor::spawn(actor);
 
@@ -437,6 +446,7 @@ mod tests {
                 model: None,
                 prompt: Some("Work hard".into()),
                 cwd: None,
+                initial_context: None,
             })
             .await
             .unwrap();
@@ -449,6 +459,7 @@ mod tests {
                 model: None,
                 prompt: None,
                 cwd: None,
+                initial_context: None,
             })
             .await
             .unwrap();
@@ -545,6 +556,7 @@ mod tests {
                     model: None,
                     prompt: None,
                     cwd: None,
+                    initial_context: None,
                 })
                 .await
                 .unwrap();
@@ -570,6 +582,7 @@ mod tests {
             None,
             "/tmp".into(),
             test_notifier(),
+            None,
         );
         let actor_ref = AgentActor::spawn(actor);
 
@@ -607,6 +620,7 @@ mod tests {
                 model: Some("claude-opus".into()),
                 prompt: None,
                 cwd: None,
+                initial_context: None,
             })
             .await
             .unwrap();
@@ -640,6 +654,7 @@ mod tests {
                 model: None,
                 prompt: None,
                 cwd: None,
+                initial_context: None,
             })
             .await
             .unwrap();

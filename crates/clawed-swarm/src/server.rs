@@ -238,6 +238,7 @@ impl SwarmMcpServer {
         let model = input["model"].as_str().map(String::from);
         let prompt = input["prompt"].as_str().map(String::from);
         let cwd = input["cwd"].as_str().map(String::from);
+        let initial_context = input["initial_context"].as_str().map(String::from);
 
         if team_name.is_empty() || agent_name.is_empty() {
             return err_result("Missing required fields: team_name, agent_name");
@@ -245,7 +246,7 @@ impl SwarmMcpServer {
 
         match self
             .network
-            .spawn_agent(team_name, agent_name, model, prompt, cwd)
+            .spawn_agent(team_name, agent_name, model, prompt, cwd, initial_context)
             .await
         {
             Ok(result) if result.success => ok_result(format!(

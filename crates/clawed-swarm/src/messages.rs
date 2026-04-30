@@ -74,6 +74,10 @@ pub struct SpawnAgent {
     pub model: Option<String>,
     pub prompt: Option<String>,
     pub cwd: Option<String>,
+    /// Optional inherited context from a parent agent.
+    /// When provided, the new agent's session is seeded with this context
+    /// so it does not start from a blank slate.
+    pub initial_context: Option<String>,
 }
 
 /// Ask the coordinator to terminate an agent.

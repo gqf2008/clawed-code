@@ -12,7 +12,7 @@
 //!
 //! Each file **may** start with a YAML frontmatter block (between `---` markers)
 //! containing:
-//!   - `type:` one of `user | feedback | project | reference`
+//!   - `type:` one of `user | feedback | project | reference | team | agent`
 //!   - `description:` short one-liner shown in the manifest
 //!
 //! ## Injection strategy
@@ -52,6 +52,10 @@ pub enum MemoryType {
     Feedback,
     Project,
     Reference,
+    /// Cross-agent shared memory for swarm teams.
+    Team,
+    /// Per-agent persistent memory within a swarm.
+    Agent,
 }
 
 impl MemoryType {
@@ -62,6 +66,8 @@ impl MemoryType {
             "feedback" => Some(Self::Feedback),
             "project" => Some(Self::Project),
             "reference" => Some(Self::Reference),
+            "team" => Some(Self::Team),
+            "agent" => Some(Self::Agent),
             _ => None,
         }
     }
@@ -72,6 +78,8 @@ impl MemoryType {
             Self::Feedback => "feedback",
             Self::Project => "project",
             Self::Reference => "reference",
+            Self::Team => "team",
+            Self::Agent => "agent",
         }
     }
 }
@@ -558,6 +566,14 @@ mod tests {
     }
 
     #[test]
+    fn memory_type_from_str_team_and_agent() {
+        assert_eq!(MemoryType::parse("team"), Some(MemoryType::Team));
+        assert_eq!(MemoryType::parse("agent"), Some(MemoryType::Agent));
+        assert_eq!(MemoryType::parse("TEAM"), Some(MemoryType::Team));
+        assert_eq!(MemoryType::parse("AGENT"), Some(MemoryType::Agent));
+    }
+
+    #[test]
     fn memory_type_from_str_invalid() {
         assert_eq!(MemoryType::parse("unknown"), None);
         assert_eq!(MemoryType::parse(""), None);
@@ -581,6 +597,8 @@ mod tests {
             MemoryType::Feedback,
             MemoryType::Project,
             MemoryType::Reference,
+            MemoryType::Team,
+            MemoryType::Agent,
         ] {
             let s = variant.as_str();
             let back = MemoryType::parse(s).expect("roundtrip should succeed");

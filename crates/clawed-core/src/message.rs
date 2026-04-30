@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 /// Why the model stopped generating: end of turn, tool use, token limit, or stop sequence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -7,6 +8,20 @@ pub enum StopReason {
     ToolUse,
     MaxTokens,
     StopSequence,
+}
+
+impl FromStr for StopReason {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "end_turn" => Ok(Self::EndTurn),
+            "tool_use" => Ok(Self::ToolUse),
+            "max_tokens" => Ok(Self::MaxTokens),
+            "stop_sequence" => Ok(Self::StopSequence),
+            _ => Err(()),
+        }
+    }
 }
 
 /// Token usage for a single API turn (input, output, and cache token counts).

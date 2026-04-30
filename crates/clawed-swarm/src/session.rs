@@ -31,6 +31,18 @@ use clawed_core::permissions::PermissionMode;
 use clawed_core::tool::{AbortSignal, ToolContext};
 use clawed_tools::ToolRegistry;
 
+/// Prefix marker for context inherited from a parent agent.
+const INHERITED_CONTEXT_PREFIX: &str = "[Inherited context from parent agent]";
+
+/// Default max_tokens for swarm agent responses.
+/// Lower than the main agent's 16384 to keep swarm agent outputs concise.
+const SWARM_MAX_TOKENS: u32 = 4096;
+
+/// Maximum number of messages retained in history before oldest are evicted.
+/// Swarm agents are short-lived; this prevents unbounded growth across
+/// repeated `submit()` calls without needing a full compaction system.
+const MAX_HISTORY_MESSAGES: usize = 200;
+
 // ── SwarmSession ─────────────────────────────────────────────────────────
 
 /// A stateful query session for a single swarm agent.
@@ -53,6 +65,20 @@ impl SwarmSession {
     ///
     /// Reads `ANTHROPIC_API_KEY` from the environment. Returns `None` if not set.
     pub fn new(model: String, system_prompt: String, cwd: String, max_turns: u32) -> Option<Self> {
+        Self::new_with_context(model, system_prompt, cwd, max_turns, None)
+    }
+
+    /// Create a new session with optional parent context injected into history.
+    ///
+    /// `parent_context` is prepended as a system-style message so the agent
+    /// inherits key findings from its parent without sharing full conversation history.
+    pub fn new_with_context(
+        model: String,
+        system_prompt: String,
+        cwd: String,
+        max_turns: u32,
+        parent_context: Option<String>,
+    ) -> Option<Self> {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .ok()
             .filter(|k| !k.is_empty())?;
@@ -66,10 +92,25 @@ impl SwarmSession {
         }
 
         let registry = ToolRegistry::with_defaults();
+        let mut history = Vec::new();
+
+        // Inject parent context as an initial system-like user message
+        if let Some(ctx) = parent_context {
+            let ctx = ctx.trim();
+            if !ctx.is_empty() {
+                history.push(Message::User(UserMessage {
+                    uuid: Uuid::new_v4().to_string(),
+                    content: vec![ContentBlock::Text {
+                        text: format!("{INHERITED_CONTEXT_PREFIX}\n\n{}", ctx),
+                    }],
+                }));
+            }
+        }
+
         Some(Self {
             client: Arc::new(client),
             registry: Arc::new(registry),
-            history: Vec::new(),
+            history,
             model,
             system_prompt,
             cwd,
@@ -87,6 +128,7 @@ impl SwarmSession {
                 text: prompt.to_owned(),
             }],
         }));
+        self.trim_history();
 
         // Build tool definitions from registry
         let tools: Vec<ToolDefinition> = self
@@ -115,7 +157,7 @@ impl SwarmSession {
 
             let request = MessagesRequest {
                 model: self.model.clone(),
-                max_tokens: 4096,
+                max_tokens: SWARM_MAX_TOKENS,
                 messages: api_messages,
                 system: Some(vec![SystemBlock {
                     block_type: "text".to_string(),
@@ -200,10 +242,11 @@ impl SwarmSession {
                     input: input.clone(),
                 });
             }
+            let parsed_stop = stop_reason.as_deref().and_then(|s| s.parse().ok());
             self.history.push(Message::Assistant(AssistantMessage {
                 uuid: Uuid::new_v4().to_string(),
                 content: assistant_content,
-                stop_reason: None,
+                stop_reason: parsed_stop,
                 usage: None,
             }));
 
@@ -263,6 +306,28 @@ impl SwarmSession {
     /// Return the number of messages in this session's history.
     pub fn turn_count(&self) -> usize {
         self.history.len()
+    }
+
+    /// Evict oldest messages when history exceeds [`MAX_HISTORY_MESSAGES`].
+    ///
+    /// Preserves the first message if it carries inherited parent context,
+    /// since that provides essential background for the agent.
+    fn trim_history(&mut self) {
+        if self.history.len() <= MAX_HISTORY_MESSAGES {
+            return;
+        }
+        let excess = self.history.len() - MAX_HISTORY_MESSAGES;
+        let first_is_inherited = self.history.first().is_some_and(|m| {
+            matches!(m, Message::User(u) if u.content.iter().any(|b| {
+                matches!(b, ContentBlock::Text { text } if text.starts_with(INHERITED_CONTEXT_PREFIX))
+            }))
+        });
+        // If the first message is inherited context, keep it and trim after it.
+        let drain_start = if first_is_inherited { 1 } else { 0 };
+        let drain_end = drain_start + excess.min(self.history.len() - drain_start);
+        if drain_start < drain_end {
+            self.history.drain(drain_start..drain_end);
+        }
     }
 }
 
@@ -329,5 +394,76 @@ fn core_block_to_api(block: &ContentBlock) -> ApiContentBlock {
             text: format!("<thinking>{thinking}</thinking>"),
             cache_control: None,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn user_msg(text: &str) -> Message {
+        Message::User(UserMessage {
+            uuid: Uuid::new_v4().to_string(),
+            content: vec![ContentBlock::Text {
+                text: text.to_owned(),
+            }],
+        })
+    }
+
+    fn make_session(parent_context: Option<String>) -> SwarmSession {
+        std::env::set_var("ANTHROPIC_API_KEY", "test-key");
+        SwarmSession::new_with_context(
+            "test-model".into(),
+            "system".into(),
+            "/tmp".into(),
+            5,
+            parent_context,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn trim_history_under_limit_is_noop() {
+        let mut session = make_session(None);
+        for i in 0..50 {
+            session.history.push(user_msg(&format!("msg {i}")));
+        }
+        let len_before = session.history.len();
+        session.trim_history();
+        assert_eq!(session.history.len(), len_before);
+    }
+
+    #[test]
+    fn trim_history_evicts_oldest() {
+        let mut session = make_session(None);
+        for i in 0..250 {
+            session.history.push(user_msg(&format!("msg {i}")));
+        }
+        assert!(session.history.len() > MAX_HISTORY_MESSAGES);
+        session.trim_history();
+        assert_eq!(session.history.len(), MAX_HISTORY_MESSAGES);
+        // Newest messages survive
+        let last_text = session.history.last().and_then(|m| match m {
+            Message::User(u) => u.content.first().and_then(|b| match b {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            }),
+            _ => None,
+        });
+        assert_eq!(last_text, Some("msg 249"));
+    }
+
+    #[test]
+    fn trim_history_preserves_inherited_context() {
+        let mut session = make_session(Some("parent context here".into()));
+        // First message is inherited context
+        assert!(matches!(&session.history[0], Message::User(u) if matches!(&u.content[0], ContentBlock::Text { text } if text.contains(INHERITED_CONTEXT_PREFIX))));
+        for i in 0..250 {
+            session.history.push(user_msg(&format!("msg {i}")));
+        }
+        session.trim_history();
+        // Inherited context message still at index 0
+        assert!(matches!(&session.history[0], Message::User(u) if matches!(&u.content[0], ContentBlock::Text { text } if text.contains(INHERITED_CONTEXT_PREFIX))));
+        assert_eq!(session.history.len(), MAX_HISTORY_MESSAGES);
     }
 }
