@@ -1723,6 +1723,7 @@ impl App {
             }
             // Commands that submit a prompt to the agent or need engine access
             crate::commands::CommandResult::Review { .. }
+            | crate::commands::CommandResult::Simplify { .. }
             | crate::commands::CommandResult::Bug { .. }
             | crate::commands::CommandResult::Pr { .. } => {
                 self.pending_command = Some(result);
@@ -3621,6 +3622,13 @@ async fn handle_async_command(
         CommandResult::Review { prompt } => {
             let cwd = std::env::current_dir().unwrap_or_default();
             match crate::repl_commands::prepare_review_submission(&prompt, &cwd) {
+                Ok(prepared) => submit_prepared_prompt(client, app, prepared),
+                Err(message) => app.push_message(MessageContent::System(message)),
+            }
+        }
+        CommandResult::Simplify { prompt } => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            match crate::repl_commands::prepare_simplify_submission(&prompt, &cwd) {
                 Ok(prepared) => submit_prepared_prompt(client, app, prepared),
                 Err(message) => app.push_message(MessageContent::System(message)),
             }

@@ -33,6 +33,9 @@ pub enum SlashCommand {
     Review {
         prompt: String,
     },
+    Simplify {
+        prompt: String,
+    },
     PrComments {
         pr_number: u64,
     },
@@ -185,10 +188,7 @@ impl SlashCommand {
             "memory" => Self::Memory { sub: args },
             "resume" => Self::Resume { query: args },
             "btw" => Self::Btw { text: args },
-            "simplify" => Self::RunSkill {
-                name: "simplify".to_string(),
-                prompt: args,
-            },
+            "simplify" => Self::Simplify { prompt: args },
             "diff" => Self::Diff,
             "status" => Self::Status,
             "permissions" | "perms" => Self::Permissions { mode: args },
@@ -335,6 +335,9 @@ impl SlashCommand {
             Self::Config => CommandResult::Config,
             Self::Undo => CommandResult::Undo,
             Self::Review { prompt } => CommandResult::Review {
+                prompt: prompt.clone(),
+            },
+            Self::Simplify { prompt } => CommandResult::Simplify {
                 prompt: prompt.clone(),
             },
             Self::PrComments { pr_number } => CommandResult::PrComments {
@@ -501,6 +504,9 @@ pub enum CommandResult {
     Config,
     Undo,
     Review {
+        prompt: String,
+    },
+    Simplify {
         prompt: String,
     },
     PrComments {
@@ -680,6 +686,7 @@ const HELP_TEXT_BASE: &str = "\
   /pr [prompt]       Create/review a pull request
   /bug [prompt]      Debug a problem with AI assistance
   /review [prompt]   AI code review on recent changes
+  /simplify [prompt] Simplify and refactor code
   /pr-comments <#>   Fetch and analyze PR review comments (alias: /prc)
   /branch [name]     Fork conversation into a new branch (alias: /fork)
   /init              Initialize CLAUDE.md for the project
@@ -720,7 +727,6 @@ const HELP_TEXT_BASE: &str = "\
 \x1b[1mSystem\x1b[0m
   /doctor            Check environment health
   /skills            List available skills
-  /simplify          Simplify code (skill)
   /agents            Manage agent definitions (list|status|info|create|delete)
   /add-dir <path>    Add context directory at runtime
   /files [pattern]   List files in current directory
@@ -1615,6 +1621,17 @@ mod tests {
         match cmd.execute(&no_skills(), &no_plugins()) {
             CommandResult::Review { prompt } => assert_eq!(prompt, "check perf"),
             _ => panic!("expected Review"),
+        }
+    }
+
+    #[test]
+    fn test_execute_simplify() {
+        let cmd = SlashCommand::Simplify {
+            prompt: "src/main.rs".into(),
+        };
+        match cmd.execute(&no_skills(), &no_plugins()) {
+            CommandResult::Simplify { prompt } => assert_eq!(prompt, "src/main.rs"),
+            _ => panic!("expected Simplify"),
         }
     }
 

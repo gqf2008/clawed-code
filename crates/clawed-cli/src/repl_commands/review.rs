@@ -119,7 +119,7 @@ fn format_file_stats(file_stats: &[(String, usize, usize)]) -> String {
 
 /// Parse a unified diff to extract per-file line statistics.
 /// Returns Vec of (filename, lines_added, lines_removed).
-fn parse_diff_file_stats(diff: &str) -> Vec<(String, usize, usize)> {
+pub(crate) fn parse_diff_file_stats(diff: &str) -> Vec<(String, usize, usize)> {
     let mut results: Vec<(String, usize, usize)> = Vec::new();
     let mut current_file: Option<String> = None;
     let mut added = 0usize;

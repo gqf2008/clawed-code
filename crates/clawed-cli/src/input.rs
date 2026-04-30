@@ -98,7 +98,7 @@ pub(crate) fn command_description(name: &str) -> &'static str {
         "/memory" => "Manage memory files",
         "/resume" => "Resume a saved session",
         "/btw" => "Add context without AI response",
-        "/simplify" => "Simplify code",
+        "/simplify" => "Simplify and refactor code",
         "/diff" => "Show git diff",
         "/status" => "Show session and git status",
         "/permissions" => "Show permission mode",

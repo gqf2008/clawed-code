@@ -397,6 +397,9 @@ pub async fn run(
                             CommandResult::Review { prompt } => {
                                 handle_review(&engine, &prompt, &cwd).await;
                             }
+                            CommandResult::Simplify { prompt } => {
+                                handle_simplify(&engine, &prompt, &cwd).await;
+                            }
                             CommandResult::PrComments { pr_number } => {
                                 handle_pr_comments(&engine, pr_number, &cwd).await;
                             }

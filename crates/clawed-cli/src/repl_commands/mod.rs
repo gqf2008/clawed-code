@@ -6,6 +6,7 @@
 //! - `config` — /config, /context, /login, /logout
 //! - `doctor` — /doctor diagnostics
 //! - `review` — /review (code review on git changes / PRs)
+//! - `simplify` — /simplify (code simplification and refactoring)
 //! - `prompt` — /init, /commit, /pr, /bug (AI-driven)
 //! - `skill` — skill runner
 use std::fmt::Write as _;
@@ -21,6 +22,7 @@ mod pr_comments;
 mod prompt;
 mod review;
 mod session;
+mod simplify;
 mod skill;
 mod theme;
 
@@ -46,6 +48,7 @@ pub(crate) use prompt::{
     prepare_pr_prompt, prepare_summary_prompt, CommitPushPrPlan, PreparedPrompt,
 };
 pub(crate) use review::{handle_review, prepare_review_submission};
+pub(crate) use simplify::{handle_simplify, prepare_simplify_submission};
 pub(crate) use session::{
     handle_export, handle_history, handle_history_str, handle_search, handle_search_str,
     handle_undo,
