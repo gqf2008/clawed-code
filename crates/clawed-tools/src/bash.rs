@@ -430,6 +430,10 @@ impl Tool for BashTool {
                 "run_in_background": {
                     "type": "boolean",
                     "description": "Set to true to run this command in the background. Only use when you don't need the result immediately and are OK being notified when it finishes."
+                },
+                "dangerouslyDisableSandbox": {
+                    "type": "boolean",
+                    "description": "Set this to true to dangerously override sandbox mode and run commands without sandboxing."
                 }
             },
             "required": ["command"]

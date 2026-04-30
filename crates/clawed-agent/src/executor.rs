@@ -22,6 +22,9 @@ pub struct ToolExecutor {
     permission_checker: Arc<PermissionChecker>,
     hooks: Arc<HookRegistry>,
     session_id: String,
+    /// Per-session directory for persisting large tool results.
+    /// Set to `~/.claude/sessions/{session_id}/` when session persistence is enabled.
+    session_dir: Option<std::path::PathBuf>,
     /// Pluggable permission prompter. Defaults to [`TerminalPrompter`] (REPL).
     /// Replaced with a bus-based prompter when running inside the ratatui TUI.
     prompter: std::sync::OnceLock<Arc<dyn PermissionPrompter>>,
@@ -37,6 +40,7 @@ impl ToolExecutor {
             permission_checker,
             hooks: Arc::new(HookRegistry::new()),
             session_id: String::new(),
+            session_dir: None,
             prompter: std::sync::OnceLock::new(),
             output_tx: std::sync::RwLock::new(None),
         }
@@ -52,6 +56,7 @@ impl ToolExecutor {
             permission_checker,
             hooks,
             session_id: String::new(),
+            session_dir: None,
             prompter: std::sync::OnceLock::new(),
             output_tx: std::sync::RwLock::new(None),
         }
@@ -65,9 +70,13 @@ impl ToolExecutor {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(tx));
     }
 
-    /// Set the session ID for audit logging.
+    /// Set the session ID for audit logging and tool result persistence.
     pub fn set_session_id(&mut self, id: impl Into<String>) {
         self.session_id = id.into();
+        // Derive session directory for tool result persistence
+        if let Some(home) = dirs::home_dir() {
+            self.session_dir = Some(home.join(".claude").join("sessions").join(&self.session_id));
+        }
     }
 
     /// Install an alternative permission prompter (e.g. bus-based for TUI mode).
@@ -334,12 +343,35 @@ impl ToolExecutor {
         match tool.call(input.clone(), &ctx).await {
             Ok(result) => {
                 audit.finish(true, None);
-                // Apply tool result size limiting to prevent context explosion
+                // Apply tool result size limiting:
+                // Large results are persisted to disk; the model gets a preview + file path.
+                // If persistence fails, fall back to in-memory truncation.
                 let limited_content = result
                     .content
                     .into_iter()
-                    .map(|c| {
+                    .enumerate()
+                    .map(|(idx, c)| {
                         if let ToolResultContent::Text { text } = c {
+                            if crate::tool_result_storage::should_persist(&text) {
+                                if let Some(ref dir) = self.session_dir {
+                                    // Use tool_use_id + content index as filename
+                                    let storage_id = if idx == 0 {
+                                        tool_use_id.to_string()
+                                    } else {
+                                        format!("{tool_use_id}_{idx}")
+                                    };
+                                    match crate::tool_result_storage::persist_tool_result(
+                                        &text, &storage_id, dir,
+                                    ) {
+                                        Ok(reference) => {
+                                            return ToolResultContent::Text { text: reference };
+                                        }
+                                        Err(_) => {
+                                            // Fall through to truncation
+                                        }
+                                    }
+                                }
+                            }
                             let limited = clawed_core::token_estimation::limit_tool_result(
                                 &text,
                                 clawed_core::token_estimation::DEFAULT_MAX_TOOL_RESULT_TOKENS,
