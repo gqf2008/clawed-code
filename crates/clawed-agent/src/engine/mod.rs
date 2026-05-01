@@ -11,7 +11,7 @@ mod session_ops;
 mod submit;
 pub use builder::QueryEngineBuilder;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use clawed_api::client::ApiClient;
@@ -76,7 +76,7 @@ pub struct QueryEngine {
     /// Shared via `Arc` so the query loop can reuse the same state across submits.
     auto_compact: Arc<tokio::sync::Mutex<AutoCompactState>>,
     /// Model context window size (for auto-compact threshold calculation).
-    context_window: u64,
+    context_window: AtomicU64,
     /// If true, the next API request should skip prompt caching.
     break_cache_next: AtomicBool,
     /// Runtime-mutable thinking config (toggled via /think command).
@@ -165,7 +165,7 @@ impl QueryEngine {
             temperature: self.config.temperature,
             thinking: self.thinking_config(),
             token_budget: self.config.token_budget,
-            context_window: self.context_window,
+            context_window: self.context_window.load(Ordering::Relaxed),
             auto_compact_state: Some(Arc::clone(&self.auto_compact)),
             break_cache: self.take_break_cache(),
             session_context,
@@ -186,6 +186,21 @@ impl QueryEngine {
         let had = !guard.is_empty();
         guard.clear();
         tracing::info!("[skill] clear_skill_allowed_tools (had_tools={had})");
+    }
+
+    /// Get the current context window size.
+    pub fn context_window(&self) -> u64 {
+        self.context_window.load(Ordering::Relaxed)
+    }
+
+    /// Update the model context window size (e.g. for 1M context via `[1m]` suffix).
+    pub fn set_context_window(&self, tokens: u64) {
+        let prev = self.context_window();
+        if tokens == prev {
+            return;
+        }
+        tracing::info!("context_window: {prev} → {tokens}");
+        self.context_window.store(tokens, Ordering::Relaxed);
     }
 
     /// Get the cost tracker for displaying usage stats.

@@ -1,7 +1,7 @@
 //! QueryEngineBuilder — fluent builder for constructing a QueryEngine.
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 
 use clawed_api::client::ApiClient;
@@ -495,7 +495,7 @@ impl QueryEngineBuilder {
             cancel_tokens: coord_cancel_tokens,
             agent_channels: coord_agent_channels,
             auto_compact: Arc::new(tokio::sync::Mutex::new(AutoCompactState::new())),
-            context_window: effective_context_window,
+            context_window: AtomicU64::new(effective_context_window),
             break_cache_next: AtomicBool::new(false),
             thinking_override: std::sync::Mutex::new(ThinkingOverride::UseDefault),
             agent_notif_rx,

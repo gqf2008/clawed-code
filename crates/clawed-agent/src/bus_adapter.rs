@@ -175,17 +175,17 @@ impl AgentCoreAdapter {
                     self.handle_compact(instructions).await;
                 }
                 AgentRequest::SetModel { model } => {
-                    let resolved = clawed_core::model::resolve_model_string(&model);
-                    let display_name = clawed_core::model::display_name_any(&resolved);
+                    let ctx = clawed_core::model::resolve_model_with_context(&model);
                     {
                         let mut state = self.engine.state().write().await;
-                        state.model = resolved.clone();
+                        state.model = ctx.model.clone();
                     }
-                    info!("Model changed to: {} ({})", display_name, resolved);
+                    self.engine.set_context_window(ctx.context_window);
+                    info!("Model changed to: {} ({})", ctx.display_name, ctx.model);
                     let bus = self.bus.lock().await;
                     bus.notify(AgentNotification::ModelChanged {
-                        model: resolved,
-                        display_name,
+                        model: ctx.model,
+                        display_name: ctx.display_name,
                     });
                 }
                 AgentRequest::Shutdown => {

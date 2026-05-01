@@ -341,10 +341,11 @@ fn test_builder_context_window_default_model() {
         .build();
 
     // Default model is sonnet → 200K context window
+    let cw = engine.context_window();
     assert!(
-        engine.context_window >= 200_000,
+        cw >= 200_000,
         "expected ≥200K context, got {}",
-        engine.context_window
+        cw
     );
 }
 
@@ -377,8 +378,8 @@ fn test_builder_hooks_config_applied() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_context_usage_zero_window_returns_none() {
-    let mut engine = build_test_engine();
-    engine.context_window = 0;
+    let engine = build_test_engine();
+    engine.set_context_window(0);
     assert!(engine.context_usage_percent().await.is_none());
 }
 

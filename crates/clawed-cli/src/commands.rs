@@ -274,16 +274,27 @@ impl SlashCommand {
             Self::Clear => CommandResult::ClearHistory,
             Self::Model(name) if name.is_empty() => {
                 let aliases = clawed_core::model::list_aliases();
+                let caps_sonnet = clawed_core::model::model_capabilities(clawed_core::model::defaults::SONNET);
+                let caps_opus = clawed_core::model::model_capabilities(clawed_core::model::defaults::OPUS);
                 let mut out = String::from("Usage: /model <name|alias>\n\nAliases:\n");
                 for (alias, resolved) in &aliases {
                     let display = clawed_core::model::display_name_any(resolved);
                     out.push_str(&format!("  {:<10} → {} ({})\n", alias, display, resolved));
                 }
+                if caps_sonnet.supports_1m || caps_opus.supports_1m {
+                    out.push_str("\n1M context (append [1m] to alias):\n");
+                    if caps_sonnet.supports_1m {
+                        out.push_str("  sonnet[1m]  → Sonnet with 1M context window\n");
+                    }
+                    if caps_opus.supports_1m {
+                        out.push_str("  opus[1m]    → Opus with 1M context window\n");
+                    }
+                }
                 out.push_str(&format!(
                     "\nSmall/fast model: {} (for compaction)\n",
                     clawed_core::model::display_name_any(&clawed_core::model::small_fast_model()),
                 ));
-                out.push_str("\nExamples: /model sonnet  /model opus  /model haiku  /model gpt-4o");
+                out.push_str("\nExamples: /model sonnet  /model opus  /model haiku  /model sonnet[1m]  /model gpt-4o");
                 CommandResult::Print(out)
             }
             Self::Model(name) => CommandResult::SetModel(name.clone()),
@@ -692,7 +703,7 @@ const HELP_TEXT_BASE: &str = "\
   /init              Initialize CLAUDE.md for the project
 
 \x1b[1mConfiguration\x1b[0m
-  /model <name>      Switch model (sonnet|opus|haiku|best)
+  /model <name>      Switch model (sonnet|opus|haiku|best), add [1m] for 1M context
   /fast [off]        Toggle fast/cheap model (haiku)
   /think [on|off|N]  Toggle extended thinking (N = token budget)
   /effort [level]    Set effort (low|medium|high|max|auto)

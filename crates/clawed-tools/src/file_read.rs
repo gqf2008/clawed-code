@@ -24,12 +24,7 @@ const BLOCKED_DEVICE_PATHS: &[&str] = &[
     "/proc/kcore",
 ];
 
-/// Check if the first N bytes look like binary content.
-fn is_binary(data: &[u8]) -> bool {
-    let check_len = data.len().min(8192);
-    let null_count = data[..check_len].iter().filter(|&&b| b == 0).count();
-    null_count > 0
-}
+use super::path_util::is_binary_content;
 
 /// Find similar file names in the same directory (for suggestions on not-found).
 fn find_similar_files(path: &Path, max_suggestions: usize) -> Vec<String> {
@@ -239,7 +234,7 @@ impl Tool for FileReadTool {
 
         // Read raw bytes first to detect binary
         let raw_bytes = tokio::fs::read(&path).await?;
-        if is_binary(&raw_bytes) {
+        if is_binary_content(&raw_bytes) {
             let size = raw_bytes.len();
             let mime = match ext.as_str() {
                 "pdf" => "application/pdf",
@@ -391,22 +386,22 @@ mod tests {
 
     #[test]
     fn test_is_binary_utf8_text() {
-        assert!(!is_binary(b"hello world"));
+        assert!(!is_binary_content(b"hello world"));
     }
 
     #[test]
     fn test_is_binary_with_null_byte() {
-        assert!(is_binary(b"hello\x00world"));
+        assert!(is_binary_content(b"hello\x00world"));
     }
 
     #[test]
     fn test_is_binary_empty() {
-        assert!(!is_binary(b""));
+        assert!(!is_binary_content(b""));
     }
 
     #[test]
     fn test_is_binary_pure_binary() {
-        assert!(is_binary(&[0u8; 100]));
+        assert!(is_binary_content(&[0u8; 100]));
     }
 
     // ── similarity_score ────────────────────────────────────────────────

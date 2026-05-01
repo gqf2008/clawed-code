@@ -235,19 +235,19 @@ pub async fn run(
                                         }
                                     }
                                 } else {
-                                    let resolved = clawed_core::model::resolve_model_string(&input);
+                                    let ctx = clawed_core::model::resolve_model_with_context(&input);
                                     let state = engine.state();
                                     let mut s = state.write().await;
-                                    s.model = resolved.clone();
-                                    let display = clawed_core::model::display_name_any(&resolved);
-                                    println!("Model set to: {} ({})", display, resolved);
+                                    s.model = ctx.model.clone();
+                                    engine.set_context_window(ctx.context_window);
+                                    println!("Model set to: {} ({})", ctx.display_name, ctx.model);
 
                                     // Persist to user settings
                                     if let Err(e) = clawed_core::config::Settings::update_field(
                                         clawed_core::config::SettingsSource::User,
                                         &cwd,
                                         |s| {
-                                            s.model = Some(resolved.clone());
+                                            s.model = Some(ctx.model.clone());
                                         },
                                     ) {
                                         eprintln!(

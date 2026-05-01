@@ -14,6 +14,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
+use crate::config::Settings;
+
 /// A single state migration.
 pub trait Migration: Send + Sync {
     /// Unique human-readable name (e.g. `migrate_plaintext_oauth_to_keyring`).
@@ -165,8 +167,7 @@ impl Migration for EnsureClaudeDirMigration {
     }
 
     fn run(&self) -> Result<()> {
-        let home = dirs::home_dir().context("no home directory")?;
-        let claude_dir = home.join(".claude");
+        let claude_dir = Settings::claude_dir().context("no home directory")?;
         fs::create_dir_all(&claude_dir)?;
         fs::create_dir_all(claude_dir.join("skills"))?;
         fs::create_dir_all(claude_dir.join("rules"))?;
@@ -189,8 +190,7 @@ impl Migration for MigrateLegacyOAuthTokenFilename {
     }
 
     fn run(&self) -> Result<()> {
-        let home = dirs::home_dir().context("no home directory")?;
-        let claude_dir = home.join(".claude");
+        let claude_dir = Settings::claude_dir().context("no home directory")?;
 
         // Old names that may exist from earlier versions
         let legacy_names = ["auth_token.json", "token.json", "claude_token.json"];
@@ -224,8 +224,8 @@ impl Migration for CleanupStaleSessionExports {
     }
 
     fn run(&self) -> Result<()> {
-        let home = dirs::home_dir().context("no home directory")?;
-        let exports_dir = home.join(".claude").join("exports");
+        let claude_dir = Settings::claude_dir().context("no home directory")?;
+        let exports_dir = claude_dir.join("exports");
         if !exports_dir.exists() {
             return Ok(());
         }

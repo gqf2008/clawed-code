@@ -47,9 +47,13 @@ pub const TOOL_DEFINITION_OVERHEAD: u64 = 500;
 /// JSON files have many single-character tokens (`{`, `}`, `:`, `,`, `"`)
 /// and thus use roughly 2 bytes/token instead of the default 4.
 pub fn bytes_per_token_for_extension(ext: &str) -> f64 {
-    match ext.to_lowercase().as_str() {
-        "json" | "jsonl" | "jsonc" => JSON_BYTES_PER_TOKEN,
-        _ => DEFAULT_BYTES_PER_TOKEN,
+    if ext.eq_ignore_ascii_case("json")
+        || ext.eq_ignore_ascii_case("jsonl")
+        || ext.eq_ignore_ascii_case("jsonc")
+    {
+        JSON_BYTES_PER_TOKEN
+    } else {
+        DEFAULT_BYTES_PER_TOKEN
     }
 }
 

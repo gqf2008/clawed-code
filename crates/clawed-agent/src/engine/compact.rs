@@ -105,8 +105,9 @@ impl QueryEngine {
         drop(s);
 
         let ac = self.auto_compact.lock().await;
-        if self.context_window > 0 {
-            ac.should_auto_compact(current_tokens, self.context_window)
+        let cw = self.context_window();
+        if cw > 0 {
+            ac.should_auto_compact(current_tokens, cw)
         } else if self.compact_threshold > 0 {
             current_tokens >= self.compact_threshold
         } else {
@@ -127,12 +128,13 @@ impl QueryEngine {
     /// Get the current context window usage as a percentage (0–100).
     /// Returns None if context window is unknown (0).
     pub async fn context_usage_percent(&self) -> Option<u8> {
-        if self.context_window == 0 {
+        let cw = self.context_window();
+        if cw == 0 {
             return None;
         }
         let s = self.state.read().await;
         let current = clawed_core::token_estimation::token_count_with_estimation(&s.messages);
-        let pct = (current as f64 / self.context_window as f64 * 100.0).min(100.0) as u8;
+        let pct = (current as f64 / cw as f64 * 100.0).min(100.0) as u8;
         Some(pct)
     }
 }

@@ -419,12 +419,8 @@ fn resolve_path(cwd: &Path, p: &str) -> PathBuf {
     }
 }
 
-fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
-    } else {
-        &s[..max]
-    }
+fn truncate(s: &str, max: usize) -> String {
+    clawed_core::text_util::truncate_utf8(s, max, "")
 }
 
 #[cfg(test)]

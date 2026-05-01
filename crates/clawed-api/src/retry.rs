@@ -111,33 +111,24 @@ impl RateLimitInfo {
         let mut info = Self::default();
         let mut found = false;
         for (key, value) in headers {
-            let k = key.to_lowercase();
-            match k.as_str() {
-                "x-ratelimit-limit-requests" => {
-                    info.limit_requests = value.parse().ok();
-                    found = true;
-                }
-                "x-ratelimit-remaining-requests" => {
-                    info.remaining_requests = value.parse().ok();
-                    found = true;
-                }
-                "x-ratelimit-limit-tokens" => {
-                    info.limit_tokens = value.parse().ok();
-                    found = true;
-                }
-                "x-ratelimit-remaining-tokens" => {
-                    info.remaining_tokens = value.parse().ok();
-                    found = true;
-                }
-                "x-ratelimit-reset-requests" => {
-                    info.reset_requests = Some(value.clone());
-                    found = true;
-                }
-                "x-ratelimit-reset-tokens" => {
-                    info.reset_tokens = Some(value.clone());
-                    found = true;
-                }
-                _ => {}
+            if key.eq_ignore_ascii_case("x-ratelimit-limit-requests") {
+                info.limit_requests = value.parse().ok();
+                found = true;
+            } else if key.eq_ignore_ascii_case("x-ratelimit-remaining-requests") {
+                info.remaining_requests = value.parse().ok();
+                found = true;
+            } else if key.eq_ignore_ascii_case("x-ratelimit-limit-tokens") {
+                info.limit_tokens = value.parse().ok();
+                found = true;
+            } else if key.eq_ignore_ascii_case("x-ratelimit-remaining-tokens") {
+                info.remaining_tokens = value.parse().ok();
+                found = true;
+            } else if key.eq_ignore_ascii_case("x-ratelimit-reset-requests") {
+                info.reset_requests = Some(value.clone());
+                found = true;
+            } else if key.eq_ignore_ascii_case("x-ratelimit-reset-tokens") {
+                info.reset_tokens = Some(value.clone());
+                found = true;
             }
         }
         if found {

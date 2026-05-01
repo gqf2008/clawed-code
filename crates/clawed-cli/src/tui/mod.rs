@@ -3092,14 +3092,12 @@ async fn handle_overlay_selection(
 ) {
     match overlay_title {
         "Switch Model" => {
-            let resolved = clawed_core::model::resolve_model_string(value);
-            let display = clawed_core::model::display_name_any(&resolved);
-            engine.state().write().await.model = resolved.clone();
-            app.model = resolved;
+            let ctx = clawed_core::model::resolve_model_with_context(value);
+            app.model = ctx.model.clone();
             let _ = client.send_request(clawed_bus::events::AgentRequest::SetModel {
                 model: value.to_string(),
             });
-            app.push_message(MessageContent::System(format!("✓ Model → {display}")));
+            app.push_message(MessageContent::System(format!("✓ Model → {}", ctx.display_name)));
         }
         "Theme" => match crate::repl_commands::apply_theme(value) {
             Ok(message) | Err(message) => {
@@ -3131,14 +3129,12 @@ async fn handle_footer_picker_selection(
 ) {
     match kind {
         FooterPickerKind::Model => {
-            let resolved = clawed_core::model::resolve_model_string(value);
-            let display = clawed_core::model::display_name_any(&resolved);
-            engine.state().write().await.model = resolved.clone();
-            app.model = resolved;
+            let ctx = clawed_core::model::resolve_model_with_context(value);
+            app.model = ctx.model.clone();
             let _ = client.send_request(clawed_bus::events::AgentRequest::SetModel {
                 model: value.to_string(),
             });
-            app.push_message(MessageContent::System(format!("✓ Model → {display}")));
+            app.push_message(MessageContent::System(format!("✓ Model → {}", ctx.display_name)));
         }
         FooterPickerKind::Theme => match crate::repl_commands::apply_theme(value) {
             Ok(message) | Err(message) => {

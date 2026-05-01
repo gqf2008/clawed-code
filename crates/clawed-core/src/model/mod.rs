@@ -290,6 +290,48 @@ pub fn resolve_model_string(input: &str) -> String {
     base.to_string()
 }
 
+/// Resolved model + 1M-aware context window + display label.
+///
+/// Created by `resolve_model_with_context()` — use this instead of calling
+/// `resolve_model_string`, `model_capabilities`, and `display_name_any`
+/// separately, to avoid duplicating the 1M-resolution logic across call sites.
+#[derive(Debug, Clone)]
+pub struct ModelWithContext {
+    /// Resolved model ID (alias expanded, `[1m]` stripped).
+    pub model: String,
+    /// Effective context window: 1M if `[1m]` suffix was present and model supports it.
+    pub context_window: u64,
+    /// Human-readable display label with optional "(1M context)" suffix.
+    pub display_name: String,
+}
+
+/// Resolve a user-supplied model string (alias or full ID, optionally with
+/// `[1m]` suffix) into the model ID, effective context window, and display label.
+///
+/// This is the single entry point for `/model` command handling — all call sites
+/// that need model + context-window + display-label should use this function.
+pub fn resolve_model_with_context(input: &str) -> ModelWithContext {
+    let wants_1m = requests_1m_context(input);
+    let model = resolve_model_string(input);
+    let caps = model_capabilities(&model);
+    let context_window = if wants_1m && caps.supports_1m {
+        1_000_000
+    } else {
+        caps.context_window
+    };
+    let base = display_name_any(&model);
+    let display_name = if context_window >= 1_000_000 {
+        format!("{base} (1M context)")
+    } else {
+        base
+    };
+    ModelWithContext {
+        model,
+        context_window,
+        display_name,
+    }
+}
+
 /// Validate and resolve a model string. Returns `Ok(resolved_model)` if valid,
 /// or `Err` with a helpful message listing available aliases and known models.
 pub fn validate_model(input: &str) -> Result<String, String> {

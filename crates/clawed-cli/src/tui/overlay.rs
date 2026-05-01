@@ -325,14 +325,39 @@ pub fn build_model_overlay(current_model: &str) -> Overlay {
         .iter()
         .map(|(alias, model_id)| {
             let display = clawed_core::model::display_name_any(model_id);
+            let caps = clawed_core::model::model_capabilities(model_id);
             SelectionItem {
                 label: (*alias).to_string(),
-                description: format!("→ {display}"),
+                description: if caps.supports_1m {
+                    format!("→ {display}  (supports 1M)")
+                } else {
+                    format!("→ {display}")
+                },
                 value: alias.to_string(),
                 is_current: model_id == current_model,
             }
         })
         .collect();
+
+    // Add 1M context variants for models that support it
+    let mut one_m_items: Vec<SelectionItem> = aliases
+        .iter()
+        .filter(|(a, model_id)| {
+            let caps = clawed_core::model::model_capabilities(model_id);
+            caps.supports_1m && *a != "best" // skip "best" alias (duplicate of opus)
+        })
+        .map(|(alias, model_id)| {
+            let display = clawed_core::model::display_name_any(model_id);
+            let label = format!("{alias}[1m]");
+            SelectionItem {
+                description: format!("→ {display} (1M context)"),
+                label,
+                value: format!("{alias}[1m]"),
+                is_current: false,
+            }
+        })
+        .collect();
+    items.append(&mut one_m_items);
 
     // Deduplicate (opus and best resolve to same model)
     items.dedup_by(|a, b| a.value == b.value);
