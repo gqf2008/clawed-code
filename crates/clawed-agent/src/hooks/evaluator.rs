@@ -79,7 +79,9 @@ fn semantic_fast_path(ctx: &HookContext, description: &str) -> bool {
         score,
         description.chars().take(60).collect::<String>()
     );
-    score >= 0.15 || true // conservative: always true for now, score logged
+    // conservative: always true for now, score logged
+    let _ = score;
+    true
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

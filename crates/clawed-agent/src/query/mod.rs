@@ -563,7 +563,7 @@ pub fn query_stream_with_injection(
                 let has_thinking = assistant_blocks
                     .first()
                     .is_some_and(|b| matches!(b, ContentBlock::Thinking { .. }));
-                let pos = if has_thinking { 1 } else { 0 };
+                let pos = usize::from(has_thinking);
                 assistant_blocks.insert(pos, ContentBlock::Text {
                     text: assistant_text.clone(),
                 });
