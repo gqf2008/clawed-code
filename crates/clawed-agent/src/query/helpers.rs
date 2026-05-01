@@ -195,17 +195,23 @@ pub(super) fn make_continuation_message(attempt: u32, limit: u32) -> UserMessage
 /// Convert internal messages to API format, adding cache breakpoints.
 ///
 /// When `skip_cache` is true, no cache_control markers are added (for `/break-cache`).
-pub(super) fn messages_to_api(messages: &[Message], skip_cache: bool) -> Vec<ApiMessage> {
+/// When `has_thinking` is true, thinking blocks are preserved as-is (required by the
+/// API when extended thinking is enabled); otherwise they are converted to XML text.
+pub(super) fn messages_to_api(
+    messages: &[Message],
+    skip_cache: bool,
+    has_thinking: bool,
+) -> Vec<ApiMessage> {
     let mut api_msgs: Vec<ApiMessage> = messages
         .iter()
         .filter_map(|msg| match msg {
             Message::User(u) => Some(ApiMessage {
                 role: "user".into(),
-                content: u.content.iter().map(block_to_api).collect(),
+                content: u.content.iter().map(|b| block_to_api(b, has_thinking)).collect(),
             }),
             Message::Assistant(a) => Some(ApiMessage {
                 role: "assistant".into(),
-                content: a.content.iter().map(block_to_api).collect(),
+                content: a.content.iter().map(|b| block_to_api(b, has_thinking)).collect(),
             }),
             Message::System(_) => None,
         })
@@ -231,7 +237,12 @@ pub(super) fn messages_to_api(messages: &[Message], skip_cache: bool) -> Vec<Api
 }
 
 /// Convert a single content block to API format.
-pub(super) fn block_to_api(block: &ContentBlock) -> ApiContentBlock {
+///
+/// When `has_thinking` is true, thinking blocks are passed through as
+/// `ApiContentBlock::Thinking` (required by the API when extended thinking
+/// is enabled). Otherwise they are wrapped in XML text for compatibility
+/// with non-thinking models.
+pub(super) fn block_to_api(block: &ContentBlock, has_thinking: bool) -> ApiContentBlock {
     match block {
         ContentBlock::Text { text } => ApiContentBlock::Text {
             text: text.clone(),
@@ -264,10 +275,18 @@ pub(super) fn block_to_api(block: &ContentBlock) -> ApiContentBlock {
             is_error: *is_error,
             cache_control: None,
         },
-        ContentBlock::Thinking { thinking } => ApiContentBlock::Text {
-            text: format!("<thinking>{}</thinking>", thinking),
-            cache_control: None,
-        },
+        ContentBlock::Thinking { thinking } => {
+            if has_thinking {
+                ApiContentBlock::Thinking {
+                    thinking: thinking.clone(),
+                }
+            } else {
+                ApiContentBlock::Text {
+                    text: format!("<thinking>{}</thinking>", thinking),
+                    cache_control: None,
+                }
+            }
+        }
         ContentBlock::Image { source } => ApiContentBlock::Image {
             source: clawed_api::types::ImageSource {
                 source_type: "base64".into(),

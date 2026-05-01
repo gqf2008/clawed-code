@@ -137,6 +137,11 @@ pub fn convert_anthropic_message(msg: &ApiMessage, out: &mut Vec<ChatMessage>) {
                 ApiContentBlock::ToolUse { .. } => {
                     // tool_use blocks don't appear in user messages normally
                 }
+                ApiContentBlock::Thinking { thinking } => {
+                    text_parts.push(ChatContentPart::Text {
+                        text: format!("<thinking>{thinking}</thinking>"),
+                    });
+                }
             }
         }
 

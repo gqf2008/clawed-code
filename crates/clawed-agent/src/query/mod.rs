@@ -266,7 +266,8 @@ pub fn query_stream_with_injection(
                 break;
             }
 
-            let api_messages = messages_to_api(&messages, config.break_cache);
+            let has_thinking = config.thinking.is_some();
+            let api_messages = messages_to_api(&messages, config.break_cache, has_thinking);
             let effective_system = if tool_context.permission_mode == clawed_core::permissions::PermissionMode::Plan {
                 format!("{}\n\n{}", current_system_prompt, crate::system_prompt::sections::section_plan_mode_constraints())
             } else {

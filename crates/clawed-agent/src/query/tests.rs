@@ -243,7 +243,7 @@ fn test_messages_to_api_converts_user_and_assistant() {
             usage: None,
         }),
     ];
-    let api = messages_to_api(&messages, false);
+    let api = messages_to_api(&messages, false, false);
     assert_eq!(api.len(), 2);
     assert_eq!(api[0].role, "user");
     assert_eq!(api[1].role, "assistant");
@@ -263,7 +263,7 @@ fn test_messages_to_api_skips_system() {
             }],
         }),
     ];
-    let api = messages_to_api(&messages, false);
+    let api = messages_to_api(&messages, false, false);
     assert_eq!(api.len(), 1);
     assert_eq!(api[0].role, "user");
 }
@@ -276,7 +276,7 @@ fn test_messages_to_api_cache_control_on_last_block() {
             text: "hello".into(),
         }],
     })];
-    let api = messages_to_api(&messages, false);
+    let api = messages_to_api(&messages, false, false);
     match &api[0].content[0] {
         ApiContentBlock::Text { cache_control, .. } => {
             assert!(cache_control.is_some());
@@ -293,7 +293,7 @@ fn test_messages_to_api_skip_cache() {
             text: "hello".into(),
         }],
     })];
-    let api = messages_to_api(&messages, true);
+    let api = messages_to_api(&messages, true, false);
     match &api[0].content[0] {
         ApiContentBlock::Text { cache_control, .. } => {
             assert!(
@@ -312,7 +312,7 @@ fn test_block_to_api_text() {
     let block = ContentBlock::Text {
         text: "hello".into(),
     };
-    let api = block_to_api(&block);
+    let api = block_to_api(&block, false);
     match api {
         ApiContentBlock::Text {
             text,
@@ -332,7 +332,7 @@ fn test_block_to_api_tool_use() {
         name: "Bash".into(),
         input: serde_json::json!({"command": "ls"}),
     };
-    let api = block_to_api(&block);
+    let api = block_to_api(&block, false);
     match api {
         ApiContentBlock::ToolUse { id, name, input } => {
             assert_eq!(id, "t1");
@@ -348,7 +348,7 @@ fn test_block_to_api_thinking() {
     let block = ContentBlock::Thinking {
         thinking: "let me think...".into(),
     };
-    let api = block_to_api(&block);
+    let api = block_to_api(&block, false);
     match api {
         ApiContentBlock::Text { text, .. } => {
             assert!(text.contains("<thinking>"));
@@ -366,7 +366,7 @@ fn test_block_to_api_image() {
             data: "iVBORw0KGgo=".into(),
         },
     };
-    let api = block_to_api(&block);
+    let api = block_to_api(&block, false);
     match api {
         ApiContentBlock::Image { source, .. } => {
             assert_eq!(source.source_type, "base64");

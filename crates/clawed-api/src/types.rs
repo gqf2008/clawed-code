@@ -155,6 +155,10 @@ pub enum ApiContentBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
+    #[serde(rename = "thinking")]
+    Thinking {
+        thinking: String,
+    },
 }
 
 /// Content within a tool result — currently only text is supported.

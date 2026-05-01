@@ -1,43 +1,37 @@
 [
   {
-    "id": "review-core",
-    "content": "审查 clawed-core 核心模块（tool.rs, config, permissions, session等）",
+    "id": "fix-simplify-1",
+    "content": "Add file size limit (10MB) to prevent OOM",
     "status": "completed",
     "priority": "high"
   },
   {
-    "id": "review-agent",
-    "content": "审查 clawed-agent 引擎和查询模块",
+    "id": "fix-simplify-2",
+    "content": "Add path traversal protection (verify resolved path within cwd)",
     "status": "completed",
     "priority": "high"
   },
   {
-    "id": "review-tools",
-    "content": "审查 clawed-tools 工具实现",
+    "id": "fix-simplify-3",
+    "content": "Strict file path mode: all tokens must be files or fail",
     "status": "completed",
     "priority": "high"
   },
   {
-    "id": "review-api-cli",
-    "content": "审查 clawed-api, clawed-cli, clawed-bus 等模块",
+    "id": "fix-simplify-4",
+    "content": "Move /simplify help text to Git & Code section",
     "status": "completed",
     "priority": "medium"
   },
   {
-    "id": "review-security",
-    "content": "安全性审查（unsafe, unwrap, 权限边界）",
-    "status": "completed",
-    "priority": "high"
-  },
-  {
-    "id": "review-tests",
-    "content": "测试覆盖和架构设计审查",
+    "id": "fix-simplify-5",
+    "content": "Add tests for edge cases",
     "status": "completed",
     "priority": "medium"
   },
   {
-    "id": "summary",
-    "content": "汇总审查报告，给出风险等级和建议",
+    "id": "fix-simplify-6",
+    "content": "Build and verify",
     "status": "completed",
     "priority": "high"
   }
