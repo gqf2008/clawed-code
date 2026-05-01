@@ -203,7 +203,7 @@ impl Message {
         } = &mut self.content
         {
             let stripped = strip_system_reminders(result);
-            let needs_full = stripped.lines().count() > 5 || output_lines.is_empty();
+            let needs_full = stripped.lines().nth(5).is_some() || output_lines.is_empty();
             *full_result = if needs_full {
                 Some(stripped.into_owned())
             } else {

@@ -112,6 +112,8 @@ impl Drop for Spinner {
 
 /// Format task/todo tool results with a richer inline display.
 pub(super) fn format_tool_result_inline(name: &str, text: &str) -> Option<String> {
+    let text = clawed_core::text_util::strip_system_reminders(text);
+    let text = text.as_ref();
     match name {
         "task_create" | "task_update" | "task_get" | "task_list" | "TodoWrite" | "TodoRead" => {
             let first_line = text.lines().next().unwrap_or(text);
