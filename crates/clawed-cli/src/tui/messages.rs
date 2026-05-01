@@ -1,5 +1,7 @@
 use super::{markdown, MUTED};
 
+use clawed_core::text_util::strip_system_reminders;
+
 use std::cell::RefCell;
 use std::time::Instant;
 
@@ -126,6 +128,7 @@ impl Message {
     }
 
     pub fn append_assistant_text(&mut self, text: &str) {
+        let text = strip_system_reminders(text);
         if text.is_empty() {
             return;
         }
@@ -133,7 +136,7 @@ impl Message {
         let can_append_plain = match &mut self.content {
             MessageContent::AssistantText(buf) => {
                 let was_plain = !markdown::likely_markdown(buf);
-                buf.push_str(text);
+                buf.push_str(&text);
                 was_plain && !markdown::likely_markdown(buf)
             }
             _ => return,
@@ -142,7 +145,7 @@ impl Message {
         let cached_lines = self.cached_lines.get_mut();
         if let Some(lines) = cached_lines.as_mut() {
             if can_append_plain {
-                append_plain_lines(lines, text, Style::default());
+                append_plain_lines(lines, &text, Style::default());
                 return;
             }
         }
@@ -150,12 +153,13 @@ impl Message {
     }
 
     pub fn append_thinking_text(&mut self, text: &str) {
+        let text = strip_system_reminders(text);
         if text.is_empty() {
             return;
         }
 
         match &mut self.content {
-            MessageContent::ThinkingText(buf) => buf.push_str(text),
+            MessageContent::ThinkingText(buf) => buf.push_str(&text),
             _ => return,
         }
 
@@ -198,14 +202,15 @@ impl Message {
             ..
         } = &mut self.content
         {
+            let stripped = strip_system_reminders(result);
             // Store full result for expand view.
             // Don't overwrite streaming output_lines — they stay as-is.
-            *full_result = if result.lines().count() > 5 {
-                Some(result.to_string())
+            *full_result = if stripped.lines().count() > 5 {
+                Some(stripped)
             } else if output_lines.is_empty() {
                 // No streaming happened, result is short — store in full_result
                 // so it still renders in the expanded section.
-                Some(result.to_string())
+                Some(stripped)
             } else {
                 None
             };

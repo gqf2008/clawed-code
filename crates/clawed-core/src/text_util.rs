@@ -37,6 +37,21 @@ pub fn truncate_chars(text: &str, max_chars: usize, suffix: &str) -> String {
     }
 }
 
+/// Cached regex for stripping `<system-reminder>...</system-reminder>` tags.
+fn system_reminder_regex() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(r"<system-reminder>[\s\S]*?</system-reminder>")
+            .expect("system_reminder_regex is valid")
+    })
+}
+
+/// Strip all `<system-reminder>...</system-reminder>` blocks from text.
+pub fn strip_system_reminders(text: &str) -> String {
+    let stripped = system_reminder_regex().replace_all(text, "").to_string();
+    collapse_blank_lines(&stripped)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,5 +90,33 @@ mod tests {
         let result = truncate_chars(s, 5, "...");
         assert_eq!(result, "给用户讲一...");
         assert_eq!(result.chars().count(), 8); // 5 chars + 3 for "..."
+    }
+
+    #[test]
+    fn test_strip_system_reminders_leading() {
+        let text = "<system-reminder>\nToken usage: 50000/200000\n</system-reminder>\nActual response";
+        assert_eq!(strip_system_reminders(text), "Actual response");
+    }
+
+    #[test]
+    fn test_strip_system_reminders_embedded() {
+        let text = "Hello<system-reminder>\nToken usage\n</system-reminder> World";
+        assert_eq!(strip_system_reminders(text), "Hello World");
+    }
+
+    #[test]
+    fn test_strip_system_reminders_multiple() {
+        let text = "<system-reminder>a</system-reminder>keep1<system-reminder>b</system-reminder>keep2";
+        assert_eq!(strip_system_reminders(text), "keep1keep2");
+    }
+
+    #[test]
+    fn test_strip_system_reminders_none() {
+        assert_eq!(strip_system_reminders("no tags here"), "no tags here");
+    }
+
+    #[test]
+    fn test_strip_system_reminders_only_tags() {
+        assert_eq!(strip_system_reminders("<system-reminder>all tags</system-reminder>"), "");
     }
 }
