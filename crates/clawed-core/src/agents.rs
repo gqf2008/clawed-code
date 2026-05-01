@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use tracing::debug;
 
 use crate::sync::lock_or_recover;

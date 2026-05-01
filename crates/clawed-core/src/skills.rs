@@ -18,7 +18,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use tracing::debug;
 
 /// Lock a std::sync::Mutex, recovering gracefully from poisoning.

@@ -12,10 +12,6 @@ use clawed_core::config::HookCondition;
 
 use super::types::HookContext;
 
-/// Cached compiled regexes for condition evaluation.
-static REGEX_CACHE: std::sync::OnceLock<std::sync::Mutex<HashSet<String>>> =
-    std::sync::OnceLock::new();
-
 /// Evaluate a hook condition against the given context.
 ///
 /// Returns `true` if the condition is satisfied (or if there is no condition).

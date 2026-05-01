@@ -347,6 +347,7 @@ pub fn query_stream_with_injection(
             let event_stream = clawed_api::stream::with_idle_watchdog(event_stream, watchdog_config);
 
             let mut assistant_text = String::new();
+            let mut thinking_text = String::new();
             let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
             let mut tool_uses: Vec<(String, String, serde_json::Value)> = Vec::new();
             let mut tool_paths: Vec<String> = Vec::new();
@@ -386,6 +387,7 @@ pub fn query_stream_with_injection(
                                     yield AgentEvent::ToolUseStart { id: id.clone(), name: name.clone() };
                                 }
                                 ResponseContentBlock::Thinking { thinking } => {
+                                    thinking_text = thinking.clone();
                                     yield AgentEvent::ThinkingDelta(thinking.clone());
                                 }
                             }
@@ -399,6 +401,7 @@ pub fn query_stream_with_injection(
                                 current_tool_input.push_str(&partial_json);
                             }
                             DeltaBlock::ThinkingDelta { thinking } => {
+                                thinking_text.push_str(&thinking);
                                 yield AgentEvent::ThinkingDelta(thinking);
                             }
                             DeltaBlock::SignatureDelta { .. } => {
@@ -547,9 +550,23 @@ pub fn query_stream_with_injection(
                 continue;
             }
 
-            // Ensure text block is present
+            // Preserve thinking block so the API doesn't reject the next request.
+            // Must come before text/tool_use in the content array per API schema.
+            if !thinking_text.is_empty() {
+                assistant_blocks.insert(0, ContentBlock::Thinking {
+                    thinking: std::mem::take(&mut thinking_text),
+                });
+            }
+
+            // Ensure text block is present (after thinking, before tool_use)
             if !assistant_text.is_empty() && !assistant_blocks.iter().any(|b| matches!(b, ContentBlock::Text { .. })) {
-                assistant_blocks.insert(0, ContentBlock::Text { text: assistant_text.clone() });
+                let has_thinking = assistant_blocks
+                    .first()
+                    .is_some_and(|b| matches!(b, ContentBlock::Thinking { .. }));
+                let pos = if has_thinking { 1 } else { 0 };
+                assistant_blocks.insert(pos, ContentBlock::Text {
+                    text: assistant_text.clone(),
+                });
             }
 
             // Capture tool names from assistant_blocks before they are moved
