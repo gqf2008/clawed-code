@@ -1,5 +1,6 @@
 //! Shared text utilities used across crates.
 
+use std::borrow::Cow;
 use std::sync::OnceLock;
 
 /// Cached regex for collapsing 3+ consecutive newlines into 2.
@@ -47,9 +48,17 @@ fn system_reminder_regex() -> &'static regex::Regex {
 }
 
 /// Strip all `<system-reminder>...</system-reminder>` blocks from text.
-pub fn strip_system_reminders(text: &str) -> String {
-    let stripped = system_reminder_regex().replace_all(text, "").to_string();
-    collapse_blank_lines(&stripped)
+/// Returns `Cow::Borrowed` when no tags are present (zero-allocation fast path).
+pub fn strip_system_reminders(text: &str) -> Cow<'_, str> {
+    if !text.contains("<system-reminder>") {
+        return Cow::Borrowed(text);
+    }
+    let cow = system_reminder_regex().replace_all(text, "");
+    if matches!(cow, Cow::Owned(_)) {
+        Cow::Owned(collapse_blank_lines(&cow))
+    } else {
+        cow
+    }
 }
 
 #[cfg(test)]

@@ -203,14 +203,9 @@ impl Message {
         } = &mut self.content
         {
             let stripped = strip_system_reminders(result);
-            // Store full result for expand view.
-            // Don't overwrite streaming output_lines — they stay as-is.
-            *full_result = if stripped.lines().count() > 5 {
-                Some(stripped)
-            } else if output_lines.is_empty() {
-                // No streaming happened, result is short — store in full_result
-                // so it still renders in the expanded section.
-                Some(stripped)
+            let needs_full = stripped.lines().count() > 5 || output_lines.is_empty();
+            *full_result = if needs_full {
+                Some(stripped.into_owned())
             } else {
                 None
             };
