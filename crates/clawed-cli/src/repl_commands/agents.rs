@@ -339,17 +339,8 @@ fn color_code(color: &str) -> u8 {
     }
 }
 
-/// Format a duration in ms to human-readable.
 fn format_duration(ms: u64) -> String {
-    if ms < 1_000 {
-        format!("{}ms", ms)
-    } else if ms < 60_000 {
-        format!("{:.1}s", ms as f64 / 1_000.0)
-    } else {
-        let mins = ms / 60_000;
-        let secs = (ms % 60_000) / 1_000;
-        format!("{}m{}s", mins, secs)
-    }
+    crate::tui::verbs::format_duration(ms)
 }
 
 /// Truncate a string with ellipsis.
@@ -383,7 +374,7 @@ mod tests {
     fn format_duration_variants() {
         assert_eq!(format_duration(500), "500ms");
         assert_eq!(format_duration(1500), "1.5s");
-        assert_eq!(format_duration(65000), "1m5s");
+        assert_eq!(format_duration(65000), "1m 5s");
     }
 
     #[test]

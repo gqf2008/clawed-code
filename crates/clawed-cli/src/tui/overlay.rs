@@ -832,6 +832,9 @@ pub async fn build_doctor_overlay(
     }
 }
 
+/// Format elapsed seconds for overlay display.
+/// Note: distinct from `verbs::format_duration` which takes milliseconds
+/// and is used for turn-completion / status rendering.
 fn format_elapsed(secs: u64) -> String {
     if secs < 60 {
         format!("{secs}s")

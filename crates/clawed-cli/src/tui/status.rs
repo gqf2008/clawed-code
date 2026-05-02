@@ -1,5 +1,6 @@
 //! Dynamic status line for the TUI (ratatui version).
 
+use super::verbs::{self, SHIMMER_INTERVAL_MS, SPINNER_TICK_INTERVAL_MS};
 use super::MUTED;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -9,7 +10,16 @@ use ratatui::{
     text::Span,
 };
 
+/// Spinner characters pre-rendered as &str to avoid per-frame allocation.
+const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const BOUNCE_LEN: usize = SPINNER.len() * 2 - 2;
+
 pub struct ToolInfo {
+    pub name: String,
+    pub started: Instant,
+}
+
+pub struct AgentInfo {
     pub name: String,
     pub started: Instant,
 }
@@ -17,7 +27,7 @@ pub struct ToolInfo {
 pub struct TuiStatusState {
     pub active_tools: HashMap<String, ToolInfo>,
     pub active_shells: u32,
-    pub active_agents: HashMap<String, String>,
+    pub active_agents: HashMap<String, AgentInfo>,
     pub thinking: bool,
     /// True for the entire duration the agent is generating (set in mark_generating,
     /// cleared in mark_done). Broader than `thinking`, which goes false during TextDelta.
@@ -29,6 +39,15 @@ pub struct TuiStatusState {
     pub context_pct: f64,
     /// When the current generation phase started (for stall detection).
     pub generating_since: Option<Instant>,
+    /// When the last token (text/thinking/tool) was received.
+    /// Used with generating_since for gradual stall color interpolation.
+    /// Also drives the SpinnerModeGlyph: None → ↑ (requesting),
+    /// Some(_) → ↓ (responding).
+    pub last_token_time: Option<Instant>,
+    /// Random verb picked when generation starts, used as spinner label.
+    /// Picked once per turn, aligned with official Claude Code.
+    /// None until the first verb is assigned (falls back to "Thinking").
+    pub current_verb: Option<&'static str>,
 }
 
 impl TuiStatusState {
@@ -43,16 +62,69 @@ impl TuiStatusState {
             spinner_frame: 0,
             context_pct: 0.0,
             generating_since: None,
+            last_token_time: None,
+            current_verb: None,
         }
     }
 
-    /// Whether the status line should be visible.
+    pub fn record_token(&mut self) {
+        self.last_token_time = Some(Instant::now());
+    }
+
     pub fn should_show(&self) -> bool {
         self.is_generating
             || !self.active_tools.is_empty()
             || self.active_shells > 0
             || !self.active_agents.is_empty()
     }
+
+    /// Whether a tip line should be rendered below the status bar.
+    /// Checks the threshold directly to avoid redundant elapsed() computation
+    /// when the caller also needs `current_tip()`.
+    pub fn has_tip(&self) -> bool {
+        self.generating_since
+            .map(|s| s.elapsed().as_secs() >= 30)
+            .unwrap_or(false)
+    }
+
+    /// Return the tip text if a threshold has been reached.
+    pub fn current_tip(&self) -> Option<&'static str> {
+        let elapsed = self.generating_since?.elapsed();
+        let secs = elapsed.as_secs();
+        if secs >= 1800 {
+            Some("Tip: Use /clear to start fresh when switching topics and free up context")
+        } else if secs >= 30 {
+            Some("Tip: Use /btw to ask a quick side question without interrupting Claude's current work")
+        } else {
+            None
+        }
+    }
+}
+
+fn push_active_item(
+    spans: &mut Vec<Span<'static>>,
+    name: &str,
+    elapsed: std::time::Duration,
+    count: usize,
+    style: Style,
+) {
+    let suffix = if count > 1 {
+        format!(" +{}", count - 1)
+    } else {
+        String::new()
+    };
+    let mins = elapsed.as_secs() / 60;
+    let secs = elapsed.as_secs() % 60;
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled(
+        format!("{name} ({mins:02}:{secs:02}){suffix}"),
+        style,
+    ));
+}
+
+/// Linear interpolation between two u8 values.
+fn lerp_u8(a: u8, b: u8, t: f64) -> u8 {
+    (b as f64 - a as f64).mul_add(t, a as f64) as u8
 }
 
 /// Build the dynamic status spans (elapsed, spinner, tools, shells, agents).
@@ -72,34 +144,53 @@ pub fn build_spans(state: &TuiStatusState) -> Vec<Span<'static>> {
 
     let mut spans: Vec<Span<'static>> = Vec::new();
 
-    // Show spinner first whenever generating — label changes based on phase:
-    //   "thinking"   — extended thinking or between submit and first TextDelta
-    //   "running"    — tool is running
-    //   "generating" — streaming text back, or waiting for next response after tools
     if state.is_generating {
-        const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-        let ch = SPINNER[state.spinner_frame % SPINNER.len()];
-        let label = if state.thinking {
-            "Thinking"
-        } else if !state.active_tools.is_empty() {
-            "Running"
+        // Bounce animation: forward 0→9, backward 9→0 (aligned with official CC).
+        let idx = state.spinner_frame % BOUNCE_LEN;
+        let ch = if idx < SPINNER.len() {
+            SPINNER[idx]
         } else {
-            "Generating"
+            SPINNER[BOUNCE_LEN - idx]
         };
-        // Stall detection: yellow after 30s, red after 60s.
+        let label = state.current_verb.unwrap_or(verbs::THINKING_VERB);
         let spinner_style = if let Some(since) = state.generating_since {
-            let elapsed = since.elapsed().as_secs();
-            if elapsed >= 60 {
-                Style::default().fg(Color::Red)
-            } else if elapsed >= 30 {
-                Style::default().fg(Color::Yellow)
+            let time_since_token = state
+                .last_token_time
+                .map(|t| t.elapsed().as_millis())
+                .unwrap_or_else(|| since.elapsed().as_millis());
+            // Intensity ramps from 0 at 3s to 1 at 5s, clamped to [0, 1].
+            let intensity = ((time_since_token as f64 - 3000.0) / 2000.0).clamp(0.0, 1.0);
+            if intensity > 0.0 {
+                let r = lerp_u8(0, 171, intensity);
+                let g = lerp_u8(0, 43, intensity);
+                let b = lerp_u8(255, 63, intensity);
+                Style::default().fg(Color::Rgb(r, g, b))
             } else {
                 tool_style
             }
         } else {
             tool_style
         };
-        spans.push(Span::styled(format!("{ch} {label}"), spinner_style));
+        spans.push(Span::styled(ch, spinner_style));
+        // SpinnerModeGlyph: ↑ requesting, ↓ responding (aligned with official CC).
+        let mode = if state.last_token_time.is_some() { "\u{2193}" } else { "\u{2191}" };
+        spans.push(Span::styled(mode, spinner_style));
+        spans.push(Span::raw(" "));
+        // Shimmer: sweep a highlight window across the verb.
+        let shimmer_tick =
+            ((state.spinner_frame as u64 * SPINNER_TICK_INTERVAL_MS) / SHIMMER_INTERVAL_MS)
+                as usize;
+        let (before, shimmer, after) =
+            verbs::compute_shimmer_segments(label, shimmer_tick);
+        if !before.is_empty() {
+            spans.push(Span::styled(before, dim));
+        }
+        if !shimmer.is_empty() {
+            spans.push(Span::styled(shimmer, spinner_style));
+        }
+        if !after.is_empty() {
+            spans.push(Span::styled(after, dim));
+        }
     }
 
     // Elapsed time after spinner
@@ -109,22 +200,7 @@ pub fn build_spans(state: &TuiStatusState) -> Vec<Span<'static>> {
     let tool_count = state.active_tools.len();
     if tool_count > 0 {
         if let Some(tool) = state.active_tools.values().next() {
-            let te = tool.started.elapsed();
-            let suffix = if tool_count > 1 {
-                format!(" +{}", tool_count - 1)
-            } else {
-                String::new()
-            };
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(
-                format!(
-                    "{} ({:02}:{:02}){suffix}",
-                    tool.name,
-                    te.as_secs() / 60,
-                    te.as_secs() % 60
-                ),
-                warn,
-            ));
+            push_active_item(&mut spans, &tool.name, tool.started.elapsed(), tool_count, warn);
         }
     }
 
@@ -139,9 +215,9 @@ pub fn build_spans(state: &TuiStatusState) -> Vec<Span<'static>> {
 
     let agent_count = state.active_agents.len();
     if agent_count > 0 {
-        let s = if agent_count == 1 { "" } else { "s" };
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(format!("{agent_count} agent{s}"), warn));
+        if let Some(agent) = state.active_agents.values().next() {
+            push_active_item(&mut spans, &agent.name, agent.started.elapsed(), agent_count, warn);
+        }
     }
 
     spans

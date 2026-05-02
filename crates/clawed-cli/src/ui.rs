@@ -160,7 +160,7 @@ fn draw_select_items(out: &mut io::Stderr, items: &[SelectItem], cursor: usize) 
 /// Returns `None` if the user cancelled.
 /// Returns the byte offset in `s` corresponding to char index `char_idx`.
 fn char_to_byte(s: &str, char_idx: usize) -> usize {
-    s.char_indices().nth(char_idx).map_or(s.len(), |(b, _)| b)
+    crate::tui::verbs::char_to_byte(s, char_idx)
 }
 
 type InputValidator = Box<dyn Fn(&str) -> Result<(), String>>;

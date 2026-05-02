@@ -392,6 +392,8 @@ pub(crate) fn format_tokens(n: u64) -> String {
     }
 }
 
+/// Format cost for REPL status output. Uses tighter zero threshold than
+/// `clawed_core::model::format_cost` so tiny costs display as "$0.00".
 pub(crate) fn format_cost(cost: f64) -> String {
     if cost >= 0.5 {
         format!("${:.2}", cost)

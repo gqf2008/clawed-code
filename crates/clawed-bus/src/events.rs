@@ -81,6 +81,7 @@ pub enum AgentNotification {
         total_input_tokens: u64,
         total_output_tokens: u64,
         context_usage_pct: f64,
+        total_cost_usd: f64,
     },
 
     /// Conversation history was cleared.

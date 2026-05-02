@@ -608,6 +608,7 @@ impl AgentCoreAdapter {
             )
         };
         let context_usage_pct = self.engine.context_usage_percent().await.unwrap_or(0) as f64;
+        let total_cost_usd = self.engine.cost_tracker().total_usd();
 
         let bus = self.bus.lock().await;
         bus.notify(AgentNotification::SessionStatus {
@@ -617,6 +618,7 @@ impl AgentCoreAdapter {
             total_input_tokens,
             total_output_tokens,
             context_usage_pct,
+            total_cost_usd,
         });
     }
 

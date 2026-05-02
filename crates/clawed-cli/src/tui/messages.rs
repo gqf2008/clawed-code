@@ -1,3 +1,4 @@
+use super::verbs::{ERROR_MARKER, THINKING_MARKER, TURN_COMPLETION_MARKER, WARNING_MARKER};
 use super::{markdown, MUTED};
 
 use clawed_core::text_util::strip_system_reminders;
@@ -97,11 +98,14 @@ struct ToolRenderCtx<'a> {
     live_duration_ms: Option<u64>,
 }
 
+/// Continuation prefix for assistant-side output lines (aligned with official CC).
+const CONTINUATION_PREFIX: &str = "\u{23BF}  ";
+
 /// A single message with timestamp and line cache.
 #[derive(Debug, Clone)]
 pub struct Message {
     pub content: MessageContent,
-    #[allow(dead_code)] // Reserved for Phase 5 timestamp display
+    #[allow(dead_code)]
     pub timestamp: Instant,
     /// Whether the tool execution is collapsed (true = show header only).
     pub collapsed: bool,
@@ -163,6 +167,13 @@ impl Message {
             _ => return,
         }
 
+        // When collapsed, the cached lines contain the collapse hint, not
+        // thinking content. Skip incremental update to avoid corrupting the hint.
+        if self.collapsed {
+            *self.cached_lines.borrow_mut() = None;
+            return;
+        }
+
         let cached_lines = self.cached_lines.get_mut();
         if let Some(lines) = cached_lines.as_mut() {
             let style = Style::default().fg(MUTED).add_modifier(Modifier::ITALIC);
@@ -175,15 +186,21 @@ impl Message {
             let Some(first) = iter.next() else {
                 return;
             };
+            if lines.is_empty() {
+                lines.push(Line::styled(
+                    format!("{THINKING_MARKER} Thinking\u{2026}"),
+                    style,
+                ));
+            }
             if let Some(last_line) = lines.last_mut() {
                 let mut merged = line_text(last_line);
                 merged.push_str(first);
                 *last_line = Line::styled(merged, style);
             } else {
-                lines.push(Line::styled(format!("│ {first}"), style));
+                lines.push(Line::styled(format!("  {first}"), style));
             }
             for part in iter {
-                lines.push(Line::styled(format!("│ {part}"), style));
+                lines.push(Line::styled(format!("  {part}"), style));
             }
             return;
         }
@@ -227,9 +244,12 @@ impl Message {
         }
     }
 
-    /// Toggle collapsed state for tool executions.
+    /// Toggle collapsed state for tool executions and thinking blocks.
     pub fn toggle_collapsed(&mut self) {
-        if matches!(self.content, MessageContent::ToolExecution { .. }) {
+        if matches!(
+            self.content,
+            MessageContent::ToolExecution { .. } | MessageContent::ThinkingText(_)
+        ) {
             self.collapsed = !self.collapsed;
             self.invalidate_cache();
         }
@@ -300,15 +320,27 @@ impl Message {
                 if text.is_empty() {
                     return vec![];
                 }
-                // Visual distinction: muted italic with a pipe prefix.
-                text.lines()
-                    .map(|l| {
-                        Line::styled(
-                            format!("│ {l}"),
-                            Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
-                        )
-                    })
-                    .collect()
+                let dim_italic = Style::default().fg(MUTED).add_modifier(Modifier::ITALIC);
+                if self.collapsed {
+                    return vec![Line::from(vec![
+                        Span::styled(
+                            format!("{THINKING_MARKER} Thinking"),
+                            dim_italic,
+                        ),
+                        Span::raw("  "),
+                        Span::styled("(Ctrl+O to expand)", Style::default().fg(MUTED)),
+                    ])];
+                }
+                let mut lines: Vec<Line<'static>> = Vec::new();
+                lines.push(Line::styled(
+                    format!("{THINKING_MARKER} Thinking\u{2026}"),
+                    dim_italic,
+                ));
+                // Body lines with indent.
+                for l in text.lines() {
+                    lines.push(Line::styled(format!("  {l}"), dim_italic));
+                }
+                lines
             }
             MessageContent::ToolExecution {
                 name,
@@ -329,10 +361,20 @@ impl Message {
                 has_sibling_after,
                 live_duration_ms,
             }),
-            MessageContent::System(text) => text
-                .lines()
-                .map(|l| Line::styled(l.to_string(), Style::default().fg(Color::Yellow)))
-                .collect(),
+            MessageContent::System(text) => {
+                let style = if text.starts_with(ERROR_MARKER) {
+                    Style::default().fg(Color::Red)
+                } else if text.starts_with(WARNING_MARKER)
+                    || text.starts_with(TURN_COMPLETION_MARKER)
+                {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(MUTED)
+                };
+                text.lines()
+                    .map(|l| Line::styled(l.to_string(), style))
+                    .collect()
+            }
         }
     }
 
@@ -367,12 +409,18 @@ impl Message {
         ));
         let bullet_color = if ctx.is_error {
             Color::Red
+        } else if ctx.live_duration_ms.is_some() {
+            MUTED
         } else {
             Color::Green
         };
-        header_spans.push(Span::styled("● ", Style::default().fg(bullet_color)));
         header_spans.push(Span::styled(
-            ctx.name.to_string(),
+            "\u{23FA} ",
+            Style::default().fg(bullet_color),
+        ));
+        let display_name = super::user_facing_tool_name(ctx.name);
+        header_spans.push(Span::styled(
+            display_name.to_string(),
             Style::default().add_modifier(Modifier::BOLD),
         ));
         if let Some(cmd) = ctx.input {
@@ -386,11 +434,11 @@ impl Message {
         }
         lines.push(Line::from(header_spans));
 
-        // ── Output lines ──
+        // ── Output lines (diff-colored like expanded results) ──
         for line in ctx.output_lines {
             lines.push(Line::styled(
-                format!("{output_indent}{}", line),
-                Style::default().fg(MUTED),
+                format!("{output_indent}{CONTINUATION_PREFIX}{}", line),
+                diff_line_style(line),
             ));
         }
 
@@ -412,7 +460,7 @@ impl Message {
                 ""
             };
             lines.push(Line::styled(
-                format!("{output_indent}{marker}({})", dur),
+                format!("{output_indent}{CONTINUATION_PREFIX}{marker}({})", dur),
                 Style::default().fg(MUTED),
             ));
         }
@@ -420,7 +468,7 @@ impl Message {
         // ── Error indicator ──
         if ctx.is_error {
             lines.push(Line::styled(
-                format!("{output_indent}✗ failed"),
+                format!("{output_indent}{CONTINUATION_PREFIX}✗ failed"),
                 Style::default().fg(Color::Red),
             ));
         }
@@ -434,12 +482,15 @@ impl Message {
                     let total = full.lines().count();
                     for l in &preview_lines {
                         let style = diff_line_style(l);
-                        lines.push(Line::styled(format!("{output_indent}{}", l), style));
+                        lines.push(Line::styled(
+                            format!("{output_indent}{CONTINUATION_PREFIX}{}", l),
+                            style,
+                        ));
                     }
                     if total > 5 {
                         lines.push(Line::styled(
                             format!(
-                                "{output_indent}+ {} more lines (Ctrl+O to expand)",
+                                "{output_indent}{CONTINUATION_PREFIX}+ {} more lines (Ctrl+E to expand)",
                                 total - 5
                             ),
                             Style::default().fg(MUTED),
@@ -448,7 +499,7 @@ impl Message {
                 } else {
                     let n = full.lines().count();
                     lines.push(Line::styled(
-                        format!("{output_indent}+ {n} more lines (Ctrl+O to expand)"),
+                        format!("{output_indent}{CONTINUATION_PREFIX}+ {n} more lines (Ctrl+E to expand)"),
                         Style::default().fg(MUTED),
                     ));
                 }
@@ -456,7 +507,10 @@ impl Message {
                 lines.push(Line::from(""));
                 for l in full.lines() {
                     let style = diff_line_style(l);
-                    lines.push(Line::styled(format!("{output_indent}{}", l), style));
+                    lines.push(Line::styled(
+                        format!("{output_indent}{CONTINUATION_PREFIX}{}", l),
+                        style,
+                    ));
                 }
                 lines.push(Line::from(""));
             }
@@ -577,7 +631,7 @@ mod tests {
             .map(|s| s.content.as_ref())
             .collect();
         assert!(last_text.contains("+ 6 more lines"));
-        assert!(last_text.contains("Ctrl+O to expand"));
+        assert!(last_text.contains("Ctrl+E to expand"));
     }
 
     #[test]
@@ -644,35 +698,41 @@ mod tests {
     #[test]
     fn append_thinking_text_extends_cache() {
         let mut msg = Message::new(MessageContent::ThinkingText("thinking".into()));
-        assert_eq!(msg.to_lines_with_context(false, None).len(), 1);
+        msg.collapsed = false;
+        assert_eq!(msg.to_lines_with_context(false, None).len(), 2);
 
         msg.append_thinking_text("...\nmore");
         let lines = msg.to_lines_with_context(false, None);
 
-        assert_eq!(lines.len(), 2);
-        // Thinking lines now carry a "│ " prefix.
-        assert_eq!(line_text(&lines[0]), "│ thinking...");
-        assert_eq!(line_text(&lines[1]), "│ more");
+        assert_eq!(lines.len(), 3);
+        assert_eq!(line_text(&lines[1]), "  thinking...");
+        assert_eq!(line_text(&lines[2]), "  more");
     }
 
     #[test]
     fn thinking_text_has_muted_italic_style() {
-        let msg = Message::new(MessageContent::ThinkingText("hello".into()));
+        let mut msg = Message::new(MessageContent::ThinkingText("hello".into()));
+        msg.collapsed = false;
         let lines = msg.to_lines_with_context(false, None);
+        // Header line: "∴ Thinking…"
         assert_eq!(lines[0].style.fg, Some(MUTED));
         assert!(lines[0].style.add_modifier.contains(Modifier::ITALIC));
-        assert!(line_text(&lines[0]).starts_with('│'));
+        assert!(line_text(&lines[0]).starts_with('\u{2234}'));
+        // Body line: "  hello"
+        assert_eq!(lines[1].style.fg, Some(MUTED));
+        assert!(lines[1].style.add_modifier.contains(Modifier::ITALIC));
     }
 
     #[test]
     fn append_thinking_text_newlines_match_lines_behavior() {
         let mut msg = Message::new(MessageContent::ThinkingText("a".into()));
+        msg.collapsed = false;
         // Append text that ends with a newline — should match str::lines() behavior.
         msg.append_thinking_text("\nb\n");
         let lines = msg.to_lines_with_context(false, None);
-        // "a\nb\n".lines() → ["a", "b"]
-        assert_eq!(lines.len(), 2);
-        assert_eq!(line_text(&lines[0]), "│ a");
-        assert_eq!(line_text(&lines[1]), "│ b");
+        // "a\nb\n".lines() → ["a", "b"], plus header.
+        assert_eq!(lines.len(), 3);
+        assert_eq!(line_text(&lines[1]), "  a");
+        assert_eq!(line_text(&lines[2]), "  b");
     }
 }

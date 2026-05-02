@@ -21,6 +21,7 @@ mod permission;
 mod status;
 mod taskplan;
 mod textarea;
+pub(crate) mod verbs;
 
 pub use input::InputWidget;
 
@@ -30,7 +31,7 @@ use std::{io, path::PathBuf};
 
 use clawed_agent::engine::QueryEngine;
 use clawed_bus::bus::ClientHandle;
-use clawed_bus::events::{AgentNotification, ImageAttachment, PermissionRequest};
+use clawed_bus::events::{AgentNotification, ErrorCode, ImageAttachment, PermissionRequest};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
 };
@@ -56,10 +57,10 @@ type TuiTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io:
 /// Subdued text color for hints, separators, status indicators, and input text.
 /// Uses a true-color gray that is readable on both dark and light backgrounds,
 /// unlike `Color::DarkGray` (ANSI 8) which maps to bright on many terminals.
-const MUTED: Color = Color::Rgb(140, 140, 140);
+pub(super) const MUTED: Color = Color::Rgb(140, 140, 140);
 const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const SPINNER_TICK_INTERVAL: Duration = Duration::from_millis(80);
+const SPINNER_TICK_INTERVAL: Duration = Duration::from_millis(verbs::SPINNER_TICK_INTERVAL_MS);
 /// Minimum time between renders during active streaming. Prevents the event loop
 /// from spending all its CPU on rendering, leaving no time for input processing.
 const MIN_RENDER_INTERVAL: Duration = Duration::from_millis(50);
@@ -68,33 +69,6 @@ const MIN_RENDER_INTERVAL: Duration = Duration::from_millis(50);
 /// invalidates ratatui's diff-based rendering when not using alternate screen.
 const PERIODIC_CLEAR_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_COMPLETION_POPUP_ITEMS: usize = 10;
-
-fn collapsed_thinking_lines(text: &str) -> Vec<Line<'static>> {
-    if text.is_empty() {
-        return vec![];
-    }
-
-    let line_count = text.lines().count();
-    if line_count <= 3 {
-        // Short thinking (≤3 lines) — render with muted/italic style + 💭 prefix
-        return text
-            .lines()
-            .enumerate()
-            .map(|(i, l)| {
-                let prefix = if i == 0 { "💭 " } else { "   " };
-                Line::styled(
-                    format!("{prefix}{l}"),
-                    Style::default().fg(MUTED).add_modifier(Modifier::ITALIC),
-                )
-            })
-            .collect();
-    }
-
-    vec![Line::styled(
-        format!("💭 + {line_count} more lines (Ctrl+O to expand)"),
-        Style::default().fg(MUTED),
-    )]
-}
 
 fn plain_text_lines(text: &str) -> Vec<Line<'static>> {
     if text.is_empty() {
@@ -208,16 +182,37 @@ fn parse_inline_spans(line: &str) -> Vec<Span<'static>> {
     spans
 }
 
-/// Extract a short display string from tool input JSON for the header line.
-/// e.g. Bash → `command` field, Read → `path` field.
+/// Map raw tool names to user-facing display names (CC-aligned).
+/// Uses byte-level comparison to avoid allocation on the render path.
+pub(super) fn user_facing_tool_name(raw: &str) -> &str {
+    match raw.as_bytes() {
+        b"bash" | b"Bash" | b"shell" | b"Shell" => "Bash",
+        b"read" | b"Read" | b"read_file" | b"ReadFile" => "Read",
+        b"write" | b"Write" | b"write_file" | b"WriteFile" => "Write",
+        b"edit" | b"Edit" | b"multi_edit" | b"MultiEdit" => "Edit",
+        b"glob" | b"Glob" => "Glob",
+        b"grep" | b"Grep" => "Grep",
+        b"ls" | b"LS" | b"Ls" => "LS",
+        b"web_search" | b"WebSearch" | b"websearch" | b"Web_Search" => "Web Search",
+        b"web_fetch" | b"WebFetch" | b"webfetch" | b"Web_Fetch" => "Web Fetch",
+        b"task" | b"Task" | b"task_create" | b"TaskCreate" => "Task",
+        b"agent" | b"Agent" => "Agent",
+        s if s.starts_with(b"mcp__") => &raw[5..],
+        _ => raw,
+    }
+}
+
 fn extract_tool_input_display(tool_name: &str, input: &serde_json::Value) -> Option<String> {
     let key = match tool_name.to_lowercase().as_str() {
         "bash" | "shell" => "command",
-        "read" | "read_file" | "write" | "write_file" | "edit" | "multi_edit" => "path",
+        "read" | "read_file" | "write" | "write_file" | "edit" | "multi_edit" => "file_path",
         "web_search" | "websearch" => "query",
         "web_fetch" | "webfetch" => "url",
         "ls" => "path",
+        "glob" => "pattern",
         "grep" => "pattern",
+        "agent" => "agent_type",
+        "task_create" => "subject",
         _ => return None,
     };
     input
@@ -273,6 +268,7 @@ struct LayoutSignature {
     input_rows: u16,
     queue_rows: u16,
     task_plan_rows: u16,
+    has_tip: bool,
     /// Terminal width — changes cause word-wrap differences that can leave
     /// ghost cells if not cleared.
     term_width: u16,
@@ -624,6 +620,16 @@ struct App {
     messages: Vec<Message>,
     scroll_offset: usize,
     auto_scroll: bool,
+    /// Message count at the moment user first scrolls away (used for "N new" pill).
+    divider_message_count: Option<usize>,
+    /// Current prompt text to display in sticky header when scrolled up.
+    sticky_prompt_text: Option<String>,
+    /// Vim mode: "INSERT", "NORMAL", "VISUAL", or None if vim disabled.
+    vim_mode: Option<String>,
+    /// API rate limit usage percentage (0.0–100.0) if available.
+    rate_limit_pct: Option<f64>,
+    /// Whether reduced motion is enabled (disables spinner/shimmer animations).
+    reduced_motion: bool,
     input: InputWidget,
     footer_picker: Option<FooterPicker>,
     status: TuiStatusState,
@@ -631,7 +637,6 @@ struct App {
     permission: Option<PendingPermission>,
     overlay: Option<Overlay>,
     bottom_bar_hidden: bool,
-    thinking_collapsed: bool,
     running: bool,
     /// Set to true when the terminal needs a full clear before the next draw.
     /// This is only required when the layout geometry changes (footer/input/task
@@ -644,6 +649,8 @@ struct App {
     context_tokens: u64,
     /// Cumulative output tokens generated across all turns.
     total_output_tokens: u64,
+    /// Total session cost in USD (from cost tracker).
+    total_cost_usd: f64,
     model: String,
     pending_images: Vec<ImageAttachment>,
     /// Async command waiting to be executed in the event loop (needs engine access).
@@ -694,6 +701,11 @@ impl App {
             messages: Vec::new(),
             scroll_offset: 0,
             auto_scroll: true,
+            divider_message_count: None,
+            sticky_prompt_text: None,
+            vim_mode: None,
+            rate_limit_pct: None,
+            reduced_motion: false,
             input: InputWidget::new(),
             footer_picker: None,
             status: TuiStatusState::new(),
@@ -701,13 +713,13 @@ impl App {
             permission: None,
             overlay: None,
             bottom_bar_hidden: false,
-            thinking_collapsed: true,
             running: true,
             needs_full_clear: false,
             needs_redraw: true,
             total_turns: 0,
             context_tokens: 0,
             total_output_tokens: 0,
+            total_cost_usd: 0.0,
             model,
             pending_images: Vec::new(),
             pending_command: None,
@@ -764,12 +776,6 @@ impl App {
 
     fn visible_message_lines_at(&self, index: usize) -> Vec<Line<'static>> {
         let msg = &self.messages[index];
-
-        if self.thinking_collapsed {
-            if let MessageContent::ThinkingText(text) = &msg.content {
-                return collapsed_thinking_lines(text);
-            }
-        }
 
         if self.is_generating && index + 1 == self.messages.len() {
             if let MessageContent::AssistantText(text) = &msg.content {
@@ -921,8 +927,8 @@ impl App {
             || lower.contains("terminated")
             || lower.contains("warning")
             || lower.contains("context")
-            || text.contains('\u{2717}') // ✗
-            || text.contains('\u{26A0}') // ⚠
+            || text.contains(verbs::ERROR_MARKER)
+            || text.contains(verbs::WARNING_MARKER)
     }
 
     fn clear_messages(&mut self) {
@@ -979,6 +985,7 @@ impl App {
             input_rows: self.input.visible_rows(),
             queue_rows,
             task_plan_rows: self.task_plan.render_height(),
+            has_tip: self.status.has_tip(),
             term_width: self.term_width,
             term_height: self.term_height,
         }
@@ -991,6 +998,8 @@ impl App {
         self.status.thinking = true;
         self.status.is_generating = true;
         self.status.generating_since = Some(Instant::now());
+        self.status.last_token_time = None;
+        self.status.current_verb = Some(verbs::random_spinner_verb());
         self.is_generating = true;
         self.footer_picker = None;
         self.invalidate_visible_lines();
@@ -1005,6 +1014,8 @@ impl App {
         self.status.thinking = false;
         self.status.is_generating = false;
         self.status.generating_since = None;
+        self.status.last_token_time = None;
+        self.status.current_verb = None;
         self.is_generating = false;
         self.invalidate_visible_lines();
         self.last_spinner_tick = Instant::now();
@@ -1109,13 +1120,20 @@ impl App {
         match notification {
             AgentNotification::TextDelta { text } => {
                 self.status.thinking = false;
+                self.status.record_token();
+                if self.status.current_verb == Some(verbs::THINKING_VERB) {
+                    self.status.current_verb = Some(verbs::random_spinner_verb());
+                }
                 self.append_assistant_text(&text);
             }
             AgentNotification::ThinkingDelta { text } => {
                 self.status.thinking = true;
+                self.status.record_token();
+                self.status.current_verb = Some(verbs::THINKING_VERB);
                 self.append_thinking_text(&text);
             }
             AgentNotification::ToolUseStart { tool_name, .. } => {
+                self.status.record_token();
                 if tool_name.to_lowercase().contains("bash")
                     || tool_name.to_lowercase().contains("shell")
                 {
@@ -1241,6 +1259,27 @@ impl App {
                 // appear frozen — that causes the user to think the 1st submit was
                 // lost and submit again unnecessarily.
                 if !self.expecting_turn_start {
+                    if let Some(start) = self.status.generating_since.take() {
+                        let ms = start.elapsed().as_millis() as u64;
+                        let verb = verbs::random_turn_verb();
+                        let duration = verbs::format_duration(ms);
+                        let mut msg = format!(
+                            "{marker} {verb} for {duration}",
+                            marker = verbs::TURN_COMPLETION_MARKER
+                        );
+                        // Append "still running" counts when tools/agents outlive the turn.
+                        let shells = self.status.active_shells;
+                        let agents = self.status.active_agents.len();
+                        if shells > 0 {
+                            let s = if shells == 1 { "" } else { "s" };
+                            msg.push_str(&format!(" \u{00B7} {shells} shell{s} still running"));
+                        }
+                        if agents > 0 {
+                            let s = if agents == 1 { "" } else { "s" };
+                            msg.push_str(&format!(" \u{00B7} {agents} agent{s} still running"));
+                        }
+                        self.push_message(MessageContent::System(msg));
+                    }
                     self.mark_done();
                 } else if self.status.generating_since.map(|s| s.elapsed().as_secs() > 5).unwrap_or(false) {
                     // Safety net: TurnStart may be delayed or lost (e.g. forwarder
@@ -1280,9 +1319,16 @@ impl App {
                 let label = name.unwrap_or_else(|| agent_id.chars().take(8).collect::<String>());
                 self.task_plan.add_task(agent_id.clone(), label.clone());
                 self.push_message(MessageContent::System(format!(
-                    "\u{1F916} Agent spawned: {label}"
+                    "{info} Agent spawned: {label}",
+                    info = verbs::INFO_MARKER
                 )));
-                self.status.active_agents.insert(agent_id, label);
+                self.status.active_agents.insert(
+                    agent_id,
+                    status::AgentInfo {
+                        name: label,
+                        started: Instant::now(),
+                    },
+                );
             }
             AgentNotification::AgentComplete {
                 agent_id,
@@ -1291,7 +1337,7 @@ impl App {
             } => {
                 self.task_plan.complete_task(&agent_id, is_error);
                 self.status.active_agents.remove(&agent_id);
-                let icon = if is_error { "\u{2717}" } else { "\u{2713}" };
+                let icon = if is_error { verbs::ERROR_MARKER } else { "\u{2713}" };
                 self.push_message(MessageContent::System(format!(
                     "{icon} Agent finished: {result}"
                 )));
@@ -1300,22 +1346,44 @@ impl App {
                 self.task_plan.terminate_task(&agent_id);
                 self.status.active_agents.remove(&agent_id);
                 self.push_message(MessageContent::System(format!(
-                    "\u{26A0} Agent terminated: {reason}"
+                    "{warn} Agent terminated: {reason}",
+                    warn = verbs::WARNING_MARKER
                 )));
             }
             AgentNotification::SessionEnd { reason } => {
-                self.push_message(MessageContent::System(format!("Session ended: {reason}")));
+                self.push_message(MessageContent::System(format!(
+                    "{info} Session ended: {reason}", info = verbs::INFO_MARKER
+                )));
             }
             AgentNotification::CompactStart => {
-                self.push_message(MessageContent::System(
-                    "\u{27F3} Compacting context...".to_string(),
-                ));
+                self.push_message(MessageContent::System(format!(
+                    "{marker} Compacting context\u{2026}",
+                    marker = verbs::THINKING_MARKER
+                )));
             }
             AgentNotification::CompactComplete { .. } => {
-                self.push_message(MessageContent::System("Context compacted".to_string()));
+                self.push_message(MessageContent::System(format!(
+                    "{marker} Conversation compacted (Ctrl+O for history)",
+                    marker = verbs::TURN_COMPLETION_MARKER
+                )));
             }
-            AgentNotification::Error { message, .. } => {
-                self.push_message(MessageContent::System(format!("\u{2717} Error: {message}")));
+            AgentNotification::Error { code, message } => {
+                let label = match code {
+                    ErrorCode::ApiError => "API error",
+                    ErrorCode::ToolError => "Tool error",
+                    ErrorCode::ContextOverflow => "Context overflow",
+                    ErrorCode::NetworkError => "Network error",
+                    ErrorCode::PermissionDenied => "Permission denied",
+                    ErrorCode::InternalError => "Internal error",
+                };
+                let prefix = if matches!(code, ErrorCode::ContextOverflow) {
+                    verbs::WARNING_MARKER
+                } else {
+                    verbs::ERROR_MARKER
+                };
+                self.push_message(MessageContent::System(format!(
+                    "{prefix} {label}: {message}"
+                )));
                 self.mark_done();
                 self.clear_tool_state();
             }
@@ -1324,30 +1392,25 @@ impl App {
                 display_name,
             } => {
                 self.model = model;
-                self.push_message(MessageContent::System(format!("Model: {display_name}")));
+                self.push_message(MessageContent::System(format!(
+                    "{info} Switched to {display_name}", info = verbs::INFO_MARKER
+                )));
             }
             AgentNotification::SkillsActivated { names } => {
                 let list = names.join(", ");
                 self.push_message(MessageContent::System(format!(
-                    "\u{1f9e9} Skills activated: {list}"
+                    "{info} Skills: {list}", info = verbs::INFO_MARKER
                 )));
-                // Skill names for tab-completion were already loaded at startup
-                // and on /reload-context; activation doesn't change the name list.
             }
-            // Notifications that now produce visible output
             AgentNotification::SessionStatus {
-                model,
                 total_turns,
                 total_input_tokens,
                 total_output_tokens,
                 context_usage_pct,
+                total_cost_usd,
                 ..
             } => {
                 self.status.context_pct = context_usage_pct;
-                // Initialise counters from the authoritative session state.
-                // total_input_tokens from the engine is the accumulated sum across all turns
-                // (for billing). We display only the latest context size (context_tokens),
-                // so use it as the seed if we have no local value yet.
                 if self.context_tokens == 0 && total_input_tokens > 0 {
                     self.context_tokens = total_input_tokens;
                 }
@@ -1355,9 +1418,7 @@ impl App {
                     self.total_output_tokens = total_output_tokens;
                 }
                 self.total_turns = self.total_turns.max(total_turns);
-                self.push_message(MessageContent::System(format!(
-                    "Model: {model} | Turns: {total_turns} | Tokens: {total_input_tokens}\u{2191} {total_output_tokens}\u{2193} | Context: {context_usage_pct:.0}%",
-                )));
+                self.total_cost_usd = total_cost_usd;
             }
             AgentNotification::McpServerConnected { name, tool_count } => {
                 self.push_message(MessageContent::System(format!(
@@ -1365,11 +1426,14 @@ impl App {
                 )));
             }
             AgentNotification::McpServerDisconnected { name } => {
-                self.push_message(MessageContent::System(format!("MCP disconnected: {name}",)));
+                self.push_message(MessageContent::System(format!(
+                    "{error} MCP disconnected: {name}", error = verbs::ERROR_MARKER
+                )));
             }
             AgentNotification::McpServerError { name, error } => {
                 self.push_message(MessageContent::System(format!(
-                    "✗ MCP error [{name}]: {error}",
+                    "{icon} MCP error [{name}]: {error}",
+                    icon = verbs::ERROR_MARKER
                 )));
             }
             AgentNotification::McpServerList { servers } => {
@@ -1424,25 +1488,29 @@ impl App {
             AgentNotification::ContextWarning { usage_pct, message } => {
                 self.status.context_pct = usage_pct;
                 self.push_message(MessageContent::System(format!(
-                    "\u{26A0} Context {usage_pct:.0}%: {message}",
+                    "{warn} Context {usage_pct:.0}%: {message}",
+                    warn = verbs::WARNING_MARKER,
                 )));
             }
             AgentNotification::MemoryExtracted { facts } => {
-                let mut lines = String::from("Memory extracted:\n");
-                for f in &facts {
-                    lines.push_str(&format!("  • {f}\n"));
-                }
-                self.push_message(MessageContent::System(lines));
+                let n = facts.len();
+                let s = if n == 1 { "" } else { "s" };
+                self.push_message(MessageContent::System(format!(
+                    "{info} Saved {n} memory{s}",
+                    info = verbs::INFO_MARKER,
+                )));
             }
             AgentNotification::HistoryCleared => {
                 self.clear_messages();
-                self.push_message(MessageContent::System(
-                    "Conversation history cleared.".to_string(),
-                ));
+                self.push_message(MessageContent::System(format!(
+                    "{info} Conversation history cleared",
+                    info = verbs::INFO_MARKER,
+                )));
             }
             AgentNotification::SessionSaved { session_id } => {
                 self.push_message(MessageContent::System(format!(
-                    "Session saved: {session_id}",
+                    "{info} Session saved: {session_id}",
+                    info = verbs::INFO_MARKER,
                 )));
             }
             // Tool selected — pre-execution signal (just a brief note)
@@ -1461,8 +1529,9 @@ impl App {
             // Conflict warning for concurrent agents
             AgentNotification::ConflictDetected { file_path, agents } => {
                 self.push_message(MessageContent::System(format!(
-                    "\u{26A0} Conflict on {file_path} between: {}",
+                    "{warn} Conflict on {file_path} between: {}",
                     agents.join(", "),
+                    warn = verbs::WARNING_MARKER,
                 )));
             }
             // Swarm lifecycle events
@@ -1471,12 +1540,14 @@ impl App {
                 agent_count,
             } => {
                 self.push_message(MessageContent::System(format!(
-                    "\u{1F41D} Swarm team '{team_name}' created ({agent_count} agents)",
+                    "{info} Swarm team '{team_name}' created ({agent_count} agents)",
+                    info = verbs::INFO_MARKER,
                 )));
             }
             AgentNotification::SwarmTeamDeleted { team_name } => {
                 self.push_message(MessageContent::System(format!(
-                    "\u{1F41D} Swarm team '{team_name}' deleted",
+                    "{info} Swarm team '{team_name}' deleted",
+                    info = verbs::INFO_MARKER,
                 )));
             }
             AgentNotification::SwarmAgentSpawned {
@@ -1511,7 +1582,7 @@ impl App {
                 text_preview,
                 is_error,
             } => {
-                let icon = if is_error { "\u{2717}" } else { "\u{2713}" };
+                let icon = if is_error { verbs::ERROR_MARKER } else { "\u{2713}" };
                 self.push_message(MessageContent::System(format!(
                     "  ↳ [{team_name}/{agent_id}] {icon} {text_preview}",
                 )));
@@ -1795,13 +1866,15 @@ fn render(frame: &mut Frame, app: &mut App) {
     // Suppress it when permission prompt is active (it has its own layout).
     let input_sep_rows = u16::from(!has_permission);
 
+    let tip_rows = if has_permission { 0 } else { u16::from(app.status.has_tip()) };
+
     let constraints = [
-        Constraint::Min(1),                 // messages
-        Constraint::Length(task_plan_rows), // task plan (0 if empty)
-        Constraint::Length(1),              // info line (static + dynamic, always 1 row)
-        Constraint::Length(queue_rows),     // queue items (0 or n)
-        Constraint::Length(input_sep_rows), // input separator (always 1, except perm)
-        Constraint::Length(footer_rows),    // input/permission footer
+        Constraint::Min(1),                        // messages
+        Constraint::Length(task_plan_rows),        // task plan (0 if empty)
+        Constraint::Length(1 + tip_rows),          // info line + optional tip
+        Constraint::Length(queue_rows),            // queue items (0 or n)
+        Constraint::Length(input_sep_rows),        // input separator (always 1, except perm)
+        Constraint::Length(footer_rows),           // input/permission footer
     ];
 
     let chunks = Layout::vertical(constraints).split(area);
@@ -2002,6 +2075,10 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         ));
     }
 
+    if app.total_cost_usd > 0.0 {
+        info_parts.push(clawed_core::model::format_cost(app.total_cost_usd));
+    }
+
     let ctx_text = if app.status.context_pct > 0.0 {
         Some(format!("{:.0}% ctx", app.status.context_pct))
     } else {
@@ -2052,7 +2129,7 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         spans.push(Span::styled(info, dim));
     }
 
-    // Context usage percentage with color-coded urgency.
+    // Context usage percentage with color-coded urgency + visual bar.
     if let Some(ctx) = ctx_text {
         let ctx_pct = app.status.context_pct;
         let ctx_style = if ctx_pct >= 80.0 {
@@ -2067,7 +2144,8 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         } else {
             " \u{2502} "
         };
-        let s = format!("{prefix}{ctx}");
+        let bar = context_bar(ctx_pct);
+        let s = format!("{prefix}{ctx} {bar}");
         spans.push(Span::styled(s, ctx_style));
     }
 
@@ -2081,30 +2159,49 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         ));
     }
 
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    let (main_area, tip_area) = if app.status.has_tip() && area.height > 1 {
+        let chunks = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(area);
+        (chunks[0], Some(chunks[1]))
+    } else {
+        (area, None)
+    };
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), main_area);
+
+    if let (Some(tip), Some(tip_area)) = (app.status.current_tip(), tip_area) {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(tip, dim))),
+            tip_area,
+        );
+    }
+}
+
+/// Pre-computed 5-segment unicode context bar (0–5 filled blocks).
+static CONTEXT_BARS: std::sync::LazyLock<[String; 6]> = std::sync::LazyLock::new(|| {
+    std::array::from_fn(|filled| {
+        let empty = 5 - filled;
+        format!("{}{}", "\u{2588}".repeat(filled), "\u{2591}".repeat(empty))
+    })
+});
+
+/// Build a 5-segment unicode bar for context usage.
+fn context_bar(pct: f64) -> &'static str {
+    const SEGMENTS: f64 = 5.0;
+    let segment_pct = 100.0 / SEGMENTS;
+    let filled = (pct / segment_pct).round().clamp(0.0, SEGMENTS) as usize;
+    &CONTEXT_BARS[filled]
 }
 
 /// Shorten a model identifier for display in the separator.
 /// e.g. "claude-3-5-sonnet-20241022" → "claude-3.5-sonnet"
 ///      "gpt-4o-mini"               → "gpt-4o-mini"
 fn shorten_model_name(model: &str) -> String {
-    // Strip known date suffix patterns like "-20241022" or "-2024-10-22"
-    let without_date = {
-        let mut s = model;
-        // trailing 8-digit date
-        if s.len() > 9 {
-            let tail = &s[s.len() - 9..];
-            if tail.starts_with('-') && tail[1..].chars().all(|c| c.is_ascii_digit()) {
-                s = &s[..s.len() - 9];
-            }
-        }
-        s
-    };
-    // Cap at 28 chars
-    if without_date.chars().count() > 28 {
-        without_date.chars().take(27).collect::<String>() + "…"
+    let display = clawed_core::model::display_name_any(model);
+    // Strip "Claude " prefix for compact display (e.g. "Claude Sonnet 4.6" → "Sonnet 4.6").
+    if let Some(short) = display.strip_prefix("Claude ") {
+        short.to_string()
     } else {
-        without_date.to_string()
+        display
     }
 }
 
@@ -2126,6 +2223,9 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     let image_style = Style::default().fg(Color::Magenta);
     let ghost_style = Style::default().fg(MUTED); // placeholder text stays muted
     let indicator_style = Style::default().fg(MUTED);
+    let badge_style = Style::default()
+        .fg(Color::LightCyan)
+        .add_modifier(Modifier::BOLD);
 
     let display_lines = app.input.display_lines();
     let img_count = app.pending_images.len();
@@ -2133,9 +2233,18 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     let (has_above, has_below) = app.input.scroll_indicators();
 
     let placeholder = if app.is_generating {
-        "Claude is thinking..."
+        let verb = app.status.current_verb.unwrap_or(verbs::THINKING_VERB);
+        format!("{verb}\u{2026}")
     } else {
-        "Message Claude..."
+        "Message Claude\u{2026}".to_string()
+    };
+
+    let model_badge = shorten_model_name(&app.model);
+    // Prefix width for cursor positioning: "> " + model_badge + " · " = 2 + badge.len() + 3
+    let prefix_width = if model_badge.is_empty() {
+        2usize
+    } else {
+        2 + model_badge.width() + 3
     };
 
     let lines: Vec<Line> = display_lines
@@ -2144,8 +2253,14 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
         .map(|(i, line_text)| {
             if i == 0 {
                 let mut spans = vec![Span::styled("> ", prompt_style)];
+                if !model_badge.is_empty() {
+                    spans.push(Span::styled(
+                        format!("{} \u{00B7} ", model_badge),
+                        badge_style,
+                    ));
+                }
                 if is_empty {
-                    spans.push(Span::styled(placeholder.to_string(), ghost_style));
+                    spans.push(Span::styled(placeholder.clone(), ghost_style));
                 } else {
                     spans.push(Span::styled((*line_text).to_string(), text_style));
                 }
@@ -2169,13 +2284,13 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
         let x = area.x + area.width - 1;
         if has_above {
             frame.render_widget(
-                Paragraph::new(Span::styled("▲", indicator_style)),
+                Paragraph::new(Span::styled("\u{25B2}", indicator_style)),
                 Rect::new(x, area.y, 1, 1),
             );
         }
         if has_below && area.height > 1 {
             frame.render_widget(
-                Paragraph::new(Span::styled("▼", indicator_style)),
+                Paragraph::new(Span::styled("\u{25BC}", indicator_style)),
                 Rect::new(x, area.y + area.height - 1, 1, 1),
             );
         }
@@ -2183,7 +2298,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
 
     // Position cursor
     let (cursor_row, cursor_col) = app.input.cursor_position();
-    let x = area.x + 2 + (cursor_col as u16).min(area.width.saturating_sub(3));
+    let x = area.x + prefix_width as u16 + (cursor_col as u16).min(area.width.saturating_sub(3));
     let y = area.y + (cursor_row as u16).min(area.height.saturating_sub(1));
     frame.set_cursor_position((x, y));
 }
@@ -2318,76 +2433,66 @@ fn render_footer_picker(
 }
 
 fn render_welcome_lines(width: u16, model: &str, permission_mode: &str) -> Vec<Line<'static>> {
+    let w = (width as usize).saturating_sub(4).min(58);
+
+    // ASCII art banner (block-character Clawd mascot, CC-aligned).
+    let art: &[&str] = &[
+        "  ▄▄▄▄▄▄▄    ▄▄▄▄▄▄▄    ▄▄▄▄▄▄▄    ▄▄▄▄▄▄ ",
+        " ▐███████▌  ▐███████▌  ▐███████▌   ███████▌",
+        "  ▀▀▀▀▀▀▀    ▀▀█▀▀▀     ▀▀▀█▀▀     ▀▀▀█▀▀ ",
+        "            ▐█▌           ▐█▌          ▐█▌  ",
+        "            ▐█▌           ▐█▌          ▐█▌  ",
+        "            ▐█▌           ▐█▌          ▐█▌  ",
+        "            ▐█▌           ▐█▌          ▐█▌  ",
+        "            ▐█▌           ▐█▌          ▐█▌  ",
+    ];
+
+    let cyan = Style::default().fg(Color::Cyan);
+    let white_bold = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+    let muted = Style::default().fg(MUTED);
+
+    let mut welcome = vec![Line::from("")];
+    for line in art {
+        welcome.push(Line::styled(line.to_string(), cyan));
+    }
+    welcome.push(Line::from(""));
+
     let title = format!("Clawed Code v{}", env!("CARGO_PKG_VERSION"));
-    let model_line = format!("Model: {model}");
+    let short_model = shorten_model_name(model);
+    let model_line = if short_model.is_empty() {
+        String::new()
+    } else {
+        format!("Model: {short_model}")
+    };
     let perm_line = if permission_mode.is_empty() || permission_mode == "default" {
         String::new()
     } else {
         format!("Permissions: {permission_mode}")
     };
-    let hints = "Tab: complete  \u{2191}\u{2193}: history  Ctrl+C: abort/quit  /help: commands";
-    let tip = "Tip: Use /compact to free context  \u{2022}  Ctrl+V to paste images";
 
-    let border_style = Style::default().fg(Color::Cyan);
-    let text_style = Style::default()
-        .fg(Color::White)
-        .add_modifier(Modifier::BOLD);
-    let model_style = Style::default().fg(Color::Cyan);
-    let hint_style = Style::default().fg(MUTED);
-    let tip_style = Style::default().fg(MUTED);
-
-    let inner_width = title
-        .width()
-        .max(model_line.width())
-        .max(perm_line.width())
-        .max(hints.width())
-        .max(tip.width())
-        .min((width as usize).saturating_sub(4));
-    let top = format!("\u{250C}{}\u{2510}", "\u{2500}".repeat(inner_width + 2));
-    let bot = format!("\u{2514}{}\u{2518}", "\u{2500}".repeat(inner_width + 2));
-
-    let center = |s: &str| -> String {
-        let sw = s.width().min(inner_width);
-        let left = (inner_width - sw) / 2;
-        let right = inner_width - sw - left;
+    let center = |s: &str, max_w: usize| -> String {
+        let sw = s.width().min(max_w);
+        let left = (max_w - sw) / 2;
+        let right = max_w - sw - left;
         format!("{}{}{}", " ".repeat(left), s, " ".repeat(right))
     };
 
-    let mut welcome = vec![
-        Line::from(""),
-        Line::styled(top, border_style),
-        Line::from(vec![
-            Span::styled("\u{2502} ", border_style),
-            Span::styled(center(&title), text_style),
-            Span::styled(" \u{2502}", border_style),
-        ]),
-        Line::from(vec![
-            Span::styled("\u{2502} ", border_style),
-            Span::styled(center(&model_line), model_style),
-            Span::styled(" \u{2502}", border_style),
-        ]),
-    ];
-    if !perm_line.is_empty() {
-        welcome.push(Line::from(vec![
-            Span::styled("\u{2502} ", border_style),
-            Span::styled(center(&perm_line), Style::default().fg(Color::Yellow)),
-            Span::styled(" \u{2502}", border_style),
-        ]));
+    welcome.push(Line::styled(center(&title, w), white_bold));
+    if !model_line.is_empty() {
+        welcome.push(Line::styled(center(&model_line, w), muted));
     }
-    welcome.extend(vec![
-        Line::from(vec![
-            Span::styled("\u{2502} ", border_style),
-            Span::styled(center(hints), hint_style),
-            Span::styled(" \u{2502}", border_style),
-        ]),
-        Line::from(vec![
-            Span::styled("\u{2502} ", border_style),
-            Span::styled(center(tip), tip_style),
-            Span::styled(" \u{2502}", border_style),
-        ]),
-        Line::styled(bot, border_style),
-        Line::from(""),
-    ]);
+    if !perm_line.is_empty() {
+        welcome.push(Line::styled(center(&perm_line, w), Style::default().fg(Color::Yellow)));
+    }
+    welcome.push(Line::from(""));
+    welcome.push(Line::styled(
+        center("Tab: complete  ↑↓: history  Ctrl+C: abort  /help: commands", w),
+        muted,
+    ));
+    welcome.push(Line::styled(
+        center("Tip: Use /compact to free context  •  Ctrl+V to paste images", w),
+        muted,
+    ));
     welcome
 }
 
@@ -2406,7 +2511,7 @@ async fn restore_skill_state_if_done(app: &mut App, engine: &Arc<QueryEngine>) {
 }
 
 /// Abort the current session: signal the engine, clean up UI state, and push
-/// an "[Aborted]" message. Shared by Esc, Ctrl+C, and the Esc-fallback path.
+/// an "Interrupted" message. Shared by Esc, Ctrl+C, and the Esc-fallback path.
 async fn abort_session(
     client: &ClientHandle,
     app: &mut App,
@@ -2420,7 +2525,10 @@ async fn abort_session(
     restore_skill_state_if_done(app, engine).await;
     app.pending_workflow = None;
     app.queued_inputs.clear();
-    app.push_message(MessageContent::System("[Aborted]".to_string()));
+    app.push_message(MessageContent::System(format!(
+        "{icon} Interrupted",
+        icon = verbs::ERROR_MARKER,
+    )));
 }
 
 /// Restore a session and replay its messages into the TUI, then push a status message.
@@ -2788,14 +2896,15 @@ pub async fn run_tui(
                             continue;
                         }
                         (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
-                            app.thinking_collapsed = !app.thinking_collapsed;
-                            // Invalidate caches of all thinking messages
-                            for msg in &app.messages {
-                                if matches!(msg.content, MessageContent::ThinkingText(_)) {
-                                    msg.invalidate_cache();
-                                }
+                            // Toggle collapse on the last thinking message.
+                            if let Some(msg) =
+                                app.messages.iter_mut().rev().find(|m| {
+                                    matches!(m.content, MessageContent::ThinkingText(_))
+                                })
+                            {
+                                msg.toggle_collapsed();
+                                app.invalidate_visible_lines();
                             }
-                            app.invalidate_visible_lines();
                             continue;
                         }
                         (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
@@ -2915,14 +3024,7 @@ pub async fn run_tui(
                                 if text.starts_with('/') {
                                     // Slash commands execute silently — no message history echo.
                                     if text == "/abort" {
-                                        let _ = client.abort();
-                                        app.mark_done();
-                                        restore_skill_state_if_done(&mut app, &engine).await;
-                                        app.pending_workflow = None;
-                                        app.queued_inputs.clear();
-                                        app.push_message(MessageContent::System(
-                                            "[Aborted]".to_string(),
-                                        ));
+                                        abort_session(&client, &mut app, &engine).await;
                                     } else {
                                         let client_ref = &client;
                                         app.handle_slash_command(client_ref, &text);
@@ -2958,12 +3060,7 @@ pub async fn run_tui(
                             }
                         }
                         input::InputAction::Abort => {
-                            let _ = client.abort();
-                            app.mark_done();
-                            restore_skill_state_if_done(&mut app, &engine).await;
-                            app.pending_workflow = None;
-                            app.queued_inputs.clear();
-                            app.push_message(MessageContent::System("[Aborted]".to_string()));
+                            abort_session(&client, &mut app, &engine).await;
                         }
                         input::InputAction::Changed => app.request_redraw(),
                         input::InputAction::None => {}
@@ -4028,7 +4125,7 @@ async fn handle_async_command(
 fn format_agents_tui(
     sub: &str,
     cwd: &std::path::Path,
-    active_agents: &std::collections::HashMap<String, String>,
+    active_agents: &std::collections::HashMap<String, status::AgentInfo>,
 ) -> String {
     let parts: Vec<&str> = sub.splitn(2, ' ').collect();
     let subcmd = parts.first().map(|s| s.trim()).unwrap_or("");
@@ -4069,8 +4166,15 @@ fn format_agents_tui(
                 "No background agents currently running.\n\nUse /agents list to see defined agents.".to_string()
             } else {
                 let mut out = format!("Running Agents ({} active)\n\n", active_agents.len());
-                for (id, label) in active_agents {
-                    out.push_str(&format!("  ▸ {:<24} {}\n", id, label));
+                for (id, agent) in active_agents {
+                    let elapsed = agent.started.elapsed();
+                    out.push_str(&format!(
+                        "  ▸ {:<24} {} ({:02}:{:02})\n",
+                        id,
+                        agent.name,
+                        elapsed.as_secs() / 60,
+                        elapsed.as_secs() % 60,
+                    ));
                 }
                 out
             }
@@ -4538,7 +4642,6 @@ mod tests {
     #[test]
     fn cached_visible_lines_track_assistant_append() {
         let mut app = App::new("test".to_string());
-        app.thinking_collapsed = false;
         app.push_message(MessageContent::System("system".to_string()));
         app.push_message(MessageContent::AssistantText("hello".to_string()));
 
@@ -4552,27 +4655,26 @@ mod tests {
     }
 
     #[test]
-    fn collapsed_thinking_short_text_shows_lines() {
-        // Short thinking (≤3 lines) renders normally even when collapsed
+    fn collapsed_thinking_short_text_shows_placeholder() {
+        // Collapsed thinking always shows a single placeholder line,
+        // matching the official CC collapsed view.
         let mut app = App::new("test".to_string());
-        app.thinking_collapsed = true;
         app.push_message(MessageContent::ThinkingText("one\n\ntwo".to_string()));
 
-        // 3 lines, so no collapse hint — lines render directly
-        assert_eq!(app.cached_visible_lines.len(), 3);
+        assert_eq!(app.cached_visible_lines.len(), 1);
+        assert!(line_text(&app.cached_visible_lines[0]).contains("\u{2234} Thinking"));
     }
 
     #[test]
     fn collapsed_thinking_long_text_shows_hint() {
         let mut app = App::new("test".to_string());
-        app.thinking_collapsed = true;
         app.push_message(MessageContent::ThinkingText(
             "one\ntwo\nthree\nfour".to_string(),
         ));
 
-        // >3 lines, so collapse hint
+        // Collapsed thinking always shows the same placeholder.
         assert_eq!(app.cached_visible_lines.len(), 1);
-        assert!(line_text(&app.cached_visible_lines[0]).contains("4 more lines"));
+        assert!(line_text(&app.cached_visible_lines[0]).contains("Ctrl+O to expand"));
     }
 
     #[test]
@@ -6966,7 +7068,7 @@ mod tests {
             "tool at depth=1 should render tree connector, got:\n{text}"
         );
         assert!(
-            text.contains("● Read"),
+            text.contains("⏺ Read"),
             "tool header should contain name, got:\n{text}"
         );
     }
@@ -7075,7 +7177,7 @@ mod tests {
             .join("\n");
 
         assert!(
-            text.contains("more lines (Ctrl+O to expand)"),
+            text.contains("more lines (Ctrl+E to expand)"),
             "collapsed tool should show fold hint, got:\n{text}"
         );
     }
@@ -7183,6 +7285,12 @@ mod tests {
             .push_message(MessageContent::AssistantText("hello".to_string()));
         env.app
             .push_message(MessageContent::ThinkingText("reasoning".to_string()));
+        // Expand the thinking message so its body text is visible inline.
+        if let Some(msg) = env.app.messages.last_mut() {
+            msg.collapsed = false;
+            msg.invalidate_cache();
+        }
+        env.app.invalidate_visible_lines();
         env.app.needs_redraw = true;
         env.tick();
 
@@ -7212,7 +7320,6 @@ mod tests {
         env.app.push_message(MessageContent::ThinkingText(
             "line1\nline2\nline3\nline4\nline5".to_string(),
         ));
-        env.app.thinking_collapsed = true;
         env.app.needs_redraw = true;
         env.tick();
 
@@ -7225,8 +7332,8 @@ mod tests {
             .join("\n");
 
         assert!(
-            text.contains("💭 + 5 more lines (Ctrl+O to expand)"),
-            "collapsed thinking should show fold hint with line count, got:\n{text}"
+            text.contains("∴ Thinking"),
+            "collapsed thinking should show placeholder, got:\n{text}"
         );
     }
 }

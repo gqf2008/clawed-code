@@ -392,8 +392,9 @@ pub fn notification_to_jsonrpc(notif: &AgentNotification) -> Notification {
             total_input_tokens,
             total_output_tokens,
             context_usage_pct,
+            total_cost_usd,
         } => {
-            let mut map = serde_json::Map::with_capacity(6);
+            let mut map = serde_json::Map::with_capacity(7);
             map.insert("session_id".into(), Value::String(session_id.clone()));
             map.insert("model".into(), Value::String(model.clone()));
             map.insert("total_turns".into(), serde_json::json!(total_turns));
@@ -408,6 +409,10 @@ pub fn notification_to_jsonrpc(notif: &AgentNotification) -> Notification {
             map.insert(
                 "context_usage_pct".into(),
                 serde_json::json!(context_usage_pct),
+            );
+            map.insert(
+                "total_cost_usd".into(),
+                serde_json::json!(total_cost_usd),
             );
             Notification::new("session.status", Some(Value::Object(map)))
         }
@@ -1162,6 +1167,7 @@ mod tests {
             total_input_tokens: 1000,
             total_output_tokens: 500,
             context_usage_pct: 42.5,
+            total_cost_usd: 0.02,
         };
         let jsonrpc = notification_to_jsonrpc(&notif);
         assert_eq!(jsonrpc.method, "session.status");

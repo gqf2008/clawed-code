@@ -27,6 +27,7 @@ pub struct SessionStatus {
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     pub context_usage_pct: f64,
+    pub total_cost_usd: f64,
 }
 
 #[allow(dead_code)]
@@ -115,6 +116,7 @@ impl<'a> SessionManager<'a> {
                     total_input_tokens,
                     total_output_tokens,
                     context_usage_pct,
+                    total_cost_usd,
                 } => {
                     return Ok(SessionStatus {
                         session_id,
@@ -123,6 +125,7 @@ impl<'a> SessionManager<'a> {
                         total_input_tokens,
                         total_output_tokens,
                         context_usage_pct,
+                        total_cost_usd,
                     });
                 }
                 AgentNotification::Error { message, .. } => {
@@ -217,6 +220,7 @@ mod tests {
             total_input_tokens: 10_000,
             total_output_tokens: 2_000,
             context_usage_pct: 42.5,
+            total_cost_usd: 0.0,
         };
         assert_eq!(status.session_id, "test-123");
         assert_eq!(status.total_turns, 5);
@@ -281,6 +285,7 @@ mod tests {
                 total_input_tokens: 5000,
                 total_output_tokens: 1000,
                 context_usage_pct: 25.0,
+                total_cost_usd: 0.0,
             });
         });
 
