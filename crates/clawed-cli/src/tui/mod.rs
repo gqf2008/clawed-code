@@ -2047,18 +2047,18 @@ fn render(frame: &mut Frame, app: &mut App) {
             perm,
         );
     } else {
-        // Normal: top line ─ completion popup (optional) ─ input ─ bottom line ─ status bar
+        // Normal: top line ─ input ─ completion popup (optional) ─ bottom line ─ status bar
         let input_chunks = Layout::vertical([
             Constraint::Length(1),               // top line
-            Constraint::Length(completion_rows), // completion popup / footer picker
             Constraint::Length(input_rows),      // input (1–5 rows)
+            Constraint::Length(completion_rows), // completion popup / footer picker
             Constraint::Length(1),               // bottom line
             Constraint::Length(bottom_bar_rows), // status bar
         ])
         .split(footer_area);
 
         render_input_separator(frame, input_chunks[0]);
-        render_input(frame, input_chunks[2], app);
+        render_input(frame, input_chunks[1], app);
         render_input_separator(frame, input_chunks[3]);
         if bottom_bar_rows > 0 {
             bottombar::render(
@@ -2070,9 +2070,9 @@ fn render(frame: &mut Frame, app: &mut App) {
         }
 
         if let Some(picker) = app.footer_picker.as_ref() {
-            render_footer_picker(frame, input_chunks[1], input_chunks[2], picker);
+            render_footer_picker(frame, input_chunks[2], input_chunks[1], picker);
         } else if completion_rows > 0 {
-            render_completion_popup(frame, input_chunks[1], input_chunks[2], app);
+            render_completion_popup(frame, input_chunks[2], input_chunks[1], app);
         }
     }
 
@@ -2557,7 +2557,7 @@ fn fmt_tokens(n: u64) -> String {
 }
 
 fn render_input(frame: &mut Frame, area: Rect, app: &App) {
-    let prompt_style = Style::default().fg(Color::White);
+    let prompt_style = Style::default(); // terminal default — matches official CC
     let text_style = Style::default(); // use terminal default — input text must be readable
     let image_style = Style::default().fg(Color::Magenta);
     let indicator_style = Style::default().fg(MUTED);
