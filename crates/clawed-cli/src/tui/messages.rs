@@ -676,7 +676,7 @@ mod tests {
 
         assert_eq!(lines.len(), 2);
         assert_eq!(line_text(&lines[0]), "\u{23FA} hello world");
-        assert_eq!(line_text(&lines[1]), "\u{23FA} next");
+        assert_eq!(line_text(&lines[1]), "  next");
     }
 
     #[test]

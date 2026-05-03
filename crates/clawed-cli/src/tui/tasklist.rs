@@ -120,9 +120,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &TaskListState) {
     }
 
     let dim = Style::default().fg(MUTED);
-    let bold_white = Style::default()
-        .fg(Color::White)
-        .add_modifier(Modifier::BOLD);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
     let done_style = Style::default().fg(Color::Green);
     let progress_style = Style::default().fg(Color::Cyan);
     let pending_style = Style::default().fg(MUTED);
@@ -140,7 +138,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &TaskListState) {
     // Header: "N tasks (X done, Y in progress, Z open)"
     let mut header_spans = vec![
         Span::styled("  ", dim),
-        Span::styled(format!("{} tasks", state.tasks.len()), bold_white),
+        Span::styled(format!("{} tasks", state.tasks.len()), bold),
         Span::styled(" (", dim),
     ];
     let mut parts: Vec<Span> = Vec::new();
@@ -178,7 +176,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &TaskListState) {
             Span::styled("  ", dim),
             Span::styled(icon, icon_style),
             Span::raw(" "),
-            Span::styled(format!("{priority_marker}{}", task.content), Style::default().fg(Color::White)),
+            Span::styled(format!("{priority_marker}{}", task.content), Style::default()),
         ]));
     }
 

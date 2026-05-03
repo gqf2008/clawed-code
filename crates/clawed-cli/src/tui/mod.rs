@@ -2564,7 +2564,7 @@ fn fmt_tokens(n: u64) -> String {
 
 fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     let prompt_style = Style::default(); // terminal default — matches official CC
-    let text_style = Style::default().fg(Color::White);
+    let text_style = Style::default();
     let image_style = Style::default().fg(Color::Magenta);
     let indicator_style = Style::default().fg(MUTED);
 
