@@ -20,6 +20,7 @@ mod overlay;
 mod permission;
 mod status;
 mod statusline;
+mod tasklist;
 mod taskplan;
 mod textarea;
 pub(crate) mod verbs;
@@ -635,6 +636,7 @@ struct App {
     footer_picker: Option<FooterPicker>,
     status: TuiStatusState,
     task_plan: taskplan::TaskPlan,
+    task_list: tasklist::TaskListState,
     permission: Option<PendingPermission>,
     overlay: Option<Overlay>,
     bottom_bar_hidden: bool,
@@ -698,6 +700,35 @@ struct App {
     status_line: statusline::StatusLineState,
     /// Index of the user message used as the sticky header anchor when scrolled up.
     sticky_anchor: Option<usize>,
+    /// Currently viewed teammate (None = viewing main transcript).
+    viewed_teammate: Option<ViewedTeammate>,
+    /// Context suggestions overlay (file / MCP / agent suggestions above input).
+    suggestions: Vec<SuggestionItem>,
+    selected_suggestion: usize,
+}
+
+/// A single context suggestion (file, MCP resource, or agent).
+#[derive(Debug, Clone)]
+struct SuggestionItem {
+    #[allow(dead_code)]
+    id: String,
+    display_text: String,
+    description: Option<String>,
+    kind: SuggestionKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SuggestionKind {
+    File,
+    McpResource,
+    Agent,
+}
+
+/// Teammate being viewed in transcript mode.
+struct ViewedTeammate {
+    agent_id: String,
+    name: String,
+    color: Color,
 }
 
 impl App {
@@ -711,6 +742,7 @@ impl App {
             footer_picker: None,
             status: TuiStatusState::new(),
             task_plan: taskplan::TaskPlan::new(),
+            task_list: tasklist::TaskListState::new(),
             permission: None,
             overlay: None,
             bottom_bar_hidden: false,
@@ -743,6 +775,9 @@ impl App {
             term_height: 0,
             permission_mode: String::new(),
             pending_skill_restore: None,
+            viewed_teammate: None,
+            suggestions: Vec::new(),
+            selected_suggestion: 0,
         }
     }
 
@@ -757,6 +792,29 @@ impl App {
 
     fn clear_footer_picker(&mut self) {
         if self.footer_picker.take().is_some() {
+            self.request_redraw();
+        }
+    }
+
+    fn view_teammate(&mut self, agent_id: String, name: String) {
+        let color = self
+            .status
+            .active_agents
+            .get(&agent_id)
+            .map(|a| a.color)
+            .unwrap_or_else(|| agent_color_for_id(&agent_id));
+        self.viewed_teammate = Some(ViewedTeammate {
+            agent_id,
+            name,
+            color,
+        });
+        self.invalidate_visible_lines();
+        self.request_redraw();
+    }
+
+    fn exit_teammate_view(&mut self) {
+        if self.viewed_teammate.take().is_some() {
+            self.invalidate_visible_lines();
             self.request_redraw();
         }
     }
@@ -1333,6 +1391,13 @@ impl App {
                 // Drain queue: merge all pending inputs and submit as one message.
                 // Only drain when NOT expecting a new turn (if expecting_turn_start,
                 // the direct submit already happened at the call site).
+                // Refresh todo list after each turn completes.
+                let cwd = std::env::current_dir().unwrap_or_default();
+                self.task_list.refresh(&cwd);
+                if self.task_list.task_count() > 0 && !self.task_list.is_expanded() {
+                    self.task_list.set_expanded(true);
+                }
+
                 if !self.expecting_turn_start
                     && self.pending_workflow.is_none()
                     && !self.queued_inputs.is_empty()
@@ -1359,11 +1424,13 @@ impl App {
                     "{info} Agent spawned: {label}",
                     info = verbs::INFO_MARKER
                 )));
+                let color = agent_color_for_id(&agent_id);
                 self.status.active_agents.insert(
                     agent_id,
                     status::AgentInfo {
                         name: label,
                         started: Instant::now(),
+                        color,
                     },
                 );
             }
@@ -1872,6 +1939,7 @@ fn render(frame: &mut Frame, app: &mut App) {
         u16::from(!app.bottom_bar_hidden)
     };
     let task_plan_rows = app.task_plan.render_height();
+    let task_list_rows = app.task_list.render_height();
 
     let input_rows = if app.footer_picker.is_some() || app.input.has_completion() {
         1
@@ -1905,27 +1973,55 @@ fn render(frame: &mut Frame, app: &mut App) {
 
     let tip_rows = if has_permission { 0 } else { u16::from(app.status.has_tip()) };
 
+    let suggestion_rows = if app.suggestions.is_empty() || has_permission {
+        0
+    } else {
+        (app.suggestions.len().min(5) + 1) as u16 // +1 for divider
+    };
+
     let constraints = [
         Constraint::Min(1),                        // messages
+        Constraint::Length(task_list_rows),        // task list (0 if empty/collapsed)
         Constraint::Length(task_plan_rows),        // task plan (0 if empty)
         Constraint::Length(1 + tip_rows),          // info line + optional tip
         Constraint::Length(queue_rows),            // queue items (0 or n)
+        Constraint::Length(suggestion_rows),       // context suggestion overlay
         Constraint::Length(input_sep_rows),        // input separator (always 1, except perm)
         Constraint::Length(footer_rows),           // input/permission footer
     ];
 
     let chunks = Layout::vertical(constraints).split(area);
     let msg_area = chunks[0];
-    let task_area = chunks[1];
-    let sep_area = chunks[2];
-    let queue_area = chunks[3];
-    let _input_sep_area = chunks[4];
-    let footer_area = chunks[5];
+    let task_list_area = chunks[1];
+    let task_area = chunks[2];
+    let sep_area = chunks[3];
+    let queue_area = chunks[4];
+    let suggestion_area = chunks[5];
+    let _input_sep_area = chunks[6];
+    let footer_area = chunks[7];
 
-    render_messages(frame, msg_area, app);
+    // Teammate view header: fixed 1 row above messages when viewing a teammate.
+    let teammate_header_rows = if app.viewed_teammate.is_some() { 1 } else { 0 };
+    let msg_chunks = Layout::vertical([
+        Constraint::Length(teammate_header_rows),
+        Constraint::Min(1),
+    ])
+    .split(msg_area);
+    if teammate_header_rows > 0 {
+        render_teammate_view_header(frame, msg_chunks[0], app);
+    }
+    render_messages(frame, msg_chunks[1], app);
+
+    if task_list_rows > 0 {
+        tasklist::render(frame, task_list_area, &app.task_list);
+    }
 
     if task_plan_rows > 0 {
         taskplan::render(frame, task_area, &app.task_plan);
+    }
+
+    if suggestion_rows > 0 {
+        render_suggestions_overlay(frame, suggestion_area, app);
     }
 
     render_separator(frame, sep_area, app.scroll_offset, app);
@@ -2026,13 +2122,13 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
     };
     let msg_viewport_height = msg_area.height as usize;
 
-    let all_lines = app.cached_visible_lines.clone();
-
     // Compute visual line count only when cache is stale.
-    let paragraph = Paragraph::new(all_lines).wrap(Wrap { trim: false });
+    // Delay clone: only build Paragraph when line_count is not cached.
     let total_visual = if let Some(count) = cached_visual_count {
         count
     } else {
+        let all_lines = app.cached_visible_lines.clone();
+        let paragraph = Paragraph::new(all_lines).wrap(Wrap { trim: false });
         let count = paragraph.line_count(area.width);
         app.cached_visible_line_count = Some((area.width, count));
         count
@@ -2047,10 +2143,31 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
         (max_scroll - clamped).min(u16::MAX as usize) as u16
     };
 
+    // --- Viewport-window optimization: when showing the bottom (scroll_offset=0)
+    // and the list is long, only clone the last few logical lines instead of
+    // the entire cached_visible_lines. The scroll offset is adjusted so the
+    // Paragraph still renders the correct viewport bottom.
+    let (paragraph, render_scroll) = if app.scroll_offset == 0
+        && total_visual > msg_viewport_height
+        && app.cached_visible_lines.len() > msg_viewport_height * 3
+    {
+        let keep_logical = msg_viewport_height * 3;
+        let start = app.cached_visible_lines.len().saturating_sub(keep_logical);
+        let partial = app.cached_visible_lines[start..].to_vec();
+        let paragraph = Paragraph::new(partial).wrap(Wrap { trim: false });
+        let partial_visual = paragraph.line_count(area.width);
+        let adjust = scroll_row.saturating_sub((total_visual - partial_visual) as u16);
+        (paragraph, adjust)
+    } else {
+        let all = app.cached_visible_lines.clone();
+        let paragraph = Paragraph::new(all).wrap(Wrap { trim: false });
+        (paragraph, scroll_row)
+    };
+
     if should_clear_message_area(app.last_rendered_message_visual_count, total_visual) {
         frame.render_widget(Clear, msg_area);
     }
-    frame.render_widget(paragraph.scroll((scroll_row, 0)), msg_area);
+    frame.render_widget(paragraph.scroll((render_scroll, 0)), msg_area);
     app.last_rendered_message_visual_count = Some(total_visual);
 
     // Render sticky header overlay at the top of the message area.
@@ -2189,6 +2306,53 @@ fn render_queue_banner(frame: &mut Frame, area: Rect, queued: &[String]) {
 
 /// Bottom rounded border for the input box (aligned with official CC).
 /// Renders ╰──────╯ style — left rounded corner, horizontal line, right rounded corner.
+/// Render context suggestions overlay above the input box.
+/// Aligned with official Claude Code PromptInputFooterSuggestions.
+fn render_suggestions_overlay(frame: &mut Frame, area: Rect, app: &App) {
+    if area.height == 0 || app.suggestions.is_empty() {
+        return;
+    }
+
+    let dim = Style::default().fg(MUTED);
+    let selected_style = Style::default().fg(Color::Cyan);
+    let divider_style = Style::default().fg(MUTED);
+
+    let max_items = (area.height as usize).saturating_sub(1); // -1 for divider
+    let visible_count = app.suggestions.len().min(max_items).max(1);
+
+    // Divider: ▔▔▔▔▔ (aligned with official CC suggestion overlay top border)
+    let divider = "\u{2594}".repeat(area.width as usize);
+    let mut lines: Vec<Line> = vec![Line::styled(divider, divider_style)];
+
+    for (i, suggestion) in app.suggestions.iter().enumerate().take(visible_count) {
+        let is_selected = i == app.selected_suggestion;
+        let (icon, icon_style) = match suggestion.kind {
+            SuggestionKind::File => ("+", Style::default().fg(Color::Green)),
+            SuggestionKind::McpResource => ("\u{25C7}", Style::default().fg(Color::Yellow)), // ◇
+            SuggestionKind::Agent => ("*", Style::default().fg(Color::Magenta)),
+        };
+        let text_style = if is_selected {
+            selected_style
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        let desc = suggestion.description.as_deref().unwrap_or("");
+        let main_text = if desc.is_empty() {
+            format!("  {}", suggestion.display_text)
+        } else {
+            format!("  {} — {}", suggestion.display_text, desc)
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {icon} "), icon_style),
+            Span::styled(main_text, text_style),
+        ]));
+    }
+
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
 fn render_input_separator(frame: &mut Frame, area: Rect) {
     let w = area.width as usize;
     if w == 0 {
@@ -3087,6 +3251,11 @@ pub async fn run_tui(
                             continue;
                         }
                         // Esc fallback (when not generating — handled above in early check)
+                        // Esc: exit teammate view first, then fall through to abort/quit.
+                        (KeyCode::Esc, _) if app.viewed_teammate.is_some() => {
+                            app.exit_teammate_view();
+                            continue;
+                        }
                         (KeyCode::Esc, _) if app.spinner_active() => {
                             abort_session(&client, &mut app, &engine).await;
                             continue;
@@ -4574,6 +4743,48 @@ async fn replay_session_messages(engine: &Arc<QueryEngine>, app: &mut App) {
         state.messages.len(),
         state.turn_count,
     )));
+}
+
+// -- Agent color helpers (aligned with TEAMMATE_COLORS in clawed-swarm) -----
+
+const AGENT_COLOR_PALETTE: &[(Color, &str)] = &[
+    (Color::Cyan, "cyan"),
+    (Color::Magenta, "magenta"),
+    (Color::Yellow, "yellow"),
+    (Color::Green, "green"),
+    (Color::Blue, "blue"),
+    (Color::Red, "red"),
+    (Color::LightCyan, "bright-cyan"),
+    (Color::LightMagenta, "bright-magenta"),
+    (Color::LightYellow, "bright-yellow"),
+    (Color::LightGreen, "bright-green"),
+];
+
+/// Assign a stable color to an agent based on its ID hash.
+fn agent_color_for_id(agent_id: &str) -> Color {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    agent_id.hash(&mut hasher);
+    let idx = (hasher.finish() as usize) % AGENT_COLOR_PALETTE.len();
+    AGENT_COLOR_PALETTE[idx].0
+}
+
+/// Render "Viewing @agent_name · esc return" header above messages.
+fn render_teammate_view_header(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(ref viewed) = app.viewed_teammate else {
+        return;
+    };
+    let dim = Style::default().fg(MUTED);
+    let name_style = Style::default().fg(viewed.color).add_modifier(Modifier::BOLD);
+    let spans = vec![
+        Span::styled("Viewing ", dim),
+        Span::styled(format!("@{}", viewed.name), name_style),
+        Span::styled("  ·  ", dim),
+        Span::styled("esc", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(" return", dim),
+    ];
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 #[cfg(test)]
@@ -7560,6 +7771,155 @@ mod tests {
             text.contains("∴ Thinking"),
             "collapsed thinking should show placeholder, got:\n{text}"
         );
+    }
+
+    // -- Test helpers for ANSI snapshot output --------------------------------
+
+    fn fg_ansi(color: ratatui::style::Color) -> String {
+        use ratatui::style::Color;
+        match color {
+            Color::Reset => String::new(),
+            Color::Black => "30".to_string(),
+            Color::Red => "31".to_string(),
+            Color::Green => "32".to_string(),
+            Color::Yellow => "33".to_string(),
+            Color::Blue => "34".to_string(),
+            Color::Magenta => "35".to_string(),
+            Color::Cyan => "36".to_string(),
+            Color::Gray | Color::DarkGray => "90".to_string(),
+            Color::LightRed => "91".to_string(),
+            Color::LightGreen => "92".to_string(),
+            Color::LightYellow => "93".to_string(),
+            Color::LightBlue => "94".to_string(),
+            Color::LightMagenta => "95".to_string(),
+            Color::LightCyan => "96".to_string(),
+            Color::White => "97".to_string(),
+            Color::Indexed(i) => format!("38;5;{i}"),
+            Color::Rgb(r, g, b) => format!("38;2;{r};{g};{b}"),
+        }
+    }
+
+    fn buffer_to_ansi(buf: &ratatui::buffer::Buffer) -> String {
+        use ratatui::style::Modifier;
+        let mut output = String::with_capacity(
+            buf.area.width as usize * buf.area.height as usize * 12,
+        );
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                let cell = buf.get(x, y);
+                let sym = cell.symbol();
+                let symbol = if sym.is_empty() { " " } else { sym };
+
+                let mut codes = vec!["0".to_string()];
+                if cell.modifier.contains(Modifier::BOLD) {
+                    codes.push("1".to_string());
+                }
+                if cell.modifier.contains(Modifier::DIM) {
+                    codes.push("2".to_string());
+                }
+                if cell.modifier.contains(Modifier::ITALIC) {
+                    codes.push("3".to_string());
+                }
+                if cell.modifier.contains(Modifier::UNDERLINED) {
+                    codes.push("4".to_string());
+                }
+                let fg = fg_ansi(cell.fg);
+                if !fg.is_empty() {
+                    codes.push(fg);
+                }
+                output.push_str(&format!("\x1b[{}m{}", codes.join(";"), symbol));
+            }
+            output.push_str("\x1b[0m\n");
+        }
+        output
+    }
+
+    fn snap(name: &str, dir: &str, app: &mut App) {
+        use std::fs;
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let ansi = buffer_to_ansi(&buf);
+        let path = format!("{dir}/{name}.ansi");
+        fs::write(&path, &ansi).unwrap();
+        println!("\n=== {name} ===\n{ansi}\x1b[0m");
+    }
+
+    /// Visual verification: render key TUI states to /tmp for side-by-side
+    /// comparison with official Claude Code. Run with:
+    ///   cargo test -p clawed-cli tui_visual_snapshot -- --nocapture
+    #[test]
+    fn tui_visual_snapshot() {
+        use std::fs;
+
+        let dir = "/tmp/clawed_tui_verification";
+        let _ = fs::create_dir_all(dir);
+
+        // Scene 1: Initial empty state (welcome screen)
+        let mut app = App::new("claude-3.5".to_string());
+        app.term_width = 80;
+        app.term_height = 24;
+        app.needs_redraw = true;
+        app.rebuild_visible_lines();
+        snap("01_initial_state", dir, &mut app);
+
+        // Scene 2: Conversation with user + assistant messages
+        let mut app = App::new("claude-3.5".to_string());
+        app.term_width = 80;
+        app.term_height = 24;
+        app.needs_redraw = true;
+        app.push_message(MessageContent::UserInput(
+            "Explain Rust ownership".to_string(),
+        ));
+        app.push_message(MessageContent::AssistantText(
+            "Rust ownership is a set of rules that govern how memory is managed."
+                .to_string(),
+        ));
+        snap("02_with_messages", dir, &mut app);
+
+        // Scene 3: LLM generating (spinner + bottom bar hints)
+        let mut app = App::new("claude-3.5".to_string());
+        app.term_width = 80;
+        app.term_height = 24;
+        app.needs_redraw = true;
+        app.push_message(MessageContent::UserInput(
+            "Write hello world".to_string(),
+        ));
+        app.push_message(MessageContent::AssistantText(String::new()));
+        app.mark_generating();
+        snap("03_generating", dir, &mut app);
+
+        // Scene 4: Context suggestions overlay (file / MCP / agent)
+        let mut app = App::new("claude-3.5".to_string());
+        app.term_width = 80;
+        app.term_height = 24;
+        app.needs_redraw = true;
+        app.suggestions = vec![
+            SuggestionItem {
+                id: "file1".to_string(),
+                display_text: "src/main.rs".to_string(),
+                description: Some("Add to context".to_string()),
+                kind: SuggestionKind::File,
+            },
+            SuggestionItem {
+                id: "mcp1".to_string(),
+                display_text: "docs/readme".to_string(),
+                description: None,
+                kind: SuggestionKind::McpResource,
+            },
+            SuggestionItem {
+                id: "agent1".to_string(),
+                display_text: "@reviewer".to_string(),
+                description: Some("Code reviewer".to_string()),
+                kind: SuggestionKind::Agent,
+            },
+        ];
+        app.selected_suggestion = 0;
+        snap("04_suggestions_overlay", dir, &mut app);
+
+        println!("Screenshots saved to {dir}/");
+        println!("Compare with official CC: open two terminals, run `claude` and `cargo run --`, then visually verify.");
     }
 
 }

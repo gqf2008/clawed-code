@@ -37,6 +37,8 @@ pub struct ToolInfo {
 pub struct AgentInfo {
     pub name: String,
     pub started: Instant,
+    /// Teammate color for terminal display.
+    pub color: Color,
 }
 
 pub struct TuiStatusState {

@@ -261,9 +261,20 @@ impl Message {
         match &self.content {
             MessageContent::UserInput(text) => {
                 let text_style = Style::default().add_modifier(Modifier::BOLD);
+                let prefix = Span::styled(
+                    "\u{276F} ",
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                );
                 let mut lines = vec![Line::from("")];
-                for part in text.split('\n') {
-                    lines.push(Line::styled(part.to_string(), text_style));
+                for (i, part) in text.split('\n').enumerate() {
+                    if i == 0 {
+                        lines.push(Line::from(vec![
+                            prefix.clone(),
+                            Span::styled(part.to_string(), text_style),
+                        ]));
+                    } else {
+                        lines.push(Line::styled(part.to_string(), text_style));
+                    }
                 }
                 lines
             }
@@ -505,7 +516,7 @@ mod tests {
         assert_eq!(lines.len(), 3);
         let first: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
         let second: String = lines[2].spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(first, "hello");
+        assert_eq!(first, "❯ hello");
         assert_eq!(second, "world");
     }
 
