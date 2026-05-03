@@ -2,6 +2,7 @@ use super::verbs::{ERROR_MARKER, THINKING_MARKER, TURN_COMPLETION_MARKER, WARNIN
 use super::{markdown, MUTED};
 
 use clawed_core::text_util::strip_system_reminders;
+use unicode_width::UnicodeWidthStr;
 
 use std::cell::RefCell;
 use std::time::Instant;
@@ -283,11 +284,18 @@ impl Message {
                     return vec![];
                 }
                 let dim = Style::default().fg(MUTED);
-                let prefix = Span::styled("\u{23FA} ", dim);
+                let prefix_text = "\u{23FA} ";
+                let prefix = Span::styled(prefix_text.to_string(), dim);
+                let blank_prefix = Span::raw(" ".repeat(prefix_text.width()));
                 markdown::render_markdown(text)
                     .into_iter()
-                    .map(|mut line| {
-                        line.spans.insert(0, prefix.clone());
+                    .enumerate()
+                    .map(|(i, mut line)| {
+                        if i == 0 {
+                            line.spans.insert(0, prefix.clone());
+                        } else {
+                            line.spans.insert(0, blank_prefix.clone());
+                        }
                         line
                     })
                     .collect()

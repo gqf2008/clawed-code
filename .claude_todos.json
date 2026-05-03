@@ -1,37 +1,7 @@
 [
   {
-    "id": "fix-simplify-1",
-    "content": "Add file size limit (10MB) to prevent OOM",
-    "status": "completed",
-    "priority": "high"
-  },
-  {
-    "id": "fix-simplify-2",
-    "content": "Add path traversal protection (verify resolved path within cwd)",
-    "status": "completed",
-    "priority": "high"
-  },
-  {
-    "id": "fix-simplify-3",
-    "content": "Strict file path mode: all tokens must be files or fail",
-    "status": "completed",
-    "priority": "high"
-  },
-  {
-    "id": "fix-simplify-4",
-    "content": "Move /simplify help text to Git & Code section",
-    "status": "completed",
-    "priority": "medium"
-  },
-  {
-    "id": "fix-simplify-5",
-    "content": "Add tests for edge cases",
-    "status": "completed",
-    "priority": "medium"
-  },
-  {
-    "id": "fix-simplify-6",
-    "content": "Build and verify",
+    "id": "review-sourcemap",
+    "content": "审查与 claude-code-sourcemap 的功能对齐状态，重点TUI部分",
     "status": "completed",
     "priority": "high"
   }

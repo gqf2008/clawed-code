@@ -60,7 +60,7 @@ type TuiTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io:
 /// Subdued text color for hints, separators, status indicators, and input text.
 /// Uses a true-color gray that is readable on both dark and light backgrounds,
 /// unlike `Color::DarkGray` (ANSI 8) which maps to bright on many terminals.
-pub(super) const MUTED: Color = Color::Rgb(140, 140, 140);
+pub(super) const MUTED: Color = Color::Rgb(170, 170, 170);
 const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SPINNER_TICK_INTERVAL: Duration = Duration::from_millis(verbs::SPINNER_TICK_INTERVAL_MS); // 120ms, aligned with official CC
@@ -79,10 +79,17 @@ fn plain_text_lines(text: &str) -> Vec<Line<'static>> {
     }
 
     let dim = Style::default().fg(MUTED);
-    let prefix = Span::styled("\u{23FA} ", dim);
+    let prefix_text = "\u{23FA} ";
+    let prefix = Span::styled(prefix_text.to_string(), dim);
+    let blank_prefix = Span::raw(" ".repeat(prefix_text.width()));
     text.lines()
-        .map(|line| {
-            let mut spans = vec![prefix.clone()];
+        .enumerate()
+        .map(|(i, line)| {
+            let mut spans = if i == 0 {
+                vec![prefix.clone()]
+            } else {
+                vec![blank_prefix.clone()]
+            };
             spans.extend(parse_inline_spans(line));
             Line::from(spans)
         })
@@ -576,7 +583,6 @@ fn restore_terminal_after_tui() {
         std::io::stdout(),
         crossterm::event::PopKeyboardEnhancementFlags
     );
-    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
     let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
     let _ = crossterm::terminal::disable_raw_mode();
 }
@@ -2558,7 +2564,7 @@ fn fmt_tokens(n: u64) -> String {
 
 fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     let prompt_style = Style::default(); // terminal default — matches official CC
-    let text_style = Style::default(); // use terminal default — input text must be readable
+    let text_style = Style::default().fg(Color::White);
     let image_style = Style::default().fg(Color::Magenta);
     let indicator_style = Style::default().fg(MUTED);
 
@@ -2976,9 +2982,9 @@ pub async fn run_tui(
     // Enable bracketed paste so multi-line paste arrives as Event::Paste(String)
     // instead of individual Key events (which would submit on Enter).
     crossterm::execute!(std::io::stdout(), EnableBracketedPaste)?;
-    // Enable mouse capture for wheel scrolling (scroll up/down) and click-to-expand.
-    // Terminal text selection is still available via Shift+drag in most terminals.
-    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);
+    // NOTE: Mouse capture is intentionally disabled to allow free text selection
+    // with the mouse, matching official Claude Code behavior. Wheel scrolling is
+    // handled via keyboard (Shift+↑/Shift+↓, PgUp/PgDown).
 
     // Always push keyboard enhancement flags so modifiers for keys like Enter
     // are disambiguated (matching codex-rs behavior). Terminals that don't support
