@@ -64,8 +64,10 @@ impl StyleState {
             style = style.add_modifier(Modifier::CROSSED_OUT);
         }
         if self.code_inline {
-            // Aligned with official CC: permission color (blue family)
             style = style.fg(Color::Blue);
+        }
+        if self.blockquote_depth > 0 {
+            style = style.add_modifier(Modifier::ITALIC);
         }
 
         style
@@ -104,8 +106,6 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                         flush_line(&mut lines, &mut current_spans);
                     }
                     state.heading_level = level as u8;
-                    // Official CC: no prefix symbols; h1 = bold+italic+underline,
-                    // h2+ = bold. We set the base style here; to_style() handles it.
                 }
                 Tag::Paragraph => {}
                 Tag::BlockQuote(_) => {
@@ -231,19 +231,13 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     continue;
                 }
 
-                // Handle blockquote prefix — official CC uses ▎ (U+258E) dimmed
                 let bq_prefix = if state.blockquote_depth > 0 && current_spans.is_empty() {
                     let bars = "\u{258e} ".repeat(state.blockquote_depth as usize);
                     Some(Span::styled(bars, Style::default().fg(MUTED)))
                 } else {
                     None
                 };
-                // Blockquote content is italic in official CC
-                let bq_italic = state.blockquote_depth > 0;
 
-                // Handle list item bullet/number
-                // Official CC: unordered uses "- ", ordered uses number/letter/roman
-                // based on nesting depth.
                 let list_prefix = if list_item_started {
                     list_item_started = false;
                     let indent = "  ".repeat((state.list_depth.saturating_sub(1)) as usize);
@@ -271,11 +265,7 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     current_spans.push(prefix);
                 }
 
-                // Split text on newlines; apply blockquote italic
-                let mut style = state.to_style();
-                if bq_italic {
-                    style = style.add_modifier(Modifier::ITALIC);
-                }
+                let style = state.to_style();
                 let text_lines: Vec<&str> = txt.split('\n').collect();
                 for (i, tl) in text_lines.iter().enumerate() {
                     if i > 0 {
@@ -287,7 +277,6 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                 }
             }
             Event::Code(code_text) => {
-                // Official CC: inline code uses permission color (blue), no backticks
                 current_spans.push(Span::styled(
                     code_text.to_string(),
                     Style::default().fg(Color::Blue),
@@ -301,7 +290,6 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
             }
             Event::Rule => {
                 flush_line(&mut lines, &mut current_spans);
-                // Official CC renders horizontal rule as "---"
                 lines.push(Line::styled("---", Style::default().fg(MUTED)));
             }
             Event::TaskListMarker(checked) => {
@@ -355,10 +343,13 @@ fn render_code_block(lang: &str, code: &str, lines: &mut Vec<Line<'static>>) {
     if let Some(syntax) = syntax {
         let theme = &res.theme_set.themes["base16-ocean.dark"];
         let mut highlighter = HighlightLines::new(syntax, theme);
+        let mut line_buf = String::new();
 
         for src_line in code_trimmed.split('\n') {
-            let line_with_nl = format!("{src_line}\n");
-            if let Ok(ranges) = highlighter.highlight_line(&line_with_nl, &res.syntax_set) {
+            line_buf.clear();
+            line_buf.push_str(src_line);
+            line_buf.push('\n');
+            if let Ok(ranges) = highlighter.highlight_line(&line_buf, &res.syntax_set) {
                 let line_spans: Vec<Span<'static>> = ranges
                     .into_iter()
                     .filter_map(|(hl_style, text)| {
@@ -374,7 +365,6 @@ fn render_code_block(lang: &str, code: &str, lines: &mut Vec<Line<'static>>) {
                         Some(Span::styled(t.to_string(), Style::default().fg(fg)))
                     })
                     .collect();
-                // Push empty line for blank source lines so code structure is preserved
                 if line_spans.is_empty() {
                     lines.push(Line::from(""));
                 } else {
@@ -398,7 +388,7 @@ fn number_to_letter(mut n: u64) -> String {
     let mut result = String::new();
     while n > 0 {
         n -= 1;
-        result.push(char::from_u32(u32::try_from(97 + (n % 26)).unwrap_or(97)).unwrap_or('a'));
+        result.push((b'a' + (n % 26) as u8) as char);
         n /= 26;
     }
     result.chars().rev().collect()
