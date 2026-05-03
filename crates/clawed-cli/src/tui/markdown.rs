@@ -47,7 +47,11 @@ impl StyleState {
         let mut style = Style::default();
 
         if self.heading_level > 0 {
-            style = style.fg(Color::Cyan).add_modifier(Modifier::BOLD);
+            style = style.add_modifier(Modifier::BOLD);
+            if self.heading_level == 1 {
+                style = style.add_modifier(Modifier::ITALIC);
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
         }
 
         if self.bold {
@@ -60,7 +64,8 @@ impl StyleState {
             style = style.add_modifier(Modifier::CROSSED_OUT);
         }
         if self.code_inline {
-            style = style.fg(Color::Yellow);
+            // Aligned with official CC: permission color (blue family)
+            style = style.fg(Color::Blue);
         }
 
         style
@@ -99,20 +104,8 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                         flush_line(&mut lines, &mut current_spans);
                     }
                     state.heading_level = level as u8;
-                    // Use a visual bar prefix scaled by heading level instead
-                    // of echoing the raw '#' characters.
-                    let prefix = match level as u8 {
-                        1 => "\u{2588} ", // █ (full block)
-                        2 => "\u{2593} ", // ▓
-                        3 => "\u{2592} ", // ▒
-                        _ => "\u{2591} ", // ░
-                    };
-                    current_spans.push(Span::styled(
-                        prefix,
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ));
+                    // Official CC: no prefix symbols; h1 = bold+italic+underline,
+                    // h2+ = bold. We set the base style here; to_style() handles it.
                 }
                 Tag::Paragraph => {}
                 Tag::BlockQuote(_) => {
@@ -219,10 +212,7 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     // so we flush the accumulated header spans here.
                     flush_line(&mut lines, &mut current_spans);
                     // Add a visual separator between header and data rows.
-                    lines.push(Line::styled(
-                        "\u{2500}".repeat(40),
-                        Style::default().fg(MUTED),
-                    ));
+                    lines.push(Line::styled("---", Style::default().fg(MUTED)));
                 }
                 TagEnd::Table => {
                     // Flush any remaining content (data rows are flushed by TagEnd::TableRow).
@@ -241,26 +231,35 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     continue;
                 }
 
-                // Handle blockquote prefix
+                // Handle blockquote prefix — official CC uses ▎ (U+258E) dimmed
                 let bq_prefix = if state.blockquote_depth > 0 && current_spans.is_empty() {
-                    let bars = "\u{2502} ".repeat(state.blockquote_depth as usize);
+                    let bars = "\u{258e} ".repeat(state.blockquote_depth as usize);
                     Some(Span::styled(bars, Style::default().fg(MUTED)))
                 } else {
                     None
                 };
+                // Blockquote content is italic in official CC
+                let bq_italic = state.blockquote_depth > 0;
 
                 // Handle list item bullet/number
+                // Official CC: unordered uses "- ", ordered uses number/letter/roman
+                // based on nesting depth.
                 let list_prefix = if list_item_started {
                     list_item_started = false;
                     let indent = "  ".repeat((state.list_depth.saturating_sub(1)) as usize);
                     let bullet = if let Some(ref mut idx) = ordered_list_index {
-                        let s = format!("{indent}{idx}. ");
+                        let num_str = match state.list_depth {
+                            3 => number_to_roman(*idx),
+                            2 => number_to_letter(*idx),
+                            _ => idx.to_string(),
+                        };
+                        let s = format!("{indent}{num_str}. ");
                         *idx += 1;
                         s
                     } else {
-                        format!("{indent}\u{2022} ")
+                        format!("{indent}- ")
                     };
-                    Some(Span::styled(bullet, Style::default().fg(Color::Blue)))
+                    Some(Span::raw(bullet))
                 } else {
                     None
                 };
@@ -272,8 +271,11 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     current_spans.push(prefix);
                 }
 
-                // Split text on newlines
-                let style = state.to_style();
+                // Split text on newlines; apply blockquote italic
+                let mut style = state.to_style();
+                if bq_italic {
+                    style = style.add_modifier(Modifier::ITALIC);
+                }
                 let text_lines: Vec<&str> = txt.split('\n').collect();
                 for (i, tl) in text_lines.iter().enumerate() {
                     if i > 0 {
@@ -285,9 +287,10 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                 }
             }
             Event::Code(code_text) => {
+                // Official CC: inline code uses permission color (blue), no backticks
                 current_spans.push(Span::styled(
-                    format!("`{code_text}`"),
-                    Style::default().fg(Color::Yellow),
+                    code_text.to_string(),
+                    Style::default().fg(Color::Blue),
                 ));
             }
             Event::SoftBreak => {
@@ -298,10 +301,8 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
             }
             Event::Rule => {
                 flush_line(&mut lines, &mut current_spans);
-                lines.push(Line::styled(
-                    "\u{2500}".repeat(40),
-                    Style::default().fg(MUTED),
-                ));
+                // Official CC renders horizontal rule as "---"
+                lines.push(Line::styled("---", Style::default().fg(MUTED)));
             }
             Event::TaskListMarker(checked) => {
                 let marker = if checked { "\u{2611} " } else { "\u{2610} " };
@@ -339,20 +340,10 @@ fn flush_line(lines: &mut Vec<Line<'static>>, spans: &mut Vec<Span<'static>>) {
 }
 
 /// Render a code block with syntax highlighting via syntect.
+/// Aligned with official CC: no borders, just highlighted code.
 fn render_code_block(lang: &str, code: &str, lines: &mut Vec<Line<'static>>) {
     let res = SyntaxResources::get();
 
-    // Language header
-    let lang_display = if lang.is_empty() { "text" } else { lang };
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!("\u{250C}\u{2500}\u{2500} {lang_display} "),
-            Style::default().fg(MUTED),
-        ),
-        Span::styled("\u{2500}".repeat(20), Style::default().fg(MUTED)),
-    ]));
-
-    // Try to highlight with syntect
     let syntax = if !lang.is_empty() {
         res.syntax_set.find_syntax_by_token(lang)
     } else {
@@ -368,47 +359,78 @@ fn render_code_block(lang: &str, code: &str, lines: &mut Vec<Line<'static>>) {
         for src_line in code_trimmed.split('\n') {
             let line_with_nl = format!("{src_line}\n");
             if let Ok(ranges) = highlighter.highlight_line(&line_with_nl, &res.syntax_set) {
-                // The │ prefix is a single leading span; each subsequent span
-                // is a highlighted token WITHOUT its own prefix.
-                let mut line_spans: Vec<Span<'static>> =
-                    vec![Span::styled("\u{2502} ", Style::default().fg(MUTED))];
-                line_spans.extend(ranges.into_iter().filter_map(|(hl_style, text)| {
-                    let t = text.trim_end_matches('\n');
-                    if t.is_empty() {
-                        return None;
-                    }
-                    let fg = Color::Rgb(
-                        hl_style.foreground.r,
-                        hl_style.foreground.g,
-                        hl_style.foreground.b,
-                    );
-                    Some(Span::styled(t.to_string(), Style::default().fg(fg)))
-                }));
-                // If only the prefix span was produced (empty line), still push it.
-                lines.push(Line::from(line_spans));
+                let line_spans: Vec<Span<'static>> = ranges
+                    .into_iter()
+                    .filter_map(|(hl_style, text)| {
+                        let t = text.trim_end_matches('\n');
+                        if t.is_empty() {
+                            return None;
+                        }
+                        let fg = Color::Rgb(
+                            hl_style.foreground.r,
+                            hl_style.foreground.g,
+                            hl_style.foreground.b,
+                        );
+                        Some(Span::styled(t.to_string(), Style::default().fg(fg)))
+                    })
+                    .collect();
+                // Push empty line for blank source lines so code structure is preserved
+                if line_spans.is_empty() {
+                    lines.push(Line::from(""));
+                } else {
+                    lines.push(Line::from(line_spans));
+                }
             } else {
-                lines.push(Line::from(Span::styled(
-                    format!("\u{2502} {src_line}"),
-                    Style::default().fg(Color::White),
-                )));
+                lines.push(Line::from(src_line.to_string()));
             }
         }
     } else {
-        // No syntax found — plain monospace style
-        let code_style = Style::default().fg(Color::White);
+        // No syntax found — plain text
         for src_line in code_trimmed.split('\n') {
-            lines.push(Line::from(Span::styled(
-                format!("\u{2502} {src_line}"),
-                code_style,
-            )));
+            lines.push(Line::from(src_line.to_string()));
         }
     }
+}
 
-    // Bottom border
-    lines.push(Line::styled(
-        format!("\u{2514}{}", "\u{2500}".repeat(30)),
-        Style::default().fg(MUTED),
-    ));
+/// Convert a number to a letter (1→a, 2→b, ..., 26→z, 27→aa, ...).
+/// Aligned with official CC ordered-list depth-2 numbering.
+fn number_to_letter(mut n: u64) -> String {
+    let mut result = String::new();
+    while n > 0 {
+        n -= 1;
+        result.push(char::from_u32(u32::try_from(97 + (n % 26)).unwrap_or(97)).unwrap_or('a'));
+        n /= 26;
+    }
+    result.chars().rev().collect()
+}
+
+const ROMAN_VALUES: &[(u64, &str)] = &[
+    (1000, "m"),
+    (900, "cm"),
+    (500, "d"),
+    (400, "cd"),
+    (100, "c"),
+    (90, "xc"),
+    (50, "l"),
+    (40, "xl"),
+    (10, "x"),
+    (9, "ix"),
+    (5, "v"),
+    (4, "iv"),
+    (1, "i"),
+];
+
+/// Convert a number to lowercase roman numerals (1→i, 2→ii, 3→iii, ...).
+/// Aligned with official CC ordered-list depth-3 numbering.
+fn number_to_roman(mut n: u64) -> String {
+    let mut result = String::new();
+    for &(value, numeral) in ROMAN_VALUES {
+        while n >= value {
+            result.push_str(numeral);
+            n -= value;
+        }
+    }
+    result
 }
 
 /// Quick heuristic: does this text look like it contains markdown?
@@ -483,33 +505,50 @@ mod tests {
     fn inline_code() {
         let lines = render_markdown("use `foo` here");
         assert_eq!(lines.len(), 1);
-        let code_span = lines[0].spans.iter().find(|s| s.content.contains("foo"));
-        assert!(code_span.is_some());
-        assert_eq!(code_span.unwrap().style.fg, Some(Color::Yellow));
+        let code_span = lines[0].spans.iter().find(|s| s.content == "foo");
+        assert!(code_span.is_some(), "inline code span should contain 'foo' without backticks");
+        assert_eq!(code_span.unwrap().style.fg, Some(Color::Blue));
     }
 
     #[test]
-    fn heading() {
-        let lines = render_markdown("## Title\n\nBody text");
+    fn heading_h1() {
+        let lines = render_markdown("# Title\n\nBody text");
         assert!(!lines.is_empty());
-        // First span is the visual block prefix (no raw '#' characters)
         let heading = &lines[0];
         assert!(
-            !heading.spans[0].content.contains('#'),
+            !heading.spans.iter().any(|s| s.content.contains('#')),
             "heading should not echo '#' characters"
         );
-        assert!(heading.spans[0].style.fg == Some(Color::Cyan));
+        assert!(heading.spans.iter().any(|s| {
+            s.style.add_modifier.contains(Modifier::BOLD)
+                && s.style.add_modifier.contains(Modifier::ITALIC)
+                && s.style.add_modifier.contains(Modifier::UNDERLINED)
+        }));
+    }
+
+    #[test]
+    fn heading_h2() {
+        let lines = render_markdown("## Title\n\nBody text");
+        assert!(!lines.is_empty());
+        let heading = &lines[0];
+        assert!(
+            !heading.spans.iter().any(|s| s.content.contains('#')),
+            "heading should not echo '#' characters"
+        );
+        assert!(heading.spans.iter().any(|s| {
+            s.style.add_modifier.contains(Modifier::BOLD)
+                && !s.style.add_modifier.contains(Modifier::UNDERLINED)
+        }));
     }
 
     #[test]
     fn code_block() {
         let md = "```rust\nfn main() {}\n```";
         let lines = render_markdown(md);
-        // Should have: header line, code line, footer line
-        assert!(lines.len() >= 3);
-        // Header should mention "rust"
-        let header = &lines[0];
-        assert!(header.spans.iter().any(|s| s.content.contains("rust")));
+        // No borders: just the code line(s)
+        assert!(!lines.is_empty());
+        let code_line: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(code_line.contains("fn main"), "code block should contain the code");
     }
 
     #[test]
@@ -531,6 +570,19 @@ mod tests {
         let md = "> quoted text";
         let lines = render_markdown(md);
         assert!(!lines.is_empty());
+        let line = &lines[0];
+        // Official CC uses ▎ (U+258E) as blockquote prefix
+        assert!(
+            line.spans.iter().any(|s| s.content.contains('\u{258e}')),
+            "blockquote should use ▎ prefix"
+        );
+        // Content should be italic
+        assert!(
+            line.spans.iter().any(|s| {
+                s.style.add_modifier.contains(Modifier::ITALIC) && s.content.contains("quoted")
+            }),
+            "blockquote content should be italic"
+        );
     }
 
     #[test]
@@ -539,8 +591,8 @@ mod tests {
         let lines = render_markdown(md);
         let rule_line = lines
             .iter()
-            .find(|l| l.spans.iter().any(|s| s.content.contains('\u{2500}')));
-        assert!(rule_line.is_some());
+            .find(|l| l.spans.iter().any(|s| s.content == "---"));
+        assert!(rule_line.is_some(), "horizontal rule should render as '---'");
     }
 
     #[test]
