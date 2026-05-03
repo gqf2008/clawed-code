@@ -9,6 +9,7 @@ use ratatui::{
 
 /// Static hints for the bottom bar in normal (idle) mode.
 const NORMAL_HINTS: &[(&str, &str)] = &[
+    ("Enter", "submit"),
     ("Esc", "help"),
     ("Tab", "complete"),
     ("Ctrl+J", "newline"),
@@ -47,9 +48,17 @@ pub fn render(frame: &mut Frame, area: Rect, is_generating: bool, permission_mod
 
     // Show permission mode when not generating and not default.
     if !is_generating && !permission_mode.is_empty() && permission_mode != "default" {
+        let mode_symbol = match permission_mode {
+            "auto" => "\u{2713} auto on",        // ✓ auto on
+            "acceptEdits" => "\u{2713} accept edits", // ✓ accept edits
+            "bypass" => "\u{2713} bypass",        // ✓ bypass
+            "plan" => "\u{2713} plan",            // ✓ plan
+            "dontAsk" => "\u{2713} don't ask",    // ✓ don't ask
+            other => other,
+        };
         spans.push(Span::styled("  ", sep));
         spans.push(Span::styled(
-            format!("permissions: {permission_mode} (shift+tab: cycle)"),
+            format!("{mode_symbol} (shift+tab: cycle)"),
             Style::default().fg(Color::Yellow),
         ));
     }

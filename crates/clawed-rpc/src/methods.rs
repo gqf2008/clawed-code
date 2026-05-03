@@ -96,10 +96,12 @@ pub fn parse_request(method: &str, params: Option<Value>) -> Result<AgentRequest
                 .to_string();
             let granted = p.get("granted").and_then(|v| v.as_bool()).unwrap_or(false);
             let remember = p.get("remember").and_then(|v| v.as_bool()).unwrap_or(false);
+            let reason = p.get("reason").and_then(|v| v.as_str()).map(String::from);
             Ok(AgentRequest::PermissionResponse {
                 request_id,
                 granted,
                 remember,
+                reason,
             })
         }
 
@@ -317,6 +319,9 @@ pub fn notification_to_jsonrpc(notif: &AgentNotification) -> Notification {
             id,
             tool_name,
             is_error,
+            cancelled,
+            rejected,
+            reject_reason,
             result_preview,
         } => {
             let mut map = serde_json::Map::with_capacity(4);
@@ -1138,6 +1143,9 @@ mod tests {
             tool_name: "Read".into(),
             is_error: false,
             result_preview: None,
+            cancelled: false,
+            rejected: false,
+            reject_reason: None,
         };
         let jsonrpc = notification_to_jsonrpc(&notif);
         let p = jsonrpc.params.unwrap();

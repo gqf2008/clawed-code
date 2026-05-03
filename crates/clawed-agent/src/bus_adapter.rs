@@ -401,6 +401,9 @@ impl AgentCoreAdapter {
                         id,
                         tool_name,
                         is_error,
+                        cancelled: false,
+                        rejected: false,
+                        reject_reason: None,
                         result_preview: text,
                     }
                 }
@@ -848,8 +851,11 @@ mod tests {
             AgentEvent::ToolResult { id, is_error, text } => {
                 Some(AgentNotification::ToolUseComplete {
                     id,
-                    tool_name: String::new(), // stateless helper; real adapter uses tool_names map
+                    tool_name: String::new(),
                     is_error,
+                    cancelled: false,
+                    rejected: false,
+                    reject_reason: None,
                     result_preview: text,
                 })
             }

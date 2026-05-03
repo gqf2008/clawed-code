@@ -189,6 +189,9 @@ mod tests {
             tool_name: "FileRead".into(),
             result_preview: Some("contents of file.rs".into()),
             is_error: false,
+            cancelled: false,
+            rejected: false,
+            reject_reason: None,
         });
         assert!(!fmt.is_tool_running());
 

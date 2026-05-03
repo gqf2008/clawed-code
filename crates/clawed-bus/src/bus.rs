@@ -861,6 +861,7 @@ mod tests {
                 request_id: perm.request_id,
                 granted: true,
                 remember: true,
+                reason: None,
             })
             .unwrap();
 
@@ -1059,6 +1060,7 @@ mod tests {
                 request_id: perm.request_id,
                 granted: true,
                 remember: false,
+                reason: None,
             })
             .unwrap();
 
@@ -1279,6 +1281,9 @@ mod tests {
             tool_name: "Bash".into(),
             is_error: false,
             result_preview: Some("ok".into()),
+            cancelled: false,
+            rejected: false,
+            reject_reason: None,
         });
 
         let e1 = sub.recv().await.unwrap();

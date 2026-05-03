@@ -45,6 +45,15 @@ pub enum AgentNotification {
         id: String,
         tool_name: String,
         is_error: bool,
+        /// Whether the tool was cancelled by user abort or permission denial.
+        #[serde(default)]
+        cancelled: bool,
+        /// Whether the tool was rejected by the permission system.
+        #[serde(default)]
+        rejected: bool,
+        /// Optional reason for rejection.
+        #[serde(default)]
+        reject_reason: Option<String>,
         /// Truncated result text for display (full result stays in conversation).
         result_preview: Option<String>,
     },
@@ -240,6 +249,9 @@ pub enum AgentRequest {
         /// If true, remember this decision for the session.
         #[serde(default)]
         remember: bool,
+        /// Optional user-provided reason/feedback.
+        #[serde(default)]
+        reason: Option<String>,
     },
 
     /// Trigger manual compaction.
@@ -331,6 +343,9 @@ pub struct PermissionResponse {
     pub granted: bool,
     /// Remember this decision for the rest of the session.
     pub remember: bool,
+    /// Optional user-provided reason for the decision (feedback text).
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 // ── Supporting types ─────────────────────────────────────────────────────────
@@ -451,6 +466,9 @@ mod tests {
                 tool_name: "FileRead".into(),
                 is_error: false,
                 result_preview: Some("file content...".into()),
+                cancelled: false,
+                rejected: false,
+                reject_reason: None,
             },
             AgentNotification::TurnComplete {
                 turn: 1,
@@ -567,6 +585,7 @@ mod tests {
                 request_id: "pr_1".into(),
                 granted: true,
                 remember: false,
+                reason: None,
             },
             AgentRequest::SetModel {
                 model: "opus".into(),

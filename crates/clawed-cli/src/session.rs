@@ -175,6 +175,7 @@ pub async fn spawn_permission_handler(mut client: ClientHandle) {
             request_id: req.request_id,
             granted,
             remember,
+            reason: None,
         };
 
         if client.send_permission_response(resp).is_err() {
@@ -337,6 +338,7 @@ mod tests {
             request_id: "perm-1".into(),
             granted: true,
             remember: true,
+            reason: None,
         };
         assert!(resp.granted);
         assert!(resp.remember);

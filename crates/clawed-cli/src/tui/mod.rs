@@ -56,7 +56,7 @@ type TuiTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io:
 
 /// Subdued text color for hints, separators, status indicators, and input text.
 /// Uses a true-color gray that is readable on both dark and light backgrounds,
-/// unlike `Color::DarkGray` (ANSI 8) which maps to bright on many terminals.
+/// Muted/dim color for secondary text.
 pub(super) const MUTED: Color = Color::Rgb(140, 140, 140);
 const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -69,6 +69,25 @@ const MIN_RENDER_INTERVAL: Duration = Duration::from_millis(50);
 /// invalidates ratatui's diff-based rendering when not using alternate screen.
 const PERIODIC_CLEAR_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_COMPLETION_POPUP_ITEMS: usize = 10;
+
+/// Streaming assistant text with ⏺ dot prefix.
+fn assistant_text_lines(text: &str) -> Vec<Line<'static>> {
+    let mut lines = plain_text_lines(text);
+    if let Some(first) = lines.first_mut() {
+        let mut prefixed = vec![Span::styled(
+            format!("{} ", verbs::INFO_MARKER),
+            Style::default().fg(MUTED),
+        )];
+        prefixed.append(&mut first.spans);
+        first.spans = prefixed;
+    }
+    for line in lines.iter_mut().skip(1) {
+        let mut indented = vec![Span::raw("  ")];
+        indented.append(&mut line.spans);
+        line.spans = indented;
+    }
+    lines
+}
 
 fn plain_text_lines(text: &str) -> Vec<Line<'static>> {
     if text.is_empty() {
@@ -626,8 +645,6 @@ struct App {
     sticky_prompt_text: Option<String>,
     /// Vim mode: "INSERT", "NORMAL", "VISUAL", or None if vim disabled.
     vim_mode: Option<String>,
-    /// API rate limit usage percentage (0.0–100.0) if available.
-    rate_limit_pct: Option<f64>,
     /// Whether reduced motion is enabled (disables spinner/shimmer animations).
     reduced_motion: bool,
     input: InputWidget,
@@ -704,8 +721,9 @@ impl App {
             divider_message_count: None,
             sticky_prompt_text: None,
             vim_mode: None,
-            rate_limit_pct: None,
-            reduced_motion: false,
+            reduced_motion: std::env::var("CLAWED_REDUCED_MOTION")
+                .map(|v| v == "1" || v == "true")
+                .unwrap_or(false),
             input: InputWidget::new(),
             footer_picker: None,
             status: TuiStatusState::new(),
@@ -779,7 +797,7 @@ impl App {
 
         if self.is_generating && index + 1 == self.messages.len() {
             if let MessageContent::AssistantText(text) = &msg.content {
-                return plain_text_lines(text);
+                return assistant_text_lines(text);
             }
         }
 
@@ -996,10 +1014,13 @@ impl App {
     /// true for the entire turn so queue gating and Esc abort work correctly.
     fn mark_generating(&mut self) {
         self.status.thinking = true;
+        self.status.thinking_since = Some(Instant::now());
         self.status.is_generating = true;
         self.status.generating_since = Some(Instant::now());
         self.status.last_token_time = None;
         self.status.current_verb = Some(verbs::random_spinner_verb());
+        self.status.response_length = 0;
+        self.status.displayed_tokens = 0;
         self.is_generating = true;
         self.footer_picker = None;
         self.invalidate_visible_lines();
@@ -1012,6 +1033,8 @@ impl App {
     /// Clear all generation state (abort or TurnComplete).
     fn mark_done(&mut self) {
         self.status.thinking = false;
+        self.status.thinking_since = None;
+        self.status.thought_display_until = None;
         self.status.is_generating = false;
         self.status.generating_since = None;
         self.status.last_token_time = None;
@@ -1120,6 +1143,12 @@ impl App {
         match notification {
             AgentNotification::TextDelta { text } => {
                 self.status.thinking = false;
+                // Show "thought for Ns" for at least 2 seconds.
+                if let Some(since) = self.status.thinking_since {
+                    self.status.thought_display_until =
+                        Some(since + Duration::from_secs(2));
+                }
+                self.status.thinking_since = None;
                 self.status.record_token();
                 if self.status.current_verb == Some(verbs::THINKING_VERB) {
                     self.status.current_verb = Some(verbs::random_spinner_verb());
@@ -1128,6 +1157,9 @@ impl App {
             }
             AgentNotification::ThinkingDelta { text } => {
                 self.status.thinking = true;
+                if self.status.thinking_since.is_none() {
+                    self.status.thinking_since = Some(Instant::now());
+                }
                 self.status.record_token();
                 self.status.current_verb = Some(verbs::THINKING_VERB);
                 self.append_thinking_text(&text);
@@ -1185,6 +1217,9 @@ impl App {
             AgentNotification::ToolUseComplete {
                 tool_name,
                 is_error,
+                cancelled,
+                rejected,
+                reject_reason,
                 result_preview,
                 ..
             } => {
@@ -1202,6 +1237,33 @@ impl App {
                     .map(|t| t.started.elapsed().as_millis() as u64)
                     .unwrap_or(0);
                 self.status.active_tools.remove(&tool_name);
+
+                // Handle cancelled/rejected tools with dedicated message types.
+                // Try to recover the tool input from the matching ToolExecution message.
+                let tool_input = self.messages.iter().rev().find_map(|m| match &m.content {
+                    MessageContent::ToolExecution { name, input, .. } if *name == tool_name => {
+                        input.clone()
+                    }
+                    _ => None,
+                });
+                if cancelled {
+                    self.push_message(MessageContent::ToolCanceled {
+                        name: tool_name.clone(),
+                        input: tool_input,
+                        duration_ms,
+                    });
+                    self.invalidate_visible_lines();
+                    return None;
+                }
+                if rejected {
+                    self.push_message(MessageContent::ToolRejected {
+                        name: tool_name.clone(),
+                        input: tool_input,
+                        reason: reject_reason.clone(),
+                    });
+                    self.invalidate_visible_lines();
+                    return None;
+                }
                 // Update the last ToolExecution message in-place.
                 // If tool_name is empty (lookup failed), fall back to last ToolExecution.
                 let result = result_preview.unwrap_or_default();
@@ -1252,6 +1314,9 @@ impl App {
                 // Keep the latest value rather than summing — summing double-counts context.
                 self.context_tokens = usage.input_tokens;
                 self.total_output_tokens += usage.output_tokens;
+                if self.status.response_length != self.total_output_tokens {
+                    self.status.response_length = self.total_output_tokens;
+                }
                 // If expecting_turn_start is true, the user already submitted a new
                 // message and is waiting for TurnStart of the *new* turn. This
                 // TurnComplete belongs to the old (possibly aborted) turn. Skip
@@ -1267,6 +1332,12 @@ impl App {
                             "{marker} {verb} for {duration}",
                             marker = verbs::TURN_COMPLETION_MARKER
                         );
+                        // Append token usage summary.
+                        let in_k = (usage.input_tokens + usage.cache_read_tokens) / 1000;
+                        let out_k = usage.output_tokens / 1000;
+                        if in_k > 0 || out_k > 0 {
+                            msg.push_str(&format!(" \u{00B7} {in_k}k\u{2191} {out_k}k\u{2193}"));
+                        }
                         // Append "still running" counts when tools/agents outlive the turn.
                         let shells = self.status.active_shells;
                         let agents = self.status.active_agents.len();
@@ -1312,6 +1383,7 @@ impl App {
                 // We now have a confirmed new turn — allow TextDelta through.
                 self.expecting_turn_start = false;
                 self.status.thinking = true;
+                self.status.thinking_since = Some(Instant::now());
                 // Skip turn separator — keeping transcript clean like the
                 // original Claude Code.
             }
@@ -1345,9 +1417,15 @@ impl App {
             AgentNotification::AgentTerminated { agent_id, reason } => {
                 self.task_plan.terminate_task(&agent_id);
                 self.status.active_agents.remove(&agent_id);
+                let is_abnormal = reason.to_lowercase().contains("error")
+                    || reason.to_lowercase().contains("killed");
+                let icon = if is_abnormal {
+                    verbs::ERROR_MARKER
+                } else {
+                    verbs::WARNING_MARKER
+                };
                 self.push_message(MessageContent::System(format!(
-                    "{warn} Agent terminated: {reason}",
-                    warn = verbs::WARNING_MARKER
+                    "{icon} Agent terminated: {reason}",
                 )));
             }
             AgentNotification::SessionEnd { reason } => {
@@ -1358,12 +1436,12 @@ impl App {
             AgentNotification::CompactStart => {
                 self.push_message(MessageContent::System(format!(
                     "{marker} Compacting context\u{2026}",
-                    marker = verbs::THINKING_MARKER
+                    marker = verbs::INFO_MARKER
                 )));
             }
             AgentNotification::CompactComplete { .. } => {
                 self.push_message(MessageContent::System(format!(
-                    "{marker} Conversation compacted (Ctrl+O for history)",
+                    "{marker} Conversation compacted (ctrl+o for history)",
                     marker = verbs::TURN_COMPLETION_MARKER
                 )));
             }
@@ -1422,7 +1500,8 @@ impl App {
             }
             AgentNotification::McpServerConnected { name, tool_count } => {
                 self.push_message(MessageContent::System(format!(
-                    "✓ MCP connected: {name} ({tool_count} tools)",
+                    "{info} MCP connected: {name} ({tool_count} tools)",
+                    info = verbs::INFO_MARKER
                 )));
             }
             AgentNotification::McpServerDisconnected { name } => {
@@ -1432,8 +1511,8 @@ impl App {
             }
             AgentNotification::McpServerError { name, error } => {
                 self.push_message(MessageContent::System(format!(
-                    "{icon} MCP error [{name}]: {error}",
-                    icon = verbs::ERROR_MARKER
+                    "{warn} MCP error [{name}]: {error}",
+                    warn = verbs::WARNING_MARKER
                 )));
             }
             AgentNotification::McpServerList { servers } => {
@@ -1488,7 +1567,7 @@ impl App {
             AgentNotification::ContextWarning { usage_pct, message } => {
                 self.status.context_pct = usage_pct;
                 self.push_message(MessageContent::System(format!(
-                    "{warn} Context {usage_pct:.0}%: {message}",
+                    "{warn} Context at {usage_pct:.0}% — {message}",
                     warn = verbs::WARNING_MARKER,
                 )));
             }
@@ -1496,8 +1575,7 @@ impl App {
                 let n = facts.len();
                 let s = if n == 1 { "" } else { "s" };
                 self.push_message(MessageContent::System(format!(
-                    "{info} Saved {n} memory{s}",
-                    info = verbs::INFO_MARKER,
+                    "\u{1F9E0} Remembered {n} thing{s}",
                 )));
             }
             AgentNotification::HistoryCleared => {
@@ -1507,11 +1585,10 @@ impl App {
                     info = verbs::INFO_MARKER,
                 )));
             }
-            AgentNotification::SessionSaved { session_id } => {
-                self.push_message(MessageContent::System(format!(
-                    "{info} Session saved: {session_id}",
-                    info = verbs::INFO_MARKER,
-                )));
+            AgentNotification::SessionSaved { .. } => {
+                self.push_message(MessageContent::System(
+                    "\u{1F4BE} Saved".to_string(),
+                ));
             }
             // Tool selected — pre-execution signal (just a brief note)
             AgentNotification::ToolSelected { .. } => {}
@@ -1555,6 +1632,13 @@ impl App {
                 agent_id,
                 model,
             } => {
+                self.status.active_agents.insert(
+                    agent_id.clone(),
+                    status::AgentInfo {
+                        name: format!("[{team_name}] {agent_id}"),
+                        started: Instant::now(),
+                    },
+                );
                 self.push_message(MessageContent::System(format!(
                     "  ↳ [{team_name}] Agent {agent_id} spawned ({model})",
                 )));
@@ -1563,6 +1647,7 @@ impl App {
                 team_name,
                 agent_id,
             } => {
+                self.status.active_agents.remove(&agent_id);
                 self.push_message(MessageContent::System(format!(
                     "  ↳ [{team_name}] Agent {agent_id} terminated",
                 )));
@@ -1822,6 +1907,9 @@ fn render(frame: &mut Frame, app: &mut App) {
     app.term_width = area.width;
     app.term_height = area.height;
 
+    // Update smoothed stall intensity (exponential smoothing).
+    app.status.tick_stall();
+
     let perm_layout = app
         .permission
         .as_ref()
@@ -1868,7 +1956,12 @@ fn render(frame: &mut Frame, app: &mut App) {
 
     let tip_rows = if has_permission { 0 } else { u16::from(app.status.has_tip()) };
 
+    // Sticky prompt header: 1 row above messages when scrolled up
+    let sticky_rows =
+        u16::from(!has_permission && !app.auto_scroll && app.sticky_prompt_text.is_some());
+
     let constraints = [
+        Constraint::Length(sticky_rows),           // sticky prompt (0 or 1)
         Constraint::Min(1),                        // messages
         Constraint::Length(task_plan_rows),        // task plan (0 if empty)
         Constraint::Length(1 + tip_rows),          // info line + optional tip
@@ -1878,12 +1971,18 @@ fn render(frame: &mut Frame, app: &mut App) {
     ];
 
     let chunks = Layout::vertical(constraints).split(area);
-    let msg_area = chunks[0];
-    let task_area = chunks[1];
-    let sep_area = chunks[2];
-    let queue_area = chunks[3];
-    let input_sep_area = chunks[4];
-    let footer_area = chunks[5];
+    let sticky_area = chunks[0];
+    let msg_area = chunks[1];
+    let task_area = chunks[2];
+    let sep_area = chunks[3];
+    let queue_area = chunks[4];
+    let input_sep_area = chunks[5];
+    let footer_area = chunks[6];
+
+    // Sticky prompt header when scrolled up
+    if sticky_rows > 0 {
+        render_sticky_prompt(frame, sticky_area, app);
+    }
 
     render_messages(frame, msg_area, app);
 
@@ -2010,6 +2109,50 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
     }
     frame.render_widget(paragraph.scroll((scroll_row, 0)), area);
     app.last_rendered_message_visual_count = Some(total_visual);
+
+    // Render "N new messages" pill when scrolled up
+    if !app.auto_scroll {
+        let new_count = app
+            .divider_message_count
+            .map(|dc| app.messages.len().saturating_sub(dc))
+            .unwrap_or(0);
+        let pill_text = if new_count > 0 {
+            format!(" {} new message{} ↓ ", new_count, if new_count == 1 { "" } else { "s" })
+        } else {
+            " Jump to bottom ↓ ".to_string()
+        };
+        let pill_len = pill_text.len() as u16;
+        if area.width > pill_len + 2 && area.height > 0 {
+            let pill_x = (area.width.saturating_sub(pill_len)) / 2;
+            let pill_area = Rect::new(area.x + pill_x, area.y + area.height - 1, pill_len, 1);
+            frame.render_widget(Clear, pill_area);
+            let pill = Paragraph::new(pill_text)
+                .style(Style::default().bg(Color::Rgb(40, 40, 50)).fg(Color::White));
+            frame.render_widget(pill, pill_area);
+        }
+    }
+}
+
+/// Sticky prompt header — shows the current prompt as a breadcrumb when scrolled up.
+fn render_sticky_prompt(frame: &mut Frame, area: Rect, app: &App) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    if let Some(ref prompt) = app.sticky_prompt_text {
+        let display = if prompt.len() > area.width as usize {
+            &prompt[..area.width as usize]
+        } else {
+            prompt.as_str()
+        };
+        let line = Line::from(vec![
+            Span::styled("❯ ", Style::default().fg(Color::Indexed(245))),
+            Span::styled(display, Style::default().fg(Color::Indexed(245))),
+        ]);
+        let para = Paragraph::new(line)
+            .style(Style::default().bg(Color::Rgb(30, 30, 40)));
+        frame.render_widget(Clear, area);
+        frame.render_widget(para, area);
+    }
 }
 
 fn render_queue_banner(frame: &mut Frame, area: Rect, queued: &[String]) {
@@ -2085,12 +2228,16 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         None
     };
 
+    if let Some(ref mode) = app.vim_mode {
+        info_parts.push(mode.clone());
+    }
+
     if !app.queued_inputs.is_empty() {
         info_parts.push(format!("\u{1F4E5}{}", app.queued_inputs.len()));
     }
 
     // --- Dynamic status spans (spinner, elapsed, tools, shells, agents) — leftmost ---
-    let status_spans = status::build_spans(&app.status);
+    let status_spans = status::build_spans(&app.status, app.reduced_motion);
     let status_w: usize = status_spans.iter().map(|s| s.content.width()).sum();
 
     // Build spans: status first (Thinking/elapsed leftmost), then info.
@@ -2216,16 +2363,12 @@ fn fmt_tokens(n: u64) -> String {
 }
 
 fn render_input(frame: &mut Frame, area: Rect, app: &App) {
-    let prompt_style = Style::default()
-        .fg(Color::Cyan)
-        .add_modifier(Modifier::BOLD);
+    use ratatui::widgets::{Block, BorderType, Borders};
+
     let text_style = Style::default(); // use terminal default — input text must be readable
     let image_style = Style::default().fg(Color::Magenta);
     let ghost_style = Style::default().fg(MUTED); // placeholder text stays muted
     let indicator_style = Style::default().fg(MUTED);
-    let badge_style = Style::default()
-        .fg(Color::LightCyan)
-        .add_modifier(Modifier::BOLD);
 
     let display_lines = app.input.display_lines();
     let img_count = app.pending_images.len();
@@ -2235,30 +2378,28 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     let placeholder = if app.is_generating {
         let verb = app.status.current_verb.unwrap_or(verbs::THINKING_VERB);
         format!("{verb}\u{2026}")
+    } else if !app.queued_inputs.is_empty() {
+        "Press up to edit queued messages".to_string()
     } else {
         "Message Claude\u{2026}".to_string()
     };
 
-    let model_badge = shorten_model_name(&app.model);
-    // Prefix width for cursor positioning: "> " + model_badge + " · " = 2 + badge.len() + 3
-    let prefix_width = if model_badge.is_empty() {
-        2usize
-    } else {
-        2 + model_badge.width() + 3
-    };
+    // Round border box around input.
+    let border_style = Style::default().fg(MUTED);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(border_style);
+
+    let inner = block.inner(area);
+    frame.render_widget(&block, area);
 
     let lines: Vec<Line> = display_lines
         .iter()
         .enumerate()
         .map(|(i, line_text)| {
             if i == 0 {
-                let mut spans = vec![Span::styled("> ", prompt_style)];
-                if !model_badge.is_empty() {
-                    spans.push(Span::styled(
-                        format!("{} \u{00B7} ", model_badge),
-                        badge_style,
-                    ));
-                }
+                let mut spans = vec![];
                 if is_empty {
                     spans.push(Span::styled(placeholder.clone(), ghost_style));
                 } else {
@@ -2270,14 +2411,13 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
                 Line::from(spans)
             } else {
                 Line::from(vec![
-                    Span::styled("  ", prompt_style), // continuation indent
                     Span::styled((*line_text).to_string(), text_style),
                 ])
             }
         })
         .collect();
 
-    frame.render_widget(Paragraph::new(lines), area);
+    frame.render_widget(Paragraph::new(lines), inner);
 
     // Render scroll indicators on the right edge
     if area.width > 3 {
@@ -2296,10 +2436,10 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    // Position cursor
+    // Position cursor inside the border
     let (cursor_row, cursor_col) = app.input.cursor_position();
-    let x = area.x + prefix_width as u16 + (cursor_col as u16).min(area.width.saturating_sub(3));
-    let y = area.y + (cursor_row as u16).min(area.height.saturating_sub(1));
+    let x = inner.x + (cursor_col as u16).min(inner.width.saturating_sub(1));
+    let y = inner.y + (cursor_row as u16).min(inner.height.saturating_sub(1));
     frame.set_cursor_position((x, y));
 }
 
@@ -2486,7 +2626,7 @@ fn render_welcome_lines(width: u16, model: &str, permission_mode: &str) -> Vec<L
     }
     welcome.push(Line::from(""));
     welcome.push(Line::styled(
-        center("Tab: complete  ↑↓: history  Ctrl+C: abort  /help: commands", w),
+        center("Enter: submit  Tab: autocomplete  Esc: cancel  /: commands", w),
         muted,
     ));
     welcome.push(Line::styled(
@@ -2526,7 +2666,7 @@ async fn abort_session(
     app.pending_workflow = None;
     app.queued_inputs.clear();
     app.push_message(MessageContent::System(format!(
-        "{icon} Interrupted",
+        "{icon} Interrupted · What should Claude do instead?",
         icon = verbs::ERROR_MARKER,
     )));
 }
@@ -2933,6 +3073,9 @@ pub async fn run_tui(
                         // Scroll back
                         (KeyCode::PageUp, _) | (KeyCode::Up, KeyModifiers::SHIFT) => {
                             let step = if key.code == KeyCode::PageUp { 10 } else { 1 };
+                            if app.auto_scroll {
+                                app.divider_message_count = Some(app.messages.len());
+                            }
                             app.scroll_offset = app.scroll_offset.saturating_add(step);
                             app.auto_scroll = false;
                             app.request_redraw();
@@ -2944,6 +3087,7 @@ pub async fn run_tui(
                                 app.scroll_offset = app.scroll_offset.saturating_sub(step);
                                 if app.scroll_offset == 0 {
                                     app.auto_scroll = true;
+                                    app.divider_message_count = None;
                                 }
                             }
                             app.request_redraw();
@@ -3048,6 +3192,7 @@ pub async fn run_tui(
                                     } else {
                                         format!("{text} [+{} image(s)]", app.pending_images.len())
                                     };
+                                    app.sticky_prompt_text = Some(text.clone());
                                     app.push_message(MessageContent::UserInput(display));
                                     let images = std::mem::take(&mut app.pending_images);
                                     if images.is_empty() {
@@ -4093,6 +4238,11 @@ async fn handle_async_command(
                     return;
                 }
             };
+            app.vim_mode = if enabled {
+                Some("INSERT".to_string())
+            } else {
+                None
+            };
             let message = if enabled {
                 "Vim mode enabled (note: basic vim keybindings are a work in progress)"
             } else {
@@ -4650,7 +4800,7 @@ mod tests {
         assert!(!app.cached_visible_lines_dirty);
         assert_eq!(
             line_text(app.cached_visible_lines.last().expect("cached line")),
-            "hello world"
+            "\u{23FA} hello world"
         );
     }
 
@@ -4674,7 +4824,7 @@ mod tests {
 
         // Collapsed thinking always shows the same placeholder.
         assert_eq!(app.cached_visible_lines.len(), 1);
-        assert!(line_text(&app.cached_visible_lines[0]).contains("Ctrl+O to expand"));
+        assert!(line_text(&app.cached_visible_lines[0]).contains("Enter to expand"));
     }
 
     #[test]
@@ -4683,14 +4833,14 @@ mod tests {
         app.is_generating = true;
         app.push_message(MessageContent::AssistantText("**bold**".to_string()));
 
-        // Streaming: lightweight inline parsing strips the markers.
-        assert_eq!(line_text(&app.cached_visible_lines[0]), "bold");
+        // Streaming: lightweight inline parsing strips the markers, with ⏺ prefix.
+        assert_eq!(line_text(&app.cached_visible_lines[0]), "\u{23FA} bold");
 
         app.mark_done();
         app.rebuild_visible_lines();
 
-        // Done: full markdown renderer also produces "bold".
-        assert_eq!(line_text(&app.cached_visible_lines[0]), "bold");
+        // Done: full markdown renderer also produces "bold", with ⏺ prefix.
+        assert_eq!(line_text(&app.cached_visible_lines[0]), "\u{23FA} bold");
     }
 
     #[test]
@@ -5039,6 +5189,9 @@ mod tests {
                 id: id.to_string(),
                 tool_name: tool_name.to_string(),
                 is_error,
+                cancelled: false,
+                rejected: false,
+                reject_reason: None,
                 result_preview: result_preview.map(|s| s.to_string()),
             });
         }
@@ -7068,7 +7221,7 @@ mod tests {
             "tool at depth=1 should render tree connector, got:\n{text}"
         );
         assert!(
-            text.contains("⏺ Read"),
+            text.contains("Read"),
             "tool header should contain name, got:\n{text}"
         );
     }
