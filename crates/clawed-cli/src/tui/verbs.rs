@@ -1,4 +1,4 @@
-//! Spinner and turn-completion verbs.
+//! Spinner and turn-completion verbs — aligned with official Claude Code.
 
 use rand::RngExt;
 
@@ -270,11 +270,12 @@ pub(crate) fn format_duration(ms: u64) -> String {
 }
 
 /// Spinner frame tick interval in milliseconds.
-pub(crate) const SPINNER_TICK_INTERVAL_MS: u64 = 80;
-/// Shimmer speed per step: requesting (forward) = 50ms, responding (reverse) = 200ms.
-/// Aligned with official CC's glimmerSpeedMs.
-pub(crate) const SHIMMER_REQUESTING_MS: u64 = 50;
-pub(crate) const SHIMMER_RESPONDING_MS: u64 = 200;
+/// Aligned with official Claude Code: 120ms per frame.
+pub(crate) const SPINNER_TICK_INTERVAL_MS: u64 = 120;
+/// Shimmer animation interval in milliseconds (requesting mode — no tokens yet).
+pub(crate) const SHIMMER_INTERVAL_REQUESTING_MS: u64 = 50;
+/// Shimmer animation interval in milliseconds (thinking mode — tokens arriving).
+pub(crate) const SHIMMER_INTERVAL_THINKING_MS: u64 = 200;
 /// Width of the shimmer highlight segment in characters.
 const SHIMMER_WIDTH: usize = 3;
 
@@ -286,49 +287,17 @@ pub(crate) fn char_to_byte(s: &str, char_idx: usize) -> usize {
         .unwrap_or(s.len())
 }
 
-/// Shimmer direction: requesting sweeps forward (fast), responding sweeps backward (slow).
-#[derive(Clone, Copy)]
-pub(crate) enum ShimmerDirection {
-    Requesting,
-    Responding,
-}
-
 /// Compute shimmer segments for a label.
 /// Returns `(before, shimmer, after)` where shimmer is a 3-character
 /// highlight window that sweeps across the text.
 /// All spinner verbs are ASCII, so byte indices equal char indices.
-///
-/// Aligned with official CC `computeShimmerSegments` + `computeGlimmerIndex`:
-/// - Requesting: forward sweep (left to right)
-/// - Responding: reverse sweep (right to left)
-/// - Cycle length = label.len() + 20 (matches official CC's `messageWidth + 20`)
-pub(crate) fn compute_shimmer_segments(
-    label: &str,
-    tick: usize,
-    direction: ShimmerDirection,
-) -> (&str, &str, &str) {
+pub(crate) fn compute_shimmer_segments(label: &str, tick: usize) -> (&str, &str, &str) {
     let len = label.len();
-    if len == 0 {
-        return ("", "", "");
-    }
-    let cycle = len + 20;
-    let cycle_pos = tick % cycle;
+    let cycle = len + 6;
+    let glimmer = tick % cycle;
 
-    // Compute glimmer index (center of highlight window).
-    let glimmer = match direction {
-        // Forward sweep: glimmerIndex = (cyclePosition % cycleLength) - 10
-        ShimmerDirection::Requesting => cycle_pos as isize - 10,
-        // Reverse sweep: glimmerIndex = messageWidth + 10 - (cyclePosition % cycleLength)
-        ShimmerDirection::Responding => (len as isize + 10) - cycle_pos as isize,
-    };
-
-    // Highlight window: glimmer ± SHIMMER_WIDTH/2 (3 visual columns).
-    let half = SHIMMER_WIDTH as isize / 2;
-    let win_start = (glimmer - half).max(0) as usize;
-    let win_end = (glimmer + half + 1).min(len as isize).max(0) as usize;
-
-    let before_end = win_start.min(len);
-    let shimmer_end = win_end.min(len);
+    let before_end = glimmer.min(len);
+    let shimmer_end = (glimmer + SHIMMER_WIDTH).min(len);
 
     let before = &label[..before_end];
     let shimmer = if before_end < shimmer_end {
@@ -399,45 +368,24 @@ mod tests {
     }
 
     #[test]
-    fn shimmer_forward_sweep() {
-        // Requesting (forward): tick=11 → glimmer=1, window 0..3 → "Bak"
-        let (b, s, a) = compute_shimmer_segments("Baking", 11, ShimmerDirection::Requesting);
+    fn shimmer_splits_label() {
+        let (b, s, a) = compute_shimmer_segments("Baking", 0);
         assert_eq!(b, "");
         assert_eq!(s, "Bak");
         assert_eq!(a, "ing");
     }
 
     #[test]
-    fn shimmer_forward_sweep_right() {
-        // Requesting: tick=14 → glimmer=4, window 3..6 → "ing"
-        let (b, s, a) = compute_shimmer_segments("Baking", 14, ShimmerDirection::Requesting);
+    fn shimmer_sweeps_right() {
+        let (b, s, a) = compute_shimmer_segments("Baking", 3);
         assert_eq!(b, "Bak");
         assert_eq!(s, "ing");
         assert_eq!(a, "");
     }
 
     #[test]
-    fn shimmer_reverse_sweep() {
-        // Responding (reverse): tick=11 → glimmer=5, window 4..6 → "ng"
-        let (b, s, a) = compute_shimmer_segments("Baking", 11, ShimmerDirection::Responding);
-        assert_eq!(b, "Baki");
-        assert_eq!(s, "ng");
-        assert_eq!(a, "");
-    }
-
-    #[test]
-    fn shimmer_window_before_label() {
-        // Forward: tick=0 → glimmer=-10, window clamped to 0..0 → no shimmer
-        let (b, s, a) = compute_shimmer_segments("Baking", 0, ShimmerDirection::Requesting);
-        assert_eq!(b, "");
-        assert_eq!(s, "");
-        assert_eq!(a, "Baking");
-    }
-
-    #[test]
-    fn shimmer_window_past_end() {
-        // Responding: tick=0 → glimmer=16, window clamped past end → no shimmer
-        let (b, s, a) = compute_shimmer_segments("Baking", 0, ShimmerDirection::Responding);
+    fn shimmer_cycles_past_end() {
+        let (b, s, a) = compute_shimmer_segments("Baking", 6);
         assert_eq!(b, "Baking");
         assert_eq!(s, "");
         assert_eq!(a, "");
@@ -445,7 +393,7 @@ mod tests {
 
     #[test]
     fn shimmer_empty_label() {
-        let (b, s, a) = compute_shimmer_segments("", 0, ShimmerDirection::Requesting);
+        let (b, s, a) = compute_shimmer_segments("", 0);
         assert_eq!(b, "");
         assert_eq!(s, "");
         assert_eq!(a, "");

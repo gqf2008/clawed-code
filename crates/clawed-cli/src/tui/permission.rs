@@ -46,8 +46,6 @@ impl PermissionChoice {
 pub struct PendingPermission {
     pub request: PermissionRequest,
     pub selected: PermissionChoice,
-    /// User-provided feedback/reason text (entered via feedback mode).
-    pub feedback_text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +69,7 @@ impl PendingPermission {
             RiskLevel::High => PermissionChoice::Deny,
             _ => PermissionChoice::Allow,
         };
-        Self { request, selected, feedback_text: String::new() }
+        Self { request, selected }
     }
 
     /// Build a `PermissionResponse` from the current selection.
@@ -81,16 +79,11 @@ impl PendingPermission {
             PermissionChoice::Deny => (false, false),
             PermissionChoice::AllowAlways => (true, true),
         };
-        let reason = if self.feedback_text.is_empty() {
-            None
-        } else {
-            Some(self.feedback_text.clone())
-        };
         PermissionResponse {
             request_id: self.request.request_id.clone(),
             granted,
             remember,
-            reason,
+            reason: None,
         }
     }
 
@@ -121,7 +114,7 @@ pub fn layout_for(width: u16, perm: &PendingPermission) -> PermissionLayout {
         .wrap(Wrap { trim: false })
         .line_count(width)
         .max(1) as u16;
-    let button_rows = build_button_lines(perm, width)
+    let button_rows = build_button_lines(perm.selected, risk_color(perm), width)
         .len()
         .max(1) as u16;
     let hint_rows = Paragraph::new(build_hint_line())
@@ -145,6 +138,8 @@ pub fn render(
     hint_area: Rect,
     perm: &PendingPermission,
 ) {
+    let accent = risk_color(perm);
+
     frame.render_widget(
         Paragraph::new(build_description_line(perm)).wrap(Wrap { trim: false }),
         desc_area,
@@ -157,7 +152,7 @@ pub fn render(
 
     // --- Button row ---
     frame.render_widget(
-        Paragraph::new(build_button_lines(perm, btn_area.width)),
+        Paragraph::new(build_button_lines(perm.selected, accent, btn_area.width)),
         btn_area,
     );
 
@@ -222,25 +217,20 @@ fn build_description_line(perm: &PendingPermission) -> Line<'static> {
     ])
 }
 
-fn build_button_lines(perm: &PendingPermission, width: u16) -> Vec<Line<'static>> {
+fn build_button_lines(selected: PermissionChoice, accent: Color, width: u16) -> Vec<Line<'static>> {
     let width = usize::from(width.max(1));
     let indent = "  ";
     let indent_width = indent.width();
-    let selected = perm.selected;
-    let accent = risk_color(perm);
-    // "Yes, and don't ask again" only shown for non-high risk.
-    let mut buttons = vec![
-        build_button("Yes", PermissionChoice::Allow, selected, accent),
-        build_button("No", PermissionChoice::Deny, selected, accent),
-    ];
-    if perm.request.risk_level != RiskLevel::High {
-        buttons.push(build_button(
-            "Yes, and don't ask again",
+    let buttons = [
+        build_button("Allow", PermissionChoice::Allow, selected, accent),
+        build_button("Deny", PermissionChoice::Deny, selected, accent),
+        build_button(
+            "Allow Always",
             PermissionChoice::AllowAlways,
             selected,
             accent,
-        ));
-    }
+        ),
+    ];
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut current = vec![Span::raw(indent)];

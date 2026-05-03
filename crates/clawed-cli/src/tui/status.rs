@@ -1,6 +1,7 @@
 //! Dynamic status line for the TUI (ratatui version).
+//! Aligned with official Claude Code SpinnerAnimationRow.
 
-use super::verbs::{self, SPINNER_TICK_INTERVAL_MS};
+use super::verbs::{self, SHIMMER_INTERVAL_REQUESTING_MS, SHIMMER_INTERVAL_THINKING_MS, SPINNER_TICK_INTERVAL_MS};
 use super::MUTED;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -10,11 +11,23 @@ use ratatui::{
     text::Span,
 };
 
-/// Decorative spinner characters.
-/// Default set (macOS): · ✢ ✳ ✶ ✻ ✽
+/// Official CC platform-specific spinner characters.
+/// Bounce oscillation: 6 forward + 6 reverse - 2 overlap = 10 frames.
 const SPINNER: &[&str] = &["·", "✢", "✳", "✶", "✻", "✽"];
-/// Bounce: forward 0..5 then reverse 5..0 = 12 unique positions (6 + 6).
-const BOUNCE_LEN: usize = SPINNER.len() * 2;
+const BOUNCE_LEN: usize = SPINNER.len() * 2 - 2;
+
+/// ERROR_RED from official Claude Code: rgb(171, 43, 63).
+const ERROR_RED: (u8, u8, u8) = (171, 43, 63);
+
+/// Stall threshold (ms) before color interpolation begins.
+const STALL_THRESHOLD_MS: u128 = 3000;
+/// Duration (ms) over which stall color fades to ERROR_RED.
+const STALL_FADE_MS: u128 = 2000;
+
+/// Minimum delay (ms) before showing "thought for Ns".
+const THOUGHT_DISPLAY_DELAY_MS: u64 = 3000;
+/// Minimum duration (ms) that "thought for Ns" remains visible.
+const THOUGHT_DISPLAY_MIN_MS: u64 = 2000;
 
 pub struct ToolInfo {
     pub name: String,
@@ -31,11 +44,6 @@ pub struct TuiStatusState {
     pub active_shells: u32,
     pub active_agents: HashMap<String, AgentInfo>,
     pub thinking: bool,
-    /// When the current thinking phase started. Set when thinking becomes true.
-    pub thinking_since: Option<Instant>,
-    /// When to stop showing "thought for Ns" after thinking ends.
-    /// Minimum 2s display.
-    pub thought_display_until: Option<Instant>,
     /// True for the entire duration the agent is generating (set in mark_generating,
     /// cleared in mark_done). Broader than `thinking`, which goes false during TextDelta.
     pub is_generating: bool,
@@ -47,22 +55,30 @@ pub struct TuiStatusState {
     /// When the current generation phase started (for stall detection).
     pub generating_since: Option<Instant>,
     /// When the last token (text/thinking/tool) was received.
+    /// Used with generating_since for gradual stall color interpolation.
     /// Also drives the SpinnerModeGlyph: None → ↑ (requesting),
     /// Some(_) → ↓ (responding).
     pub last_token_time: Option<Instant>,
-    /// Smoothed stall intensity [0.0–1.0], using exponential smoothing (diff * 0.1)
-    /// Exponential smoothing for stall intensity. Reset on token arrival.
-    pub smoothed_stall: f64,
     /// Random verb picked when generation starts, used as spinner label.
-    /// Picked once per turn.
+    /// Picked once per turn, aligned with official Claude Code.
     /// None until the first verb is assigned (falls back to "Thinking").
     pub current_verb: Option<&'static str>,
-    /// Current response length in tokens from the API.
-    /// Updated from AgentNotification, drives the token counter display.
-    pub response_length: u64,
-    /// Smoothly interpolated display value for the token counter.
-    /// Smoothly interpolated display value for the token counter.
-    pub displayed_tokens: u64,
+
+    // --- Token counter (smooth increment) ---
+    /// Cumulative character count of the response (used to estimate tokens).
+    pub response_char_count: usize,
+    /// Currently displayed token estimate (smoothly incremented toward actual).
+    pub displayed_token_estimate: u32,
+
+    // --- "Thought for Ns" ---
+    /// When the current thinking block started.
+    pub thinking_start: Option<Instant>,
+    /// Total accumulated thinking time across all thinking blocks this turn (ms).
+    pub total_thinking_ms: u64,
+    /// Duration of the most recent completed thinking block (ms).
+    pub last_thinking_elapsed_ms: u64,
+    /// When the thinking block ended (for display timing).
+    pub thinking_end: Option<Instant>,
 }
 
 impl TuiStatusState {
@@ -72,79 +88,66 @@ impl TuiStatusState {
             active_shells: 0,
             active_agents: HashMap::new(),
             thinking: false,
-            thinking_since: None,
-            thought_display_until: None,
             is_generating: false,
             session_start: Instant::now(),
             spinner_frame: 0,
             context_pct: 0.0,
             generating_since: None,
             last_token_time: None,
-            smoothed_stall: 0.0,
             current_verb: None,
-            response_length: 0,
-            displayed_tokens: 0,
+            response_char_count: 0,
+            displayed_token_estimate: 0,
+            thinking_start: None,
+            total_thinking_ms: 0,
+            last_thinking_elapsed_ms: 0,
+            thinking_end: None,
         }
     }
 
     pub fn record_token(&mut self) {
         self.last_token_time = Some(Instant::now());
-        self.smoothed_stall = 0.0;
     }
 
-    /// Update smoothed stall intensity using exponential smoothing.
-    /// Call once per render tick.
-    pub fn tick_stall(&mut self) {
-        let now = Instant::now();
+    /// Accumulate response characters for token counter estimation.
+    pub fn add_response_chars(&mut self, n: usize) {
+        self.response_char_count += n;
+    }
 
-        // Short-circuit when nothing is generating and stall is already zero.
-        if self.generating_since.is_none() && self.smoothed_stall == 0.0 {
-            // Still need to clear expired thought display.
-            if let Some(until) = self.thought_display_until {
-                if until <= now {
-                    self.thought_display_until = None;
-                    self.thinking_since = None;
-                }
-            }
+    /// Start tracking a thinking block.
+    pub fn start_thinking(&mut self) {
+        if self.thinking_start.is_none() {
+            self.thinking_start = Some(Instant::now());
+        }
+    }
+
+    /// Stop the current thinking block and accumulate its duration.
+    pub fn stop_thinking(&mut self) {
+        if let Some(start) = self.thinking_start.take() {
+            let elapsed = start.elapsed().as_millis() as u64;
+            self.last_thinking_elapsed_ms = elapsed;
+            self.total_thinking_ms += elapsed;
+            self.thinking_end = Some(Instant::now());
+        }
+    }
+
+    /// Smoothly advance the displayed token estimate toward the actual value.
+    /// Called on each spinner tick (120ms).
+    pub fn update_token_counter(&mut self) {
+        let actual = (self.response_char_count / 4) as u32;
+        let gap = actual.saturating_sub(self.displayed_token_estimate);
+        if gap == 0 {
             return;
         }
-
-        let raw = if let Some(since) = self.generating_since {
-            let time_since_token = self
-                .last_token_time
-                .map(|t| t.elapsed().as_millis())
-                .unwrap_or_else(|| since.elapsed().as_millis());
-            ((time_since_token as f64 - 3000.0) / 2000.0).clamp(0.0, 1.0)
+        let increment = if gap < 70 {
+            3
+        } else if gap < 200 {
+            ((gap as f64 * 0.15).ceil() as u32).max(8)
         } else {
-            0.0
+            50
         };
-        self.smoothed_stall += (raw - self.smoothed_stall) * 0.1;
-
-        // Clear expired "thought for Ns" display.
-        if let Some(until) = self.thought_display_until {
-            if until <= now {
-                self.thought_display_until = None;
-                self.thinking_since = None;
-            }
-        }
-
-        // Smooth token counter increment.
-        if self.response_length > 0 {
-            let gap = self.response_length.saturating_sub(self.displayed_tokens);
-            if gap > 0 {
-                let increment = if gap < 70 {
-                    3
-                } else if gap < 200 {
-                    (gap as f64 * 0.15).ceil() as u64
-                } else {
-                    50
-                };
-                self.displayed_tokens = self
-                    .displayed_tokens
-                    .saturating_add(increment)
-                    .min(self.response_length);
-            }
-        }
+        // Scale increment by tick interval relative to official 50ms base.
+        let scaled = ((increment as u64 * SPINNER_TICK_INTERVAL_MS) / 50).max(1) as u32;
+        self.displayed_token_estimate = (self.displayed_token_estimate + scaled).min(actual);
     }
 
     pub fn should_show(&self) -> bool {
@@ -155,8 +158,6 @@ impl TuiStatusState {
     }
 
     /// Whether a tip line should be rendered below the status bar.
-    /// Checks the threshold directly to avoid redundant elapsed() computation
-    /// when the caller also needs `current_tip()`.
     pub fn has_tip(&self) -> bool {
         self.generating_since
             .map(|s| s.elapsed().as_secs() >= 30)
@@ -175,10 +176,45 @@ impl TuiStatusState {
             None
         }
     }
-}
 
-/// Tool display expiry: fade out after 30 seconds.
-const TOOL_DISPLAY_EXPIRY_SECS: u64 = 30;
+    /// Compute the stall intensity [0.0, 1.0] based on time since last token.
+    fn stall_intensity(&self) -> f64 {
+        let time_since_token = self
+            .generating_since
+            .and_then(|since| {
+                self.last_token_time
+                    .map(|t| t.elapsed().as_millis())
+                    .or_else(|| Some(since.elapsed().as_millis()))
+            })
+            .unwrap_or(0);
+        if time_since_token <= STALL_THRESHOLD_MS {
+            0.0
+        } else {
+            ((time_since_token as f64 - STALL_THRESHOLD_MS as f64) / STALL_FADE_MS as f64)
+                .clamp(0.0, 1.0)
+        }
+    }
+
+    /// Whether "thought for Ns" should be shown.
+    fn should_show_thought_for(&self) -> bool {
+        if self.last_thinking_elapsed_ms == 0 {
+            return false;
+        }
+        let Some(end) = self.thinking_end else {
+            return false;
+        };
+        let since_end = end.elapsed().as_millis() as u64;
+        // Show after 3s delay, persist for at least 2s.
+        since_end >= THOUGHT_DISPLAY_DELAY_MS
+            && since_end < THOUGHT_DISPLAY_DELAY_MS + THOUGHT_DISPLAY_MIN_MS.max(self.last_thinking_elapsed_ms)
+    }
+
+    /// Format "thought for Ns" text.
+    fn thought_for_text(&self) -> String {
+        let secs = (self.last_thinking_elapsed_ms + 500) / 1000;
+        format!("thought for {secs}s")
+    }
+}
 
 fn push_active_item(
     spans: &mut Vec<Span<'static>>,
@@ -186,28 +222,19 @@ fn push_active_item(
     elapsed: std::time::Duration,
     count: usize,
     style: Style,
-    dim: Style,
 ) {
-    // Expire tools shown > 30s.
-    if elapsed.as_secs() > TOOL_DISPLAY_EXPIRY_SECS {
-        return;
-    }
     let suffix = if count > 1 {
         format!(" +{}", count - 1)
     } else {
         String::new()
     };
-    let elapsed_str = verbs::format_duration(elapsed.as_millis() as u64);
+    let mins = elapsed.as_secs() / 60;
+    let secs = elapsed.as_secs() % 60;
     spans.push(Span::raw("  "));
     spans.push(Span::styled(
-        format!("{name} ({elapsed_str}){suffix}"),
+        format!("{name} ({mins:02}:{secs:02}){suffix}"),
         style,
     ));
-    // Show dim expiry countdown hint when approaching expiry.
-    let remaining = TOOL_DISPLAY_EXPIRY_SECS - elapsed.as_secs();
-    if remaining <= 5 {
-        spans.push(Span::styled(format!(" {}s", remaining), dim));
-    }
 }
 
 /// Linear interpolation between two u8 values.
@@ -215,9 +242,27 @@ fn lerp_u8(a: u8, b: u8, t: f64) -> u8 {
     (b as f64 - a as f64).mul_add(t, a as f64) as u8
 }
 
-/// Build the dynamic status spans (elapsed, spinner, tools, shells, agents).
+/// Interpolate a Style's foreground color toward ERROR_RED based on stall intensity.
+fn stall_style(base: Style, intensity: f64) -> Style {
+    if intensity <= 0.0 {
+        return base;
+    }
+    let color = base.fg.unwrap_or(Color::Rgb(100, 149, 237));
+    let (br, bg, bb) = match color {
+        Color::Rgb(r, g, b) => (r, g, b),
+        _ => (100, 149, 237),
+    };
+    let (er, eg, eb) = ERROR_RED;
+    base.fg(Color::Rgb(
+        lerp_u8(br, er, intensity),
+        lerp_u8(bg, eg, intensity),
+        lerp_u8(bb, eb, intensity),
+    ))
+}
+
+/// Build the dynamic status spans (spinner, verb, tokens, tools, shells, agents).
 /// Returns an empty vec when there is nothing to show.
-pub fn build_spans(state: &TuiStatusState, reduced_motion: bool) -> Vec<Span<'static>> {
+pub fn build_spans(state: &TuiStatusState) -> Vec<Span<'static>> {
     if !state.should_show() {
         return Vec::new();
     }
@@ -227,94 +272,49 @@ pub fn build_spans(state: &TuiStatusState, reduced_motion: bool) -> Vec<Span<'st
     let tool_style = Style::default().fg(Color::Blue);
 
     let elapsed = state.session_start.elapsed();
+    let mins = elapsed.as_secs() / 60;
+    let secs = elapsed.as_secs() % 60;
 
     let mut spans: Vec<Span<'static>> = Vec::new();
 
     if state.is_generating {
-        // Check if we should show "thought for Ns" after thinking ends.
-        let thought_for_display = if state.thinking {
-            None
+        // Bounce animation: forward 0→5, backward 5→0 (aligned with official CC).
+        let idx = state.spinner_frame % BOUNCE_LEN;
+        let ch = if idx < SPINNER.len() {
+            SPINNER[idx]
         } else {
-            state
-                .thought_display_until
-                .filter(|until| *until > Instant::now())
-                .map(|_| {
-                    let since = state
-                        .thinking_since
-                        .or(state.generating_since)
-                        .unwrap_or(state.session_start);
-                    let elapsed_ms = since.elapsed().as_millis() as u64;
-                    format!("thought for {}", verbs::format_duration(elapsed_ms))
-                })
+            SPINNER[BOUNCE_LEN - idx]
         };
 
-        // Determine shimmer label: "thinking" when thinking, regular verb otherwise.
-        let label = if state.thinking {
-            verbs::THINKING_VERB
-        } else {
-            state.current_verb.unwrap_or(verbs::THINKING_VERB)
-        };
+        let intensity = state.stall_intensity();
+        let spinner_style = stall_style(tool_style, intensity);
 
-        if let Some(ref thought_text) = thought_for_display {
-            // "thought for Ns" — simple text, no shimmer.
-            if reduced_motion {
-                let half_period_frames = 2500 / SPINNER_TICK_INTERVAL_MS as usize;
-                let is_bright = (state.spinner_frame / half_period_frames).is_multiple_of(2);
-                let dot_style = if is_bright { tool_style } else { dim };
-                spans.push(Span::styled("\u{25CF}  ", dot_style));
-            } else {
-                let idx = state.spinner_frame % BOUNCE_LEN;
-                let ch = if idx < SPINNER.len() {
-                    SPINNER[idx]
-                } else {
-                    SPINNER[SPINNER.len() * 2 - idx]
-                };
-                spans.push(Span::styled(ch, tool_style));
-                let mode = "\u{2193}";
-                spans.push(Span::styled(mode, tool_style));
-                spans.push(Span::raw(" "));
-            }
-            spans.push(Span::styled(format!("{thought_text}\u{2026}"), dim));
-        } else if reduced_motion {
-            // Blinking indicator: 2s cycle (1s bright, 1s dim). Aligned with official CC.
-            let half_period_frames = 2500 / SPINNER_TICK_INTERVAL_MS as usize;
-            let is_bright = (state.spinner_frame / half_period_frames).is_multiple_of(2);
-            let dot_style = if is_bright { tool_style } else { dim };
-            spans.push(Span::styled("\u{25CF}  ", dot_style));
-            spans.push(Span::styled(format!("{label}\u{2026}"), dim));
+        spans.push(Span::styled(ch, spinner_style));
+
+        // SpinnerModeGlyph: ↑ requesting, ↓ responding.
+        let mode = if state.last_token_time.is_some() { "\u{2193}" } else { "\u{2191}" };
+        spans.push(Span::styled(mode, spinner_style));
+        spans.push(Span::raw(" "));
+
+        // Label: verb or teammate count.
+        let agent_count = state.active_agents.len();
+        if agent_count > 0 {
+            // Leader shows teammate count instead of verb.
+            let label = format!("{} teammate{}", agent_count, if agent_count == 1 { "" } else { "s" });
+            spans.push(Span::styled(label, dim));
         } else {
-            // Bounce animation: forward 0→5, reverse 5→0.
-            let idx = state.spinner_frame % BOUNCE_LEN;
-            let ch = if idx < SPINNER.len() {
-                SPINNER[idx]
-            } else {
-                SPINNER[SPINNER.len() * 2 - idx]
-            };
-            let spinner_style = if state.smoothed_stall > 0.0 {
-                let intensity = state.smoothed_stall;
-                let r = lerp_u8(0, 171, intensity);
-                let g = lerp_u8(0, 43, intensity);
-                let b = lerp_u8(255, 63, intensity);
-                Style::default().fg(Color::Rgb(r, g, b))
-            } else {
-                tool_style
-            };
-            spans.push(Span::styled(ch, spinner_style));
-            // SpinnerModeGlyph: ↑ requesting, ↓ responding (dim).
-            let mode = if state.last_token_time.is_some() { "\u{2193}" } else { "\u{2191}" };
-            spans.push(Span::styled(mode, dim));
-            spans.push(Span::raw(" "));
             // Shimmer: sweep a highlight window across the verb.
-            // Requesting (no token yet) = forward sweep (50ms/step); Responding = reverse sweep (200ms/step).
-            let (direction, shimmer_ms) = if state.last_token_time.is_some() {
-                (verbs::ShimmerDirection::Responding, verbs::SHIMMER_RESPONDING_MS)
+            let label = state.current_verb.unwrap_or(verbs::THINKING_VERB);
+            let shimmer_interval = if state.last_token_time.is_some() {
+                SHIMMER_INTERVAL_THINKING_MS
             } else {
-                (verbs::ShimmerDirection::Requesting, verbs::SHIMMER_REQUESTING_MS)
+                SHIMMER_INTERVAL_REQUESTING_MS
             };
             let shimmer_tick =
-                ((state.spinner_frame as u64 * SPINNER_TICK_INTERVAL_MS) / shimmer_ms) as usize;
+                ((state.spinner_frame as u64 * SPINNER_TICK_INTERVAL_MS) / shimmer_interval)
+                    as usize;
             let (before, shimmer, after) =
-                verbs::compute_shimmer_segments(label, shimmer_tick, direction);
+                verbs::compute_shimmer_segments(label, shimmer_tick);
             if !before.is_empty() {
                 spans.push(Span::styled(before, dim));
             }
@@ -324,27 +324,33 @@ pub fn build_spans(state: &TuiStatusState, reduced_motion: bool) -> Vec<Span<'st
             if !after.is_empty() {
                 spans.push(Span::styled(after, dim));
             }
-            // Ellipsis after verb.
-            spans.push(Span::styled("\u{2026}", dim));
+        }
+
+        // Token counter (smooth increment).
+        if state.displayed_token_estimate > 0 {
+            spans.push(Span::styled(
+                format!("  ~{}", state.displayed_token_estimate),
+                dim,
+            ));
+        }
+
+        // "Thought for Ns" display.
+        if state.should_show_thought_for() {
+            spans.push(Span::styled(
+                format!("  {}", state.thought_for_text()),
+                dim,
+            ));
         }
     }
 
-    // Elapsed time after spinner.
-    let elapsed_ms = elapsed.as_millis() as u64;
+    // Elapsed time.
     spans.push(Span::raw("  "));
-    spans.push(Span::styled(verbs::format_duration(elapsed_ms), dim));
-
-    // Token counter: "↓ N tokens".
-    if state.displayed_tokens > 0 {
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled("\u{2193}", dim));
-        spans.push(Span::styled(format!(" {} tokens", state.displayed_tokens), dim));
-    }
+    spans.push(Span::styled(format!("{mins:02}:{secs:02}"), dim));
 
     let tool_count = state.active_tools.len();
     if tool_count > 0 {
         if let Some(tool) = state.active_tools.values().next() {
-            push_active_item(&mut spans, &tool.name, tool.started.elapsed(), tool_count, warn, dim);
+            push_active_item(&mut spans, &tool.name, tool.started.elapsed(), tool_count, warn);
         }
     }
 
@@ -360,7 +366,7 @@ pub fn build_spans(state: &TuiStatusState, reduced_motion: bool) -> Vec<Span<'st
     let agent_count = state.active_agents.len();
     if agent_count > 0 {
         if let Some(agent) = state.active_agents.values().next() {
-            push_active_item(&mut spans, &agent.name, agent.started.elapsed(), agent_count, warn, dim);
+            push_active_item(&mut spans, &agent.name, agent.started.elapsed(), agent_count, warn);
         }
     }
 
@@ -395,5 +401,69 @@ mod tests {
             },
         );
         assert!(state.should_show());
+    }
+
+    #[test]
+    fn test_stall_intensity_zero_before_threshold() {
+        let mut state = TuiStatusState::new();
+        state.generating_since = Some(Instant::now());
+        state.last_token_time = Some(Instant::now());
+        assert_eq!(state.stall_intensity(), 0.0);
+    }
+
+    #[test]
+    fn test_stall_intensity_clamped_at_one() {
+        let mut state = TuiStatusState::new();
+        state.generating_since = Some(Instant::now() - std::time::Duration::from_secs(10));
+        state.last_token_time = Some(Instant::now() - std::time::Duration::from_secs(10));
+        assert_eq!(state.stall_intensity(), 1.0);
+    }
+
+    #[test]
+    fn test_token_counter_smooth_increment() {
+        let mut state = TuiStatusState::new();
+        state.response_char_count = 400; // actual = 100
+        state.displayed_token_estimate = 0;
+        state.update_token_counter();
+        // gap = 100, so increment = max(8, ceil(100*0.15)) = 15, scaled by 120/50 = 36
+        assert!(state.displayed_token_estimate > 0);
+        assert!(state.displayed_token_estimate <= 100);
+    }
+
+    #[test]
+    fn test_thought_for_not_shown_immediately() {
+        let mut state = TuiStatusState::new();
+        state.last_thinking_elapsed_ms = 5000;
+        state.thinking_end = Some(Instant::now());
+        assert!(!state.should_show_thought_for());
+    }
+
+    #[test]
+    fn test_thought_for_shown_after_delay() {
+        let mut state = TuiStatusState::new();
+        state.last_thinking_elapsed_ms = 5000;
+        state.thinking_end = Some(Instant::now() - std::time::Duration::from_secs(5));
+        assert!(state.should_show_thought_for());
+    }
+
+    #[test]
+    fn test_thought_for_text_format() {
+        let mut state = TuiStatusState::new();
+        state.last_thinking_elapsed_ms = 5500;
+        assert_eq!(state.thought_for_text(), "thought for 6s");
+    }
+
+    #[test]
+    fn test_stall_style_at_zero() {
+        let base = Style::default().fg(Color::Rgb(100, 149, 237));
+        let result = stall_style(base, 0.0);
+        assert_eq!(result.fg, base.fg);
+    }
+
+    #[test]
+    fn test_stall_style_at_full() {
+        let base = Style::default().fg(Color::Rgb(100, 149, 237));
+        let result = stall_style(base, 1.0);
+        assert_eq!(result.fg, Some(Color::Rgb(171, 43, 63)));
     }
 }

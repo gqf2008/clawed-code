@@ -324,10 +324,19 @@ pub fn notification_to_jsonrpc(notif: &AgentNotification) -> Notification {
             reject_reason,
             result_preview,
         } => {
-            let mut map = serde_json::Map::with_capacity(4);
+            let mut map = serde_json::Map::with_capacity(7);
             map.insert("id".into(), Value::String(id.clone()));
             map.insert("tool_name".into(), Value::String(tool_name.clone()));
             map.insert("is_error".into(), Value::Bool(*is_error));
+            map.insert("cancelled".into(), Value::Bool(*cancelled));
+            map.insert("rejected".into(), Value::Bool(*rejected));
+            map.insert(
+                "reject_reason".into(),
+                match reject_reason {
+                    Some(s) => Value::String(s.clone()),
+                    None => Value::Null,
+                },
+            );
             map.insert(
                 "result_preview".into(),
                 match result_preview {

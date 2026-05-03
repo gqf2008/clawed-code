@@ -1,4 +1,4 @@
-use super::verbs::{ERROR_MARKER, INFO_MARKER, THINKING_MARKER, WARNING_MARKER};
+use super::verbs::{ERROR_MARKER, THINKING_MARKER, TURN_COMPLETION_MARKER, WARNING_MARKER};
 use super::{markdown, MUTED};
 
 use clawed_core::text_util::strip_system_reminders;
@@ -18,78 +18,6 @@ fn line_text(line: &Line<'_>) -> String {
         .collect()
 }
 
-/// Adds a prefix marker on the first line and 2-space indent on continuation lines.
-fn append_plain_lines_with_prefix(
-    lines: &mut Vec<Line<'static>>,
-    text: &str,
-    style: Style,
-    prefix: &str,
-    prefix_color: Color,
-) {
-    if text.is_empty() {
-        return;
-    }
-
-    let mut parts = text.split_terminator('\n');
-    let Some(first_part) = parts.next() else {
-        return;
-    };
-
-    if let Some(last_line) = lines.last_mut() {
-        // Merge first_part into existing last line (continuation).
-        let mut merged = line_text(last_line);
-        merged.push_str(first_part);
-        *last_line = Line::styled(merged, style);
-    } else if lines.is_empty() {
-        // First line: add prefix marker.
-        lines.push(Line::from(vec![
-            Span::styled(format!("{prefix} "), Style::default().fg(prefix_color)),
-            Span::styled(first_part.to_string(), style),
-        ]));
-    } else {
-        lines.push(Line::styled(first_part.to_string(), style));
-    }
-
-    for part in parts {
-        // Continuation lines: 2-space indent.
-        lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(part.to_string(), style),
-        ]));
-    }
-}
-
-/// Truncate tool input for display, with an ellipsis if over 80 chars.
-fn truncated_input_paren(cmd: &str) -> String {
-    const MAX_INPUT_CHARS: usize = 80;
-    if cmd.len() > MAX_INPUT_CHARS {
-        format!("({})", clawed_core::text_util::truncate_chars(cmd, MAX_INPUT_CHARS, "\u{2026}"))
-    } else {
-        format!("({cmd})")
-    }
-}
-
-/// Build shared spans for a canceled/rejected tool status line.
-fn tool_status_spans(
-    name: &str,
-    input: &Option<String>,
-    action: &str,
-    color: Color,
-) -> Vec<Span<'static>> {
-    let display_name = super::user_facing_tool_name(name);
-    let mut spans = vec![Span::styled(
-        format!("{ERROR_MARKER} {display_name} {action}"),
-        Style::default().fg(color),
-    )];
-    if let Some(cmd) = input {
-        spans.push(Span::styled(
-            format!(" {}", truncated_input_paren(cmd)),
-            Style::default().fg(MUTED),
-        ));
-    }
-    spans
-}
-
 /// Returns an appropriate style for a line in a unified diff.
 fn diff_line_style(line: &str) -> Style {
     if line.starts_with("+++") || line.starts_with("---") {
@@ -103,7 +31,7 @@ fn diff_line_style(line: &str) -> Style {
     } else if line.starts_with("@@") {
         Style::default().fg(Color::Magenta)
     } else {
-        Style::default()
+        Style::default().fg(Color::Gray)
     }
 }
 
@@ -130,18 +58,6 @@ pub enum MessageContent {
         depth: u32,
     },
     System(String),
-    /// Tool execution was cancelled by the user.
-    ToolCanceled {
-        name: String,
-        input: Option<String>,
-        duration_ms: u64,
-    },
-    /// Tool execution was rejected by the permission system.
-    ToolRejected {
-        name: String,
-        input: Option<String>,
-        reason: Option<String>,
-    },
 }
 
 /// Rendering context for a tool execution message.
@@ -159,7 +75,7 @@ struct ToolRenderCtx<'a> {
     live_duration_ms: Option<u64>,
 }
 
-/// Continuation prefix for assistant-side output lines.
+/// Continuation prefix for assistant-side output lines (aligned with official CC).
 const CONTINUATION_PREFIX: &str = "\u{23BF}  ";
 
 /// A single message with timestamp and line cache.
@@ -198,29 +114,15 @@ impl Message {
             return;
         }
 
-        let can_append_plain = match &mut self.content {
+        match &mut self.content {
             MessageContent::AssistantText(buf) => {
-                let was_plain = !markdown::likely_markdown(buf);
                 buf.push_str(&text);
-                was_plain && !markdown::likely_markdown(buf)
             }
             _ => return,
-        };
-
-        let cached_lines = self.cached_lines.get_mut();
-        if let Some(lines) = cached_lines.as_mut() {
-            if can_append_plain {
-                append_plain_lines_with_prefix(
-                    lines,
-                    &text,
-                    Style::default(),
-                    INFO_MARKER,
-                    MUTED,
-                );
-                return;
-            }
         }
-        *cached_lines = None;
+
+        // Always invalidate cache so prefixes are re-applied correctly on re-render.
+        *self.cached_lines.get_mut() = None;
     }
 
     pub fn append_thinking_text(&mut self, text: &str) {
@@ -244,12 +146,7 @@ impl Message {
         let cached_lines = self.cached_lines.get_mut();
         if let Some(lines) = cached_lines.as_mut() {
             let style = Style::default().fg(MUTED).add_modifier(Modifier::ITALIC);
-            // Mimic str::lines() behavior: split on '\n', omit trailing empty segment.
-            let mut parts: Vec<&str> = text.split('\n').collect();
-            if parts.last() == Some(&"") {
-                parts.pop();
-            }
-            let mut iter = parts.into_iter();
+            let mut iter = text.lines();
             let Some(first) = iter.next() else {
                 return;
             };
@@ -363,17 +260,10 @@ impl Message {
     ) -> Vec<Line<'static>> {
         match &self.content {
             MessageContent::UserInput(text) => {
-                let prefix_style = Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD);
                 let text_style = Style::default().add_modifier(Modifier::BOLD);
                 let mut lines = vec![Line::from("")];
-                for (i, part) in text.split('\n').enumerate() {
-                    let prefix = if i == 0 { "\u{276F} " } else { "  " };
-                    lines.push(Line::from(vec![
-                        Span::styled(prefix.to_string(), prefix_style),
-                        Span::styled(part.to_string(), text_style),
-                    ]));
+                for part in text.split('\n') {
+                    lines.push(Line::styled(part.to_string(), text_style));
                 }
                 lines
             }
@@ -381,22 +271,15 @@ impl Message {
                 if text.is_empty() {
                     return vec![];
                 }
-                let mut lines = markdown::render_markdown(text);
-                // Add ⏺ dot prefix on first line, 2-space indent on continuation.
-                if let Some(first) = lines.first_mut() {
-                    let mut prefixed = vec![Span::styled(
-                        format!("{INFO_MARKER} "),
-                        Style::default().fg(MUTED),
-                    )];
-                    prefixed.append(&mut first.spans);
-                    first.spans = prefixed;
-                }
-                for line in lines.iter_mut().skip(1) {
-                    let mut indented = vec![Span::raw("  ")];
-                    indented.append(&mut line.spans);
-                    line.spans = indented;
-                }
-                lines
+                let dim = Style::default().fg(MUTED);
+                let prefix = Span::styled("\u{23FA} ", dim);
+                markdown::render_markdown(text)
+                    .into_iter()
+                    .map(|mut line| {
+                        line.spans.insert(0, prefix.clone());
+                        line
+                    })
+                    .collect()
             }
             MessageContent::ThinkingText(text) => {
                 if text.is_empty() {
@@ -410,7 +293,7 @@ impl Message {
                             dim_italic,
                         ),
                         Span::raw("  "),
-                        Span::styled("(Enter to expand)", Style::default().fg(MUTED)),
+                        Span::styled("(Ctrl+O to expand)", Style::default().fg(MUTED)),
                     ])];
                 }
                 let mut lines: Vec<Line<'static>> = Vec::new();
@@ -418,25 +301,10 @@ impl Message {
                     format!("{THINKING_MARKER} Thinking\u{2026}"),
                     dim_italic,
                 ));
-                // Body lines: render with markdown.
-                let mut body = markdown::render_markdown(text);
-                if let Some(first) = body.first_mut() {
-                    let mut indented = vec![Span::raw("  ")];
-                    indented.append(&mut first.spans);
-                    first.spans = indented;
+                // Body lines with indent.
+                for l in text.lines() {
+                    lines.push(Line::styled(format!("  {l}"), dim_italic));
                 }
-                for line in body.iter_mut().skip(1) {
-                    let mut indented = vec![Span::raw("  ")];
-                    indented.append(&mut line.spans);
-                    line.spans = indented;
-                }
-                // Apply dim italic to all body spans.
-                for line in &mut body {
-                    for span in &mut line.spans {
-                        span.style = span.style.patch(dim_italic);
-                    }
-                }
-                lines.extend(body);
                 lines
             }
             MessageContent::ToolExecution {
@@ -461,7 +329,9 @@ impl Message {
             MessageContent::System(text) => {
                 let style = if text.starts_with(ERROR_MARKER) {
                     Style::default().fg(Color::Red)
-                } else if text.starts_with(WARNING_MARKER) {
+                } else if text.starts_with(WARNING_MARKER)
+                    || text.starts_with(TURN_COMPLETION_MARKER)
+                {
                     Style::default().fg(Color::Yellow)
                 } else {
                     Style::default().fg(MUTED)
@@ -470,29 +340,12 @@ impl Message {
                     .map(|l| Line::styled(l.to_string(), style))
                     .collect()
             }
-            MessageContent::ToolCanceled { name, input, duration_ms, .. } => {
-                let dur = super::verbs::format_duration(*duration_ms);
-                let mut spans = tool_status_spans(name, input, "canceled", Color::Yellow);
-                spans.push(Span::styled(format!(" ({dur})"), Style::default().fg(MUTED)));
-                vec![Line::from(spans)]
-            }
-            MessageContent::ToolRejected { name, input, reason, .. } => {
-                let mut spans = tool_status_spans(name, input, "rejected", Color::Red);
-                if let Some(r) = reason {
-                    if !r.is_empty() {
-                        spans.push(Span::styled(
-                            format!(": {r}"),
-                            Style::default().fg(MUTED),
-                        ));
-                    }
-                }
-                vec![Line::from(spans)]
-            }
         }
     }
 
     fn render_tool_execution(&self, ctx: &ToolRenderCtx<'_>) -> Vec<Line<'static>> {
         debug_assert!(ctx.depth <= 2, "unexpected tool depth: {}", ctx.depth);
+        const MAX_INPUT_CHARS: usize = 80;
 
         let mut lines = Vec::new();
 
@@ -531,19 +384,18 @@ impl Message {
             Style::default().fg(bullet_color),
         ));
         let display_name = super::user_facing_tool_name(ctx.name);
-        // Tool name with background color pill.
         header_spans.push(Span::styled(
-            format!(" {display_name} "),
-            Style::default()
-                .fg(Color::White)
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
+            display_name.to_string(),
+            Style::default().add_modifier(Modifier::BOLD),
         ));
         if let Some(cmd) = ctx.input {
-            header_spans.push(Span::styled(
-                truncated_input_paren(cmd),
-                Style::default().fg(MUTED),
-            ));
+            let display = if cmd.len() > MAX_INPUT_CHARS {
+                let truncated: String = cmd.chars().take(MAX_INPUT_CHARS).collect();
+                format!("({truncated}\u{2026})")
+            } else {
+                format!("({})", cmd)
+            };
+            header_spans.push(Span::styled(display, Style::default().fg(MUTED)));
         }
         lines.push(Line::from(header_spans));
 
@@ -653,8 +505,8 @@ mod tests {
         assert_eq!(lines.len(), 3);
         let first: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
         let second: String = lines[2].spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(first, "\u{276F} hello");
-        assert_eq!(second, "  world");
+        assert_eq!(first, "hello");
+        assert_eq!(second, "world");
     }
 
     #[test]
@@ -778,8 +630,7 @@ mod tests {
         assert_eq!(diff_line_style("@@ -1,3 +1,4 @@").fg, Some(Color::Magenta));
         assert_eq!(diff_line_style("--- a/file").fg, Some(Color::Cyan));
         assert_eq!(diff_line_style("+++ b/file").fg, Some(Color::Cyan));
-        // Non-diff lines get default style (no forced gray).
-        assert_eq!(diff_line_style(" context").fg, None);
+        assert_eq!(diff_line_style(" context").fg, Some(Color::Gray));
     }
 
     #[test]
@@ -806,7 +657,7 @@ mod tests {
 
         assert_eq!(lines.len(), 2);
         assert_eq!(line_text(&lines[0]), "\u{23FA} hello world");
-        assert_eq!(line_text(&lines[1]), "  next");
+        assert_eq!(line_text(&lines[1]), "\u{23FA} next");
     }
 
     #[test]
@@ -832,11 +683,9 @@ mod tests {
         assert_eq!(lines[0].style.fg, Some(MUTED));
         assert!(lines[0].style.add_modifier.contains(Modifier::ITALIC));
         assert!(line_text(&lines[0]).starts_with('\u{2234}'));
-        // Body line: markdown-rendered with dim italic applied to spans.
-        let body_text: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(body_text.contains("hello"));
-        // Check that at least one span has the muted fg color (from patch).
-        assert!(lines[1].spans.iter().any(|s| s.style.fg == Some(MUTED)));
+        // Body line: "  hello"
+        assert_eq!(lines[1].style.fg, Some(MUTED));
+        assert!(lines[1].style.add_modifier.contains(Modifier::ITALIC));
     }
 
     #[test]
