@@ -587,6 +587,10 @@ fn restore_terminal_after_tui() {
         crossterm::event::PopKeyboardEnhancementFlags
     );
     let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::cursor::SetCursorStyle::DefaultUserShape
+    );
     let _ = crossterm::terminal::disable_raw_mode();
 }
 
@@ -600,6 +604,10 @@ fn reenter_tui_terminal(terminal: &mut TuiTerminal) -> io::Result<()> {
                 | crossterm::event::KeyboardEnhancementFlags::REPORT_EVENT_TYPES
                 | crossterm::event::KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
         )
+    );
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::cursor::SetCursorStyle::SteadyBlock
     );
     terminal.clear()?;
     clawed_tools::diff_ui::set_tui_mode(true);
@@ -693,6 +701,8 @@ struct App {
     cached_visible_line_count: Option<(u16, usize)>,
     last_rendered_message_visual_count: Option<usize>,
     last_spinner_tick: Instant,
+    /// Ephemeral agent progress text (shown in status bar, auto-clears after 5s).
+    agent_progress: Option<(String, Instant)>,
     /// Instant of the last render. Used to throttle render rate during
     /// active streaming so the event loop has time to process input events.
     last_render_at: Instant,
@@ -752,6 +762,7 @@ impl App {
             cached_visible_line_count: None,
             last_rendered_message_visual_count: None,
             last_spinner_tick: Instant::now(),
+            agent_progress: None,
             last_render_at: Instant::now() - Duration::from_secs(1),
             last_periodic_clear: Instant::now(),
             term_width: 0,
@@ -1599,9 +1610,10 @@ impl App {
                 self.model = model;
                 self.request_redraw();
             }
-            // Background agent progress
+            // Background agent progress — ephemeral status-line text.
             AgentNotification::AgentProgress { agent_id, text } => {
-                self.push_message(MessageContent::System(format!("  ↳ [{agent_id}] {text}",)));
+                self.agent_progress = Some((format!("[{agent_id}] {text}"), Instant::now()));
+                self.request_redraw();
             }
             // Conflict warning for concurrent agents
             AgentNotification::ConflictDetected { file_path, agents } => {
@@ -2256,6 +2268,13 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         left_used += status_w;
     }
 
+    // Ephemeral agent progress text (auto-clears after 5s).
+    if let Some((ref text, _)) = app.agent_progress {
+        let s = format!("  ↳ {text}");
+        left_used += s.width();
+        spans.push(Span::styled(s, dim));
+    }
+
     // Info text follows, truncated so everything fits within terminal width.
     if !info_parts.is_empty() {
         let info = format!(" {} ", info_parts.join(" \u{2502} "));
@@ -2785,6 +2804,11 @@ pub async fn run_tui(
                 | crossterm::event::KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
         )
     );
+    // Set block cursor (aligned with official CC).
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::cursor::SetCursorStyle::SteadyBlock
+    );
 
     let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
     let mut terminal = ratatui::Terminal::new(backend)?;
@@ -2839,6 +2863,14 @@ pub async fn run_tui(
 
         // Advance the spinner on a fixed cadence, but only redraw when it actually changes.
         app.advance_spinner_if_due(Instant::now());
+
+        // Clear expired agent progress (5s TTL).
+        if let Some((_, since)) = app.agent_progress {
+            if since.elapsed().as_secs() >= 5 {
+                app.agent_progress = None;
+                app.request_redraw();
+            }
+        }
 
         // Safety net: if generation has been active for an unreasonably long
         // time without receiving TurnComplete, force recovery so the UI doesn't
