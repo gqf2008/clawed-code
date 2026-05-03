@@ -8,69 +8,55 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-/// Static hints for the bottom bar in normal (idle) mode.
-const NORMAL_HINTS: &[(&str, &str)] = &[
-    ("Esc", "help"),
-    ("Tab", "complete"),
-    ("Ctrl+J", "newline"),
-    ("\u{2191}\u{2193}", "history"),
-    ("Ctrl+V", "paste image"),
-    ("Ctrl+O", "thinking"),
-    ("Ctrl+C", "abort/quit"),
-];
-
-/// Hints shown while the LLM is generating or tools are running.
-const GENERATING_HINTS: &[(&str, &str)] = &[
-    ("Esc", "interrupt"),
-    ("Ctrl+O", "expand"),
-    ("Ctrl+E", "tool expand"),
-    ("Ctrl+C", "abort"),
-];
+/// Single-line status bar shown at the bottom of the TUI.
+/// Aligned with official Claude Code bottom status line.
 
 pub fn render(frame: &mut Frame, area: Rect, is_generating: bool, permission_mode: &str) {
-    let hints: &[(&str, &str)] = if is_generating {
-        GENERATING_HINTS
-    } else {
-        NORMAL_HINTS
-    };
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
 
-    // Build left side: keyboard shortcut hints
-    let sep = Style::default().fg(MUTED);
+    let dim = Style::default().fg(MUTED);
     let key_style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
-    let desc_style = Style::default().fg(MUTED);
-    let mut left_spans = Vec::new();
-    for (i, (key, desc)) in hints.iter().enumerate() {
-        if i > 0 {
-            left_spans.push(Span::styled("  ", sep));
+
+    let mut left_spans: Vec<Span> = Vec::new();
+
+    if is_generating {
+        left_spans.push(Span::styled("Esc", key_style));
+        left_spans.push(Span::styled(" interrupt  ", dim));
+        left_spans.push(Span::styled("Ctrl+O", key_style));
+        left_spans.push(Span::styled(" expand  ", dim));
+        left_spans.push(Span::styled("Ctrl+E", key_style));
+        left_spans.push(Span::styled(" tool expand  ", dim));
+        left_spans.push(Span::styled("Ctrl+C", key_style));
+        left_spans.push(Span::styled(" abort", dim));
+    } else {
+        // Permission mode indicator (primary left content in idle state)
+        if !permission_mode.is_empty() && permission_mode != "default" {
+            let mode_color = permission_mode_color(permission_mode);
+            left_spans.push(Span::styled(
+                format!("{} ", permission_mode_symbol(permission_mode)),
+                Style::default().fg(mode_color),
+            ));
+            left_spans.push(Span::styled(
+                format!("{} permissions on", permission_mode.to_lowercase()),
+                Style::default().fg(mode_color),
+            ));
+            left_spans.push(Span::styled(" (shift+tab to cycle) · ", dim));
         }
-        left_spans.push(Span::styled((*key).to_string(), key_style));
-        left_spans.push(Span::styled(format!("  {desc}"), desc_style));
+        left_spans.push(Span::styled("ctrl+t", key_style));
+        left_spans.push(Span::styled(" to hide tasks", dim));
     }
 
-    // Build right side: permission mode indicator (aligned with official CC footer)
-    let mut right_spans = Vec::new();
-    if !is_generating && !permission_mode.is_empty() && permission_mode != "default" {
-        let mode_color = permission_mode_color(permission_mode);
-        right_spans.push(Span::styled(
-            format!("{} ", permission_mode_symbol(permission_mode)),
-            Style::default().fg(mode_color),
-        ));
-        right_spans.push(Span::styled(
-            format!("{} on", permission_mode.to_lowercase()),
-            Style::default().fg(mode_color),
-        ));
-    }
+    let left_width = left_spans.iter().map(|s| s.content.width()).sum::<usize>() as u16;
 
-    let right_width = right_spans.iter().map(|s| s.content.width()).sum::<usize>() as u16;
-
-    if right_width > 0 && right_width < area.width {
+    if left_width > 0 && left_width < area.width {
         let chunks = Layout::horizontal([
             Constraint::Min(1),
-            Constraint::Length(right_width),
+            Constraint::Length(area.width.saturating_sub(left_width)),
         ])
         .split(area);
         frame.render_widget(Paragraph::new(Line::from(left_spans)), chunks[0]);
-        frame.render_widget(Paragraph::new(Line::from(right_spans)), chunks[1]);
     } else {
         frame.render_widget(Paragraph::new(Line::from(left_spans)), area);
     }
@@ -91,8 +77,8 @@ fn permission_mode_color(mode: &str) -> Color {
 /// Unicode symbol for each permission mode (aligned with official CC).
 fn permission_mode_symbol(mode: &str) -> &'static str {
     match mode {
-        "bypass" => "\u{2713}",      // ✓
-        "auto" => "\u{2713}",       // ✓
+        "bypass" => "\u{25B8}",      // ▸
+        "auto" => "\u{25B8}",       // ▸
         "acceptEdits" => "\u{270E}", // ✎
         "plan" => "\u{25B6}",       // ▶
         "dontAsk" => "\u{26A0}",    // ⚠

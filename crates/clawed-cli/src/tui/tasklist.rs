@@ -104,12 +104,12 @@ impl TaskListState {
         self.tasks.len()
     }
 
-    /// Number of rows needed: header line + blank + task lines.
+    /// Number of rows needed: header line + task lines.
     pub fn render_height(&self) -> u16 {
         if !self.is_visible() {
             return 0;
         }
-        (2 + self.tasks.len()) as u16
+        (1 + self.tasks.len()) as u16
     }
 }
 
@@ -207,6 +207,6 @@ mod tests {
             priority: "medium".into(),
         });
         assert!(state.is_visible());
-        assert_eq!(state.render_height(), 3); // header + blank + 1 task
+        assert_eq!(state.render_height(), 2); // header + 1 task
     }
 }

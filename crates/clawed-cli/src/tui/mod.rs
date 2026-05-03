@@ -1951,12 +1951,11 @@ fn render(frame: &mut Frame, app: &mut App) {
     } else {
         footer_menu_rows(app)
     };
-    // Footer includes a separator between input and hint bar (always, except perm).
+    // Input area is framed by two horizontal lines (top + bottom), matching official CC.
     let footer_rows = if let Some(layout) = perm_layout {
         layout.total_rows()
     } else {
-        completion_rows + input_rows + 1 + bottom_bar_rows
-        // +1 for the separator between input and hint bar
+        2 + completion_rows + input_rows + bottom_bar_rows
     };
 
     // Queue items: 1 row per queued message (capped at 5), no header row.
@@ -1967,8 +1966,6 @@ fn render(frame: &mut Frame, app: &mut App) {
         app.queued_inputs.len().min(5) as u16
     };
 
-    // No separate separator between queue and input — the input box's own
-    // borderBottom (╰...╯) provides the visual boundary, matching official CC.
     let input_sep_rows = 0;
 
     let tip_rows = if has_permission { 0 } else { u16::from(app.status.has_tip()) };
@@ -2050,30 +2047,32 @@ fn render(frame: &mut Frame, app: &mut App) {
             perm,
         );
     } else {
-        // Normal: input ─ completion popup (optional) ─ hint bar
+        // Normal: top line ─ completion popup (optional) ─ input ─ bottom line ─ status bar
         let input_chunks = Layout::vertical([
+            Constraint::Length(1),               // top line
+            Constraint::Length(completion_rows), // completion popup / footer picker
             Constraint::Length(input_rows),      // input (1–5 rows)
-            Constraint::Length(completion_rows), // completion popup (0 when hidden)
-            Constraint::Length(1),               // separator between input and hint bar
-            Constraint::Length(bottom_bar_rows), // hint bar
+            Constraint::Length(1),               // bottom line
+            Constraint::Length(bottom_bar_rows), // status bar
         ])
         .split(footer_area);
 
-        render_input(frame, input_chunks[0], app);
-        render_input_separator(frame, input_chunks[2]);
+        render_input_separator(frame, input_chunks[0]);
+        render_input(frame, input_chunks[2], app);
+        render_input_separator(frame, input_chunks[3]);
         if bottom_bar_rows > 0 {
             bottombar::render(
                 frame,
-                input_chunks[3],
+                input_chunks[4],
                 app.is_generating,
                 &app.permission_mode,
             );
         }
 
         if let Some(picker) = app.footer_picker.as_ref() {
-            render_footer_picker(frame, input_chunks[1], input_chunks[0], picker);
+            render_footer_picker(frame, input_chunks[1], input_chunks[2], picker);
         } else if completion_rows > 0 {
-            render_completion_popup(frame, input_chunks[1], input_chunks[0], app);
+            render_completion_popup(frame, input_chunks[1], input_chunks[2], app);
         }
     }
 
@@ -2359,14 +2358,7 @@ fn render_input_separator(frame: &mut Frame, area: Rect) {
         return;
     }
     let style = Style::default().fg(MUTED);
-    let sep = if w == 1 {
-        "\u{2500}".to_string()
-    } else if w == 2 {
-        "\u{256D}\u{256E}".to_string() // ╭╮  — fallback for very narrow
-    } else {
-        // ╰────────────────────────────────────────╯
-        format!("\u{2570}{}\u{256F}", "\u{2500}".repeat(w.saturating_sub(2)))
-    };
+    let sep = "\u{2500}".repeat(w);
     frame.render_widget(Paragraph::new(Line::styled(sep, style)), area);
 }
 
@@ -2565,39 +2557,19 @@ fn fmt_tokens(n: u64) -> String {
 }
 
 fn render_input(frame: &mut Frame, area: Rect, app: &App) {
-    let prompt_style = Style::default()
-        .fg(Color::Cyan)
-        .add_modifier(Modifier::BOLD);
+    let prompt_style = Style::default().fg(Color::White);
     let text_style = Style::default(); // use terminal default — input text must be readable
     let image_style = Style::default().fg(Color::Magenta);
-    let ghost_style = Style::default().fg(MUTED); // placeholder text stays muted
     let indicator_style = Style::default().fg(MUTED);
-    let badge_style = Style::default()
-        .fg(Color::LightCyan)
-        .add_modifier(Modifier::BOLD);
 
     let display_lines = app.input.display_lines();
     let img_count = app.pending_images.len();
-    let is_empty = app.input.buffer().is_empty();
     let (has_above, has_below) = app.input.scroll_indicators();
 
-    let placeholder = if app.is_generating {
-        let verb = app.status.current_verb.unwrap_or(verbs::THINKING_VERB);
-        format!("{verb}\u{2026}")
-    } else {
-        "Message Claude\u{2026}".to_string()
-    };
-
-    let model_badge = shorten_model_name(&app.model);
-    // Official CC prompt character: ❯ (U+276F) + space.
-    let prompt_char = "\u{276F} ";
+    // Simple "> " prompt aligned with official CC minimalist input.
+    let prompt_char = "> ";
     let prompt_w = prompt_char.width();
-    // Prefix width for cursor positioning: prompt + model_badge + " · "
-    let prefix_width = if model_badge.is_empty() {
-        prompt_w
-    } else {
-        prompt_w + model_badge.width() + 3
-    };
+    let prefix_width = prompt_w;
 
     let lines: Vec<Line> = display_lines
         .iter()
@@ -2605,17 +2577,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
         .map(|(i, line_text)| {
             if i == 0 {
                 let mut spans = vec![Span::styled(prompt_char.to_string(), prompt_style)];
-                if !model_badge.is_empty() {
-                    spans.push(Span::styled(
-                        format!("{} \u{00B7} ", model_badge),
-                        badge_style,
-                    ));
-                }
-                if is_empty {
-                    spans.push(Span::styled(placeholder.clone(), ghost_style));
-                } else {
-                    spans.push(Span::styled((*line_text).to_string(), text_style));
-                }
+                spans.push(Span::styled((*line_text).to_string(), text_style));
                 if img_count > 0 {
                     spans.push(Span::styled(format!(" 📎{img_count}"), image_style));
                 }
@@ -2662,7 +2624,8 @@ fn render_completion_popup(frame: &mut Frame, popup_slot: Rect, input_area: Rect
     };
 
     let selected = app.input.completion_selected();
-    let max_items = usize::from(popup_area.height).min(matches.len());
+    // Reserve 1 row for ▔ divider at the bottom.
+    let max_items = usize::from(popup_area.height.saturating_sub(1)).min(matches.len());
 
     // Calculate visible window that keeps `selected` in view
     let scroll_offset = if selected >= max_items {
@@ -2674,8 +2637,7 @@ fn render_completion_popup(frame: &mut Frame, popup_slot: Rect, input_area: Rect
     let max_cmd_width = matches.iter().map(|c| c.width()).max().unwrap_or(4);
     let desc_col = max_cmd_width + 4; // padding between cmd and desc
 
-    // Build lines — borderless, with left "│" margin, matching original style
-    let bar_style = Style::default();
+    let dim = Style::default().fg(MUTED);
     let items: Vec<ListItem> = matches
         .iter()
         .enumerate()
@@ -2698,7 +2660,6 @@ fn render_completion_popup(frame: &mut Frame, popup_slot: Rect, input_area: Rect
             };
             let padding = " ".repeat(desc_col.saturating_sub(cmd.width()));
             ListItem::new(Line::from(vec![
-                Span::styled(" │ ", bar_style),
                 Span::styled(format!("  {cmd}"), cmd_style),
                 Span::raw(padding),
                 Span::styled(desc.to_string(), desc_style),
@@ -2711,6 +2672,16 @@ fn render_completion_popup(frame: &mut Frame, popup_slot: Rect, input_area: Rect
     // Clear the reserved slot first so closing or narrowing the popup doesn't leave artifacts.
     frame.render_widget(Clear, popup_slot);
     frame.render_widget(list, popup_area);
+
+    // ▔ divider at the bottom of the popup (aligned with official CC).
+    if popup_area.height > 0 {
+        let divider = "\u{2594}".repeat(popup_area.width as usize);
+        let divider_y = popup_area.y + popup_area.height - 1;
+        frame.render_widget(
+            Paragraph::new(Line::styled(divider, dim)),
+            Rect::new(popup_area.x, divider_y, popup_area.width, 1),
+        );
+    }
 }
 
 fn render_footer_picker(
@@ -2744,10 +2715,11 @@ fn render_footer_picker(
         popup_slot.height,
     );
 
-    let max_items = usize::from(popup_area.height).min(picker.items.len());
+    // Reserve 1 row for ▔ divider at the bottom.
+    let max_items = usize::from(popup_area.height.saturating_sub(1)).min(picker.items.len());
     let scroll_offset = picker.scroll_offset;
 
-    let bar_style = Style::default();
+    let dim = Style::default().fg(MUTED);
     let items: Vec<ListItem> = picker
         .items
         .iter()
@@ -2772,7 +2744,6 @@ fn render_footer_picker(
             let label_text = format!("{prefix}{}", item.label);
             let padding = " ".repeat(desc_col.saturating_sub(label_text.width()));
             ListItem::new(Line::from(vec![
-                Span::styled(" │ ", bar_style),
                 Span::styled(label_text, label_style),
                 Span::raw(padding),
                 Span::styled(item.description.clone(), desc_style),
@@ -2782,6 +2753,16 @@ fn render_footer_picker(
 
     frame.render_widget(Clear, popup_slot);
     frame.render_widget(List::new(items), popup_area);
+
+    // ▔ divider at the bottom of the popup (aligned with official CC).
+    if popup_area.height > 0 {
+        let divider = "\u{2594}".repeat(popup_area.width as usize);
+        let divider_y = popup_area.y + popup_area.height - 1;
+        frame.render_widget(
+            Paragraph::new(Line::styled(divider, dim)),
+            Rect::new(popup_area.x, divider_y, popup_area.width, 1),
+        );
+    }
 }
 
 fn render_welcome_lines(width: u16, model: &str, permission_mode: &str) -> Vec<Line<'static>> {
