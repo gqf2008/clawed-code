@@ -3,7 +3,7 @@
 //! Converts a markdown string into `Vec<Line<'static>>` using `pulldown-cmark`
 //! for parsing and `syntect` for code block syntax highlighting.
 
-use super::MUTED;
+use super::{blank_line, muted};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::{
     style::{Color, Modifier, Style},
@@ -148,7 +148,7 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                 Tag::TableCell => {
                     // Add a column separator before every cell except the first.
                     if table_col_idx > 0 {
-                        current_spans.push(Span::styled(" │ ", Style::default().fg(MUTED)));
+                        current_spans.push(Span::styled(" │ ", muted()));
                     }
                     table_col_idx += 1;
                 }
@@ -158,11 +158,11 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                 TagEnd::Heading(_) => {
                     state.heading_level = 0;
                     flush_line(&mut lines, &mut current_spans);
-                    lines.push(Line::from(""));
+                    lines.push(blank_line());
                 }
                 TagEnd::Paragraph => {
                     flush_line(&mut lines, &mut current_spans);
-                    lines.push(Line::from(""));
+                    lines.push(blank_line());
                 }
                 TagEnd::BlockQuote(_) => {
                     state.blockquote_depth = state.blockquote_depth.saturating_sub(1);
@@ -177,7 +177,7 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     state.list_depth = state.list_depth.saturating_sub(1);
                     ordered_list_index = None;
                     if state.list_depth == 0 {
-                        lines.push(Line::from(""));
+                        lines.push(blank_line());
                     }
                 }
                 TagEnd::Item => {
@@ -212,14 +212,14 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     // so we flush the accumulated header spans here.
                     flush_line(&mut lines, &mut current_spans);
                     // Add a visual separator between header and data rows.
-                    lines.push(Line::styled("---", Style::default().fg(MUTED)));
+                    lines.push(Line::styled("---", muted()));
                 }
                 TagEnd::Table => {
                     // Flush any remaining content (data rows are flushed by TagEnd::TableRow).
                     if !current_spans.is_empty() {
                         flush_line(&mut lines, &mut current_spans);
                     }
-                    lines.push(Line::from(""));
+                    lines.push(blank_line());
                 }
                 TagEnd::TableCell => {}
                 _ => {}
@@ -233,7 +233,7 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
 
                 let bq_prefix = if state.blockquote_depth > 0 && current_spans.is_empty() {
                     let bars = "\u{258e} ".repeat(state.blockquote_depth as usize);
-                    Some(Span::styled(bars, Style::default().fg(MUTED)))
+                    Some(Span::styled(bars, muted()))
                 } else {
                     None
                 };
@@ -290,7 +290,7 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
             }
             Event::Rule => {
                 flush_line(&mut lines, &mut current_spans);
-                lines.push(Line::styled("---", Style::default().fg(MUTED)));
+                lines.push(Line::styled("---", muted()));
             }
             Event::TaskListMarker(checked) => {
                 let marker = if checked { "\u{2611} " } else { "\u{2610} " };
@@ -321,7 +321,7 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
 /// Flush current_spans into a Line and push to lines.
 fn flush_line(lines: &mut Vec<Line<'static>>, spans: &mut Vec<Span<'static>>) {
     if spans.is_empty() {
-        lines.push(Line::from(""));
+        lines.push(blank_line());
     } else {
         lines.push(Line::from(std::mem::take(spans)));
     }
@@ -366,7 +366,7 @@ fn render_code_block(lang: &str, code: &str, lines: &mut Vec<Line<'static>>) {
                     })
                     .collect();
                 if line_spans.is_empty() {
-                    lines.push(Line::from(""));
+                    lines.push(blank_line());
                 } else {
                     lines.push(Line::from(line_spans));
                 }
@@ -632,5 +632,77 @@ mod tests {
             has_heading_line,
             "heading should be on a separate line from table"
         );
+    }
+
+    // ── Rendering verification ──
+
+    #[test]
+    fn render_dump_markdown() {
+        let md = "### 测试覆盖\n\n- messages.rs: 20 个测试\n- markdown.rs: 10 个测试\n\n> 引用块文本\n\n---\n\n| A | B |\n|---|---|\n| v1 | v2 |\n";
+        eprintln!("\n═══ Markdown 渲染输出 ═══");
+        eprintln!("输入:");
+        for l in md.lines() { eprintln!("  {l}"); }
+        eprintln!("输出:");
+        for (i, line) in render_markdown(md).iter().enumerate() {
+            let t: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+            let has_bold = line.spans.iter().any(|s| s.style.add_modifier.contains(Modifier::BOLD));
+            let has_italic = line.spans.iter().any(|s| s.style.add_modifier.contains(Modifier::ITALIC));
+            eprintln!("  L{i}: [{t}] bold={has_bold} italic={has_italic}");
+        }
+    }
+
+    #[test]
+    fn verify_heading_no_hash_prefix() {
+        let lines = render_markdown("### 测试覆盖");
+        let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(!text.contains('#'), "heading must not contain #, got: {text:?}");
+        assert!(text.contains("测试覆盖"), "heading text must be present");
+        assert!(lines[0].spans.iter().any(|s| s.style.add_modifier.contains(Modifier::BOLD)),
+            "heading must be bold");
+    }
+
+    #[test]
+    fn verify_unordered_list_dash_prefix() {
+        let lines = render_markdown("- item one\n- item two");
+        let text: String = lines.iter().flat_map(|l| l.spans.iter().map(|s| s.content.as_ref())).collect();
+        assert!(text.contains("- "), "unordered list must use '- ' prefix");
+        assert!(!text.contains("\u{2022}"), "unordered list must NOT use • bullet");
+    }
+
+    #[test]
+    fn verify_blockquote_uses_bar() {
+        let lines = render_markdown("> quoted text");
+        let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("\u{258e}"), "blockquote must use ▎ bar, got: {text:?}");
+        assert!(lines[0].spans.iter().any(|s| s.style.add_modifier.contains(Modifier::ITALIC)),
+            "blockquote content must be italic");
+    }
+
+    #[test]
+    fn verify_code_block_no_border() {
+        let lines = render_markdown("```rust\nfn main() {}\n```");
+        let full: String = lines.iter().flat_map(|l| l.spans.iter().map(|s| s.content.as_ref())).collect();
+        assert!(!full.contains("\u{250C}"), "code block must NOT have ┌ border");
+        assert!(!full.contains("\u{2514}"), "code block must NOT have └ border");
+        assert!(!full.contains("\u{2502}"), "code block must NOT have │ prefix");
+        assert!(full.contains("fn main"), "code content must be present");
+    }
+
+    #[test]
+    fn verify_horizontal_rule_format() {
+        let lines = render_markdown("above\n\n---\n\nbelow");
+        let rule_line = lines.iter().find(|l| {
+            let t: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            t == "---"
+        });
+        assert!(rule_line.is_some(), "horizontal rule must be '---'");
+    }
+
+    #[test]
+    fn verify_inline_code_blue() {
+        let lines = render_markdown("use `foo` here");
+        let code_span = lines[0].spans.iter().find(|s| s.content == "foo");
+        assert!(code_span.is_some(), "inline code must keep content");
+        assert_eq!(code_span.unwrap().style.fg, Some(Color::Blue), "inline code must be blue");
     }
 }

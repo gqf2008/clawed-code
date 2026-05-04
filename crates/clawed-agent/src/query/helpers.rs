@@ -275,10 +275,11 @@ pub(super) fn block_to_api(block: &ContentBlock, has_thinking: bool) -> ApiConte
             is_error: *is_error,
             cache_control: None,
         },
-        ContentBlock::Thinking { thinking } => {
+        ContentBlock::Thinking { thinking, signature } => {
             if has_thinking {
                 ApiContentBlock::Thinking {
                     thinking: thinking.clone(),
+                    signature: signature.clone(),
                 }
             } else {
                 ApiContentBlock::Text {

@@ -145,12 +145,27 @@ pub fn build_context(
         "version": env!("CARGO_PKG_VERSION"),
         "cost": {
             "total_cost_usd": total_cost_usd,
+            "total_duration_ms": 0,
+            "total_api_duration_ms": 0,
+            "total_lines_added": 0,
+            "total_lines_removed": 0,
         },
         "context_window": {
             "total_input_tokens": context_tokens,
             "total_output_tokens": total_output_tokens,
+            "context_window_size": 200000,
             "used_percentage": if context_pct > 0.0 { Some(context_pct) } else { None },
+            "current_usage": context_tokens,
+            "remaining_percentage": if context_pct > 0.0 { Some(100.0 - context_pct) } else { Some(100.0) },
         },
+        "exceeds_200k_tokens": context_tokens > 200000,
+        "workspace": {
+            "current_dir": cwd,
+            "project_dir": cwd,
+            "added_dirs": [],
+        },
+        "output_style": { "name": "default" },
+        "rate_limits": { },
     })
 }
 

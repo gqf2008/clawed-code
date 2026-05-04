@@ -7,6 +7,7 @@
 //! Overlays render on top of the message area and capture all keyboard input
 //! until dismissed with Esc.
 
+use super::{blank_line, muted};
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
@@ -455,7 +456,7 @@ pub fn build_info_overlay(title: &str, text: &str) -> Overlay {
 
 fn style_info_line(line: &str) -> Line<'static> {
     if line.is_empty() {
-        return Line::from("");
+        return blank_line();
     }
 
     let trimmed = line.trim_start();
@@ -535,7 +536,7 @@ pub fn build_status_overlay(
     let value = Style::default(); // use terminal default to avoid ANSI color remapping
 
     let lines = vec![
-        Line::from(""),
+        blank_line(),
         Line::from(vec![
             Span::styled("  Model:    ", label),
             Span::styled(format!("{display} ({model})"), value),
@@ -559,7 +560,7 @@ pub fn build_status_overlay(
             Span::styled("  Version:  ", label),
             Span::styled(format!("v{}", env!("CARGO_PKG_VERSION")), value),
         ]),
-        Line::from(""),
+        blank_line(),
     ];
 
     Overlay::InfoPanel {
@@ -567,6 +568,60 @@ pub fn build_status_overlay(
         lines,
         scroll_offset: 0,
     }
+}
+
+/// Build a teammate detail overlay (aligned with CC InProcessTeammateDetailDialog).
+#[allow(dead_code)]
+pub fn build_teammate_detail_overlay(
+    agent_name: String,
+    agent_color: Color,
+    status: String,
+    elapsed: String,
+    token_count: u64,
+    tool_count: u32,
+    recent_activities: Vec<String>,
+    prompt: Option<String>,
+    error: Option<String>,
+) -> Overlay {
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let dim = muted();
+    let accent = Style::default().fg(agent_color).add_modifier(Modifier::BOLD);
+    let err_style = Style::default().fg(Color::Red);
+    let success = Style::default().fg(Color::Green);
+    let warn = Style::default().fg(Color::Yellow);
+    let status_style = match status.as_str() {
+        "Completed" => success, "Failed" => err_style,
+        "Stopped" | "Killed" => warn, _ => dim,
+    };
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    lines.push(blank_line());
+    lines.push(Line::from(vec![Span::styled(format!("@{}", agent_name), accent)]));
+    let mut sub_parts = vec![Span::styled(status.clone(), status_style)];
+    sub_parts.push(Span::styled(format!(" \u{00B7} {}", elapsed), dim));
+    if token_count > 0 { sub_parts.push(Span::styled(format!(" \u{00B7} ~{token_count} tokens"), dim)); }
+    if tool_count > 0 { sub_parts.push(Span::styled(format!(" \u{00B7} {tool_count} tool{}", if tool_count == 1 { "" } else { "s" }), dim)); }
+    lines.push(Line::from(sub_parts));
+    lines.push(blank_line());
+    if !recent_activities.is_empty() && status == "Running" {
+        lines.push(Line::styled("Progress", bold));
+        for (i, a) in recent_activities.iter().enumerate() {
+            let pfx = if i == recent_activities.len() - 1 { "\u{203A} " } else { "  " };
+            lines.push(Line::styled(format!("{pfx}{a}"), if i < recent_activities.len() - 1 { dim } else { Style::default() }));
+        }
+        lines.push(blank_line());
+    }
+    if let Some(ref p) = prompt { if !p.is_empty() {
+        lines.push(Line::styled("Prompt", bold));
+        lines.push(Line::styled(p.chars().take(300).collect::<String>(), dim));
+        lines.push(blank_line());
+    }}
+    if let Some(ref e) = error { if !e.is_empty() && status == "Failed" {
+        lines.push(Line::styled("Error", err_style.add_modifier(Modifier::BOLD)));
+        lines.push(Line::styled(e.clone(), err_style));
+        lines.push(blank_line());
+    }}
+    lines.push(Line::styled("\u{2190} go back  \u{00B7}  Esc/Enter/Space close  \u{00B7}  x stop  \u{00B7}  f foreground", dim));
+    Overlay::InfoPanel { title: format!("@{}", agent_name), lines, scroll_offset: 0 }
 }
 
 /// Run local environment diagnostics and build an InfoPanel overlay.
@@ -582,7 +637,7 @@ pub async fn build_doctor_overlay(
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
 
-    let mut lines: Vec<Line<'static>> = vec![Line::from("")];
+    let mut lines: Vec<Line<'static>> = vec![blank_line()];
     let mut warnings = 0u32;
     let mut errors = 0u32;
 
@@ -746,7 +801,7 @@ pub async fn build_doctor_overlay(
     {
         let s = engine.state().read().await;
         let display = clawed_core::model::display_name_any(&s.model);
-        lines.push(Line::from(""));
+        lines.push(blank_line());
         lines.push(Line::from(vec![
             Span::styled("  Model:       ", label),
             Span::raw(format!("{display} ({})", s.model)),
@@ -803,7 +858,7 @@ pub async fn build_doctor_overlay(
     }
 
     // Summary
-    lines.push(Line::from(""));
+    lines.push(blank_line());
     if errors == 0 && warnings == 0 {
         lines.push(Line::from(vec![Span::styled(
             "  🎉 All checks passed!",
@@ -823,7 +878,7 @@ pub async fn build_doctor_overlay(
             )]));
         }
     }
-    lines.push(Line::from(""));
+    lines.push(blank_line());
 
     Overlay::InfoPanel {
         title: "Doctor".to_string(),

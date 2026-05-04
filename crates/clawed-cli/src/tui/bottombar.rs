@@ -6,10 +6,54 @@ use ratatui::{
     widgets::Paragraph,
     Frame,
 };
+use std::collections::HashMap;
 use unicode_width::UnicodeWidthStr;
 
 /// Single-line status bar shown at the bottom of the TUI.
-/// Aligned with official Claude Code bottom status line.
+
+/// Render agent pills (aligned with CC BackgroundTaskStatus).
+/// Horizontal scrollable pills showing @agentName with status color.
+#[allow(dead_code)]
+pub fn render_agent_pills(
+    frame: &mut Frame,
+    area: Rect,
+    agents: &HashMap<String, crate::tui::status::AgentInfo>,
+) {
+    if area.height == 0 || area.width == 0 || agents.is_empty() {
+        return;
+    }
+    let dim = Style::default().fg(MUTED);
+    let mut spans: Vec<Span> = Vec::new();
+    for (i, (_id, agent)) in agents.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw(" "));
+        }
+        let badge_style = Style::default()
+            .fg(agent.color)
+            .add_modifier(Modifier::BOLD);
+        let name_span = Span::styled(format!("@{}", agent.name), badge_style);
+        spans.push(name_span);
+
+        match agent.state {
+            crate::tui::status::AgentState::Active => {
+                if let Some(ref act) = agent.activity {
+                    spans.push(Span::styled(format!(" {}", act), dim));
+                }
+            }
+            crate::tui::status::AgentState::Idle => {
+                spans.push(Span::styled(" idle", dim));
+            }
+            crate::tui::status::AgentState::Stopping => {
+                spans.push(Span::styled(" stopping\u{2026}", dim));
+            }
+            crate::tui::status::AgentState::AwaitingApproval => {
+                spans.push(Span::styled(" \u{26A0} approval", dim));
+            }
+        }
+    }
+    spans.push(Span::styled("  \u{2191}\u{2193} view", dim));
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
 
 pub fn render(frame: &mut Frame, area: Rect, is_generating: bool, permission_mode: &str) {
     if area.height == 0 || area.width == 0 {
@@ -42,7 +86,7 @@ pub fn render(frame: &mut Frame, area: Rect, is_generating: bool, permission_mod
                 format!("{} permissions on", permission_mode.to_lowercase()),
                 Style::default().fg(mode_color),
             ));
-            left_spans.push(Span::styled(" (shift+tab to cycle) · ", dim));
+            left_spans.push(Span::styled(" (shift+tab) · ", dim));
         }
         left_spans.push(Span::styled("ctrl+t", key_style));
         left_spans.push(Span::styled(" to hide tasks", dim));

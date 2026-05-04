@@ -501,11 +501,12 @@ fn synthesize_stream_events(response: MessagesResponse) -> Vec<StreamEvent> {
                 });
                 events.push(StreamEvent::ContentBlockStop { index: idx });
             }
-            ResponseContentBlock::Thinking { thinking } => {
+            ResponseContentBlock::Thinking { thinking, .. } => {
                 events.push(StreamEvent::ContentBlockStart {
                     index: idx,
                     content_block: ResponseContentBlock::Thinking {
                         thinking: String::new(),
+                        signature: None,
                     },
                 });
                 events.push(StreamEvent::ContentBlockDelta {
@@ -755,6 +756,7 @@ mod tests {
         let response = make_test_response(
             vec![ResponseContentBlock::Thinking {
                 thinking: "let me think...".into(),
+                signature: None,
             }],
             Some("end_turn".into()),
         );

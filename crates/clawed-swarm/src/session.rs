@@ -323,7 +323,7 @@ impl SwarmSession {
             }))
         });
         // If the first message is inherited context, keep it and trim after it.
-        let drain_start = if first_is_inherited { 1 } else { 0 };
+        let drain_start = usize::from(first_is_inherited);
         let drain_end = drain_start + excess.min(self.history.len() - drain_start);
         if drain_start < drain_end {
             self.history.drain(drain_start..drain_end);
@@ -390,7 +390,7 @@ fn core_block_to_api(block: &ContentBlock) -> ApiContentBlock {
             },
             cache_control: None,
         },
-        ContentBlock::Thinking { thinking } => ApiContentBlock::Text {
+        ContentBlock::Thinking { thinking, .. } => ApiContentBlock::Text {
             text: format!("<thinking>{thinking}</thinking>"),
             cache_control: None,
         },

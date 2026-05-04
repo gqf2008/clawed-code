@@ -21,7 +21,7 @@ use tracing::debug;
 static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
 
 fn shared_client() -> &'static reqwest::Client {
-    HTTP_CLIENT.get_or_init(|| reqwest::Client::new())
+    HTTP_CLIENT.get_or_init(reqwest::Client::new)
 }
 
 // ── Types ───────────────────────────────────────────────────────────────────

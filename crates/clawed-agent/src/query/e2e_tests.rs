@@ -103,10 +103,11 @@ fn make_stream_events(
                     index: idx,
                 }));
             }
-            ResponseContentBlock::Thinking { thinking } => {
+            ResponseContentBlock::Thinking { thinking, .. } => {
                 events.push(Ok(clawed_api::types::StreamEvent::ContentBlockStart {
                     index: idx,
                     content_block: ResponseContentBlock::Thinking {
+                        signature: None,
                         thinking: String::new(),
                     },
                 }));
@@ -672,6 +673,7 @@ async fn e2e_thinking_blocks_emitted() {
         role: "assistant".into(),
         content: vec![
             ResponseContentBlock::Thinking {
+                signature: None,
                 thinking: "Let me think step by step...".into(),
             },
             ResponseContentBlock::Text {

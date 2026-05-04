@@ -346,6 +346,7 @@ fn test_block_to_api_tool_use() {
 #[test]
 fn test_block_to_api_thinking() {
     let block = ContentBlock::Thinking {
+        signature: None,
         thinking: "let me think...".into(),
     };
     let api = block_to_api(&block, false);

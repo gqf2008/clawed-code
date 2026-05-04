@@ -30,6 +30,20 @@ pub fn format_permission_mode(mode: PermissionMode) -> &'static str {
     }
 }
 
+/// Cycle to the next permission mode in the rotation order.
+/// Order: default → bypass → auto → acceptEdits → plan → dontAsk → default.
+#[allow(dead_code)]
+pub fn cycle_permission_mode(mode: PermissionMode) -> PermissionMode {
+    match mode {
+        PermissionMode::Default => PermissionMode::BypassAll,
+        PermissionMode::BypassAll => PermissionMode::Auto,
+        PermissionMode::Auto => PermissionMode::AcceptEdits,
+        PermissionMode::AcceptEdits => PermissionMode::Plan,
+        PermissionMode::Plan => PermissionMode::DontAsk,
+        PermissionMode::DontAsk => PermissionMode::Default,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

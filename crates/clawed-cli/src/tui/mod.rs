@@ -61,6 +61,11 @@ type TuiTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io:
 /// Uses a true-color gray that is readable on both dark and light backgrounds,
 /// unlike `Color::DarkGray` (ANSI 8) which maps to bright on many terminals.
 pub(super) const MUTED: Color = Color::Rgb(170, 170, 170);
+
+pub(crate) fn muted() -> Style { Style::default().fg(MUTED) }
+pub(crate) fn blank_line() -> Line<'static> { Line::from(String::new()) }
+pub(crate) fn line_text(line: &Line<'_>) -> String { line.spans.iter().map(|s| s.content.as_ref()).collect() }
+
 const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SPINNER_TICK_INTERVAL: Duration = Duration::from_millis(verbs::SPINNER_TICK_INTERVAL_MS); // 120ms, aligned with official CC
@@ -79,7 +84,7 @@ fn plain_text_lines(text: &str) -> Vec<Line<'static>> {
     }
 
     let dim = Style::default().fg(MUTED);
-    let prefix_text = "\u{23FA} ";
+    let prefix_text = "\u{25CF} ";
     let prefix = Span::styled(prefix_text.to_string(), dim);
     let blank_prefix = Span::raw(" ".repeat(prefix_text.width()));
     text.lines()
@@ -711,6 +716,8 @@ struct App {
     /// Context suggestions overlay (file / MCP / agent suggestions above input).
     suggestions: Vec<SuggestionItem>,
     selected_suggestion: usize,
+    #[allow(dead_code)]
+    selected_agent_index: Option<usize>,
 }
 
 /// A single context suggestion (file, MCP resource, or agent).
@@ -724,6 +731,7 @@ struct SuggestionItem {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum SuggestionKind {
     File,
     McpResource,
@@ -732,6 +740,7 @@ enum SuggestionKind {
 
 /// Teammate being viewed in transcript mode.
 struct ViewedTeammate {
+    #[allow(dead_code)]
     agent_id: String,
     name: String,
     color: Color,
@@ -784,6 +793,8 @@ impl App {
             viewed_teammate: None,
             suggestions: Vec::new(),
             selected_suggestion: 0,
+            #[allow(dead_code)]
+    selected_agent_index: None,
         }
     }
 
@@ -802,7 +813,9 @@ impl App {
         }
     }
 
-    fn view_teammate(&mut self, agent_id: String, name: String) {
+    #[allow(dead_code)]
+    fn view_teammate(&mut self, #[allow(dead_code)]
+    agent_id: String, name: String) {
         let color = self
             .status
             .active_agents
@@ -1430,13 +1443,18 @@ impl App {
                     "{info} Agent spawned: {label}",
                     info = verbs::INFO_MARKER
                 )));
-                let color = agent_color_for_id(&agent_id);
+                let _color = agent_color_for_id(&agent_id);
                 self.status.active_agents.insert(
                     agent_id,
                     status::AgentInfo {
                         name: label,
                         started: Instant::now(),
-                        color,
+                        state: status::AgentState::Active,
+                        activity: None,
+                        tool_count: 0,
+                        token_estimate: 0,
+                        idle_since: None,
+                        color: Color::Cyan,
                     },
                 );
             }
@@ -2004,7 +2022,7 @@ fn render(frame: &mut Frame, app: &mut App) {
     let footer_area = chunks[7];
 
     // Teammate view header: fixed 1 row above messages when viewing a teammate.
-    let teammate_header_rows = if app.viewed_teammate.is_some() { 1 } else { 0 };
+    let teammate_header_rows = u16::from(app.viewed_teammate.is_some());
     let msg_chunks = Layout::vertical([
         Constraint::Length(teammate_header_rows),
         Constraint::Min(1),
@@ -2318,7 +2336,7 @@ fn render_suggestions_overlay(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let dim = Style::default().fg(MUTED);
+    let _dim = Style::default().fg(MUTED);
     let selected_style = Style::default().fg(Color::Cyan);
     let divider_style = Style::default().fg(MUTED);
 
@@ -2376,7 +2394,7 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         .add_modifier(Modifier::BOLD);
 
     // --- Dynamic status spans (spinner, elapsed, tools, shells, agents) — leftmost ---
-    let status_spans = status::build_spans(&app.status);
+    let status_spans = status::build_spans(&app.status, area.width);
     let status_w: usize = status_spans.iter().map(|s| s.content.width()).sum();
 
     let mut spans: Vec<Span> = Vec::new();
@@ -4700,7 +4718,7 @@ async fn replay_session_messages(engine: &Arc<QueryEngine>, app: &mut App) {
                         ContentBlock::Text { text } => {
                             app.push_message(MessageContent::AssistantText(text.clone()));
                         }
-                        ContentBlock::Thinking { thinking } => {
+                        ContentBlock::Thinking { thinking, .. } => {
                             app.push_message(MessageContent::ThinkingText(thinking.clone()));
                         }
                         ContentBlock::ToolUse { name, input, .. } => {
@@ -5070,7 +5088,7 @@ mod tests {
         assert!(!app.cached_visible_lines_dirty);
         assert_eq!(
             line_text(app.cached_visible_lines.last().expect("cached line")),
-            "\u{23FA} hello world"
+            "\u{25CF} hello world"
         );
     }
 
@@ -5104,13 +5122,13 @@ mod tests {
         app.push_message(MessageContent::AssistantText("**bold**".to_string()));
 
         // Streaming: lightweight inline parsing strips the markers.
-        assert_eq!(line_text(&app.cached_visible_lines[0]), "\u{23FA} bold");
+        assert_eq!(line_text(&app.cached_visible_lines[0]), "\u{25CF} bold");
 
         app.mark_done();
         app.rebuild_visible_lines();
 
         // Done: full markdown renderer also produces "bold".
-        assert_eq!(line_text(&app.cached_visible_lines[0]), "\u{23FA} bold");
+        assert_eq!(line_text(&app.cached_visible_lines[0]), "\u{25CF} bold");
     }
 
     #[test]
@@ -7491,7 +7509,7 @@ mod tests {
             "tool at depth=1 should render tree connector, got:\n{text}"
         );
         assert!(
-            text.contains("⏺ Read"),
+            text.contains("● Read"),
             "tool header should contain name, got:\n{text}"
         );
     }
@@ -7909,4 +7927,83 @@ mod tests {
         println!("Compare with official CC: open two terminals, run `claude` and `cargo run --`, then visually verify.");
     }
 
+    #[test]
+    fn generate_delivery_screenshots() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        let dir = "/tmp/clawed_delivery";
+        let _ = std::fs::create_dir_all(dir);
+
+        // Renders app state as colored HTML
+        let mut snap = |app: &mut App, name: &str| {
+            let backend = TestBackend::new(120, 40);
+            let mut t = Terminal::new(backend).unwrap();
+            t.draw(|f| crate::tui::render(f, app)).unwrap();
+            let buf = t.backend().buffer();
+            let mut h = String::from("<pre style='background:#1a1a2e;color:#ddd;font:13px monospace;padding:10px'>\n");
+            for y in 0..buf.area().height {
+                for x in 0..buf.area().width {
+                    if let Some(c) = buf.cell((x, y)) {
+                        let ch = match c.symbol() { " "=>" ", "&"=>"&amp;", "<"=>"&lt;", ">"=>"&gt;", s=>s };
+                        let bg = c.style().bg.map_or(String::new(), |c| format!("background:{:?};",c).replace("Rgb(","rgb(").replace(")",";"));
+                        let fg = c.style().fg.map_or(String::new(), |c| format!("color:{:?};",c).replace("Rgb(","rgb(").replace(")",";"));
+                        let b = if c.style().add_modifier.contains(Modifier::BOLD) { "font-weight:bold;" } else { "" };
+                        let i = if c.style().add_modifier.contains(Modifier::ITALIC) { "font-style:italic;" } else { "" };
+                        let s = if c.style().add_modifier.contains(Modifier::CROSSED_OUT) { "text-decoration:line-through;" } else { "" };
+                        h.push_str(&format!("<span style='{bg}{fg}{b}{i}{s}'>{ch}</span>"));
+                    }
+                }
+                h.push('\n');
+            }
+            h.push_str("</pre>");
+            std::fs::write(format!("{dir}/{}.html", name), &h).unwrap();
+        };
+
+        macro_rules! fresh {
+            ($name:expr, |$app:ident| $body:block) => {{
+                let mut $app = App::new("claude-sonnet-4-6".into());
+                $body
+                snap(&mut $app, $name);
+            }};
+        }
+
+        fresh!("01_welcome", |app| {});
+        fresh!("02_markdown", |app| { app.push_message(MessageContent::AssistantText(
+            "### Project Progress\n\n- TUI core refactoring done\n- Permission dialog fixed\n\n> Code review is part of writing code.\n\n---\n\n| Module | Status |\n|---|---|\n| config | Done |\n| overlay | Pending |".into()));
+        });
+        fresh!("03_diff", |app| {
+            app.push_message(MessageContent::AssistantText("Edit result:".into()));
+            let mut m = Message::new(MessageContent::ToolExecution {
+                name: "Edit".to_string(), input: Some("src/main.rs".to_string()),
+                output_lines: vec![], is_error: false, duration_ms: 1500,
+                full_result: Some("--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,4 @@\n unchanged\n-removed\n+added\n unchanged".to_string()), depth: 0,
+            });
+            app.messages.push(m);
+        });
+        fresh!("04_taskplan", |app| {
+            app.task_plan.add_task("t1".into(), "Core engine".into());
+            app.task_plan.add_task("t2".into(), "Test suite".into());
+            app.task_plan.add_task("t3".into(), "Edge cases".into());
+            app.task_plan.complete_task("t1", false);
+            app.task_plan.complete_task("t2", false);
+        });
+        fresh!("05_agents", |app| {
+            app.status.active_agents.insert("a1".into(), status::AgentInfo {
+                name: "reviewer".into(), started: std::time::Instant::now(),
+                state: status::AgentState::Active, activity: Some("Read(src/lib.rs)".into()),
+                tool_count: 3, token_estimate: 4500, idle_since: None, color: Color::Magenta,
+            });
+            app.status.active_agents.insert("a2".into(), status::AgentInfo {
+                name: "test-runner".into(), started: std::time::Instant::now(),
+                state: status::AgentState::Idle, activity: None,
+                tool_count: 1, token_estimate: 800, idle_since: Some(std::time::Instant::now()),
+                color: Color::Cyan,
+            });
+            app.status.is_generating = true; app.status.spinner_frame = 3;
+            app.#[allow(dead_code)]
+    selected_agent_index = Some(0);
+        });
+
+        eprintln!("Delivery screenshots: {}/", dir);
+    }
 }

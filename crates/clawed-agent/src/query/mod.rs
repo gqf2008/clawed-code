@@ -348,6 +348,7 @@ pub fn query_stream_with_injection(
 
             let mut assistant_text = String::new();
             let mut thinking_text = String::new();
+            let mut thinking_signature: Option<String> = None;
             let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
             let mut tool_uses: Vec<(String, String, serde_json::Value)> = Vec::new();
             let mut tool_paths: Vec<String> = Vec::new();
@@ -386,7 +387,7 @@ pub fn query_stream_with_injection(
                                     current_tool_input.clear();
                                     yield AgentEvent::ToolUseStart { id: id.clone(), name: name.clone() };
                                 }
-                                ResponseContentBlock::Thinking { thinking } => {
+                                ResponseContentBlock::Thinking { thinking, .. } => {
                                     thinking_text = thinking.clone();
                                     yield AgentEvent::ThinkingDelta(thinking.clone());
                                 }
@@ -404,8 +405,8 @@ pub fn query_stream_with_injection(
                                 thinking_text.push_str(&thinking);
                                 yield AgentEvent::ThinkingDelta(thinking);
                             }
-                            DeltaBlock::SignatureDelta { .. } => {
-                                // Safely ignored — signature verification is not user-facing
+                            DeltaBlock::SignatureDelta { signature } => {
+                                thinking_signature = Some(signature.clone());
                             }
                         },
                         StreamEvent::ContentBlockStop { .. } => {
@@ -555,6 +556,7 @@ pub fn query_stream_with_injection(
             if !thinking_text.is_empty() {
                 assistant_blocks.insert(0, ContentBlock::Thinking {
                     thinking: std::mem::take(&mut thinking_text),
+                    signature: thinking_signature.take(),
                 });
             }
 

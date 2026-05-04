@@ -1,23 +1,14 @@
 use super::verbs::{ERROR_MARKER, THINKING_MARKER, TURN_COMPLETION_MARKER, WARNING_MARKER};
-use super::{markdown, MUTED};
+use super::{blank_line, line_text, markdown, muted, MUTED};
 
 use clawed_core::text_util::strip_system_reminders;
 use unicode_width::UnicodeWidthStr;
 
 use std::cell::RefCell;
-use std::time::Instant;
-
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
-
-fn line_text(line: &Line<'_>) -> String {
-    line.spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect()
-}
 
 /// Returns an appropriate style for a line in a unified diff.
 fn diff_line_style(line: &str) -> Style {
@@ -34,6 +25,148 @@ fn diff_line_style(line: &str) -> Style {
     } else {
         Style::default().fg(Color::Gray)
     }
+}
+
+/// Background colors for structured diff lines (aligned with CC).
+const DIFF_ADDED_BG: Color = Color::Rgb(0, 60, 0);
+const DIFF_REMOVED_BG: Color = Color::Rgb(60, 0, 0);
+const DIFF_ADDED_WORD_BG: Color = Color::Rgb(0, 100, 0);
+const DIFF_REMOVED_WORD_BG: Color = Color::Rgb(100, 0, 0);
+
+/// Renders a diff line with line-number gutter and background coloring.
+/// Returns (gutter_span, content_spans) for multi-span content with word-level diff.
+fn diff_gutter_line(
+    line: &str,
+    _line_num: Option<u32>,
+    prev_line: Option<&str>,
+) -> (Span<'static>, Vec<Span<'static>>) {
+    let (marker, bg) = if line.starts_with('+') {
+        ("+", Some(DIFF_ADDED_BG))
+    } else if line.starts_with('-') {
+        ("-", Some(DIFF_REMOVED_BG))
+    } else {
+        (" ", None)
+    };
+
+    let gutter = format!("{} ", marker);
+
+    let gutter_style = if let Some(b) = bg {
+        Style::default().bg(b).fg(MUTED)
+    } else {
+        Style::default().fg(MUTED)
+    };
+
+    // Word-level diff: compare with previous line if it's a complementary change
+    let content_spans = if let (Some(bg_color), Some(prev)) = (bg, prev_line) {
+        let prev_prefix = if prev.starts_with('+') { "+" } else if prev.starts_with('-') { "-" } else { " " };
+        let curr_prefix = if line.starts_with('+') { "+" } else if line.starts_with('-') { "-" } else { " " };
+        // Only do word diff for opposite add/remove pairs
+        if prev_prefix != curr_prefix && prev_prefix != " " && curr_prefix != " " {
+            word_diff_spans(prev, line, bg_color)
+        } else {
+            vec![Span::styled(format!(" {}", line), Style::default().bg(bg_color))]
+        }
+    } else if let Some(bg_color) = bg {
+        vec![Span::styled(format!(" {}", line), Style::default().bg(bg_color))]
+    } else {
+        vec![Span::styled(format!(" {}", line), Style::default())]
+    };
+
+    (Span::styled(gutter, gutter_style), content_spans)
+}
+
+/// Compute word-level diff spans between removed (prev) and added (curr) lines.
+fn word_diff_spans(prev: &str, curr: &str, bg: Color) -> Vec<Span<'static>> {
+    let prev_trimmed = prev.trim_start_matches(&['+', '-', ' '][..]);
+    let curr_trimmed = curr.trim_start_matches(&['+', '-', ' '][..]);
+
+    // Find common prefix/suffix
+    let common_prefix_len = prev_trimmed
+        .chars()
+        .zip(curr_trimmed.chars())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let common_suffix_len = prev_trimmed
+        .chars()
+        .rev()
+        .zip(curr_trimmed.chars().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let curr_mid = &curr_trimmed[common_prefix_len..curr_trimmed.len().saturating_sub(common_suffix_len)];
+
+    let prefix = &prev_trimmed[..common_prefix_len];
+    let suffix = &prev_trimmed[prev_trimmed.len().saturating_sub(common_suffix_len)..];
+
+    let word_bg = if bg == DIFF_ADDED_BG { DIFF_ADDED_WORD_BG } else { DIFF_REMOVED_WORD_BG };
+    let base = Style::default().bg(bg);
+    let highlight = Style::default().bg(word_bg);
+
+    let mut spans = vec![
+        Span::styled(format!(" {}", prefix), base),
+        Span::styled(curr_mid.to_string(), highlight),
+        Span::styled(suffix.to_string(), base),
+    ];
+    // Filter out empty spans
+    spans.retain(|s| !s.content.is_empty());
+    spans
+}
+
+/// Render an agent progress line (aligned with CC AgentProgressLine).
+/// Tree-char + colored badge + stats + status sub-line.
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+pub fn render_agent_progress_line(
+    agent_name: &str,
+    agent_color: Color,
+    is_last: bool,
+    is_resolved: bool,
+    is_selected: bool,
+    tool_count: u32,
+    token_count: u64,
+    status_text: String,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let dim = muted();
+    let (tree_char, tree_style) = if is_selected {
+        if is_last { ("\u{2558}\u{2550} ", Style::default().fg(Color::Yellow)) }
+        else { ("\u{255E}\u{2550} ", Style::default().fg(Color::Yellow)) }
+    } else {
+        if is_last { ("\u{2514}\u{2500} ", muted()) }
+        else { ("\u{251C}\u{2500} ", muted()) }
+    };
+    let badge_style = Style::default()
+        .fg(agent_color)
+        .add_modifier(Modifier::BOLD);
+
+    // Main row: tree char + colored badge + stats
+    let mut spans = vec![
+        Span::styled(tree_char, tree_style),
+        Span::styled(format!("{} ", agent_name), badge_style),
+    ];
+    if !is_resolved {
+        spans.push(Span::styled(
+            format!(" \u{00B7} {} tool{}", tool_count, if tool_count == 1 { "" } else { "s" }),
+            dim,
+        ));
+        if token_count > 0 {
+            spans.push(Span::styled(
+                format!(" \u{00B7} ~{} tokens", token_count),
+                dim,
+            ));
+        }
+    }
+    lines.push(Line::from(spans));
+
+    // Status sub-line: continuation prefix + status text
+    let cont = if is_last { "   " } else { "\u{2502}  " };
+    let sub_prefix = format!("{}{} ", cont, "\u{23BF}");
+    lines.push(Line::styled(
+        format!("{}{}", sub_prefix, status_text),
+        dim,
+    ));
+
+    lines
 }
 
 // ── Message content types ───────────────────────────────────────────────────
@@ -61,6 +194,38 @@ pub enum MessageContent {
     System(String),
 }
 
+impl MessageContent {
+    /// Extract plain searchable text from this content.
+    #[allow(dead_code)]
+pub fn plain_text(&self) -> String {
+        match self {
+            MessageContent::UserInput(s)
+            | MessageContent::AssistantText(s)
+            | MessageContent::ThinkingText(s)
+            | MessageContent::System(s) => s.clone(),
+            MessageContent::ToolExecution {
+                name,
+                input,
+                output_lines,
+                full_result,
+                ..
+            } => {
+                let mut parts = vec![name.clone()];
+                if let Some(inp) = input {
+                    parts.push(inp.clone());
+                }
+                for line in output_lines {
+                    parts.push(line.clone());
+                }
+                if let Some(result) = full_result {
+                    parts.push(result.clone());
+                }
+                parts.join("\n")
+            }
+        }
+    }
+}
+
 /// Rendering context for a tool execution message.
 /// Bundles all parameters that affect visual layout so
 /// `render_tool_execution` doesn't take 9+ positional args.
@@ -75,16 +240,12 @@ struct ToolRenderCtx<'a> {
     has_sibling_after: bool,
     live_duration_ms: Option<u64>,
 }
-
-/// Continuation prefix for assistant-side output lines (aligned with official CC).
-const CONTINUATION_PREFIX: &str = "\u{23BF}  ";
+// CONTINUATION_PREFIX removed — CC uses plain indent)
 
 /// A single message with timestamp and line cache.
 #[derive(Debug, Clone)]
 pub struct Message {
     pub content: MessageContent,
-    #[allow(dead_code)]
-    pub timestamp: Instant,
     /// Whether the tool execution is collapsed (true = show header only).
     pub collapsed: bool,
     /// Cached rendered lines. Invalidated when content changes.
@@ -98,7 +259,6 @@ impl Message {
         let collapsed = !matches!(content, MessageContent::ToolExecution { .. });
         Self {
             content,
-            timestamp: Instant::now(),
             collapsed,
             cached_lines: RefCell::new(None),
         }
@@ -146,7 +306,7 @@ impl Message {
 
         let cached_lines = self.cached_lines.get_mut();
         if let Some(lines) = cached_lines.as_mut() {
-            let style = Style::default().fg(MUTED).add_modifier(Modifier::ITALIC);
+            let style = muted().add_modifier(Modifier::ITALIC);
             let mut iter = text.lines();
             let Some(first) = iter.next() else {
                 return;
@@ -231,6 +391,12 @@ impl Message {
         )
     }
 
+    /// Extract plain searchable text from this message.
+    #[allow(dead_code)]
+pub fn plain_text(&self) -> String {
+        self.content.plain_text()
+    }
+
     /// Convert this message to ratatui `Line`s for display.
     /// Results are cached; subsequent calls return the cached version.
     /// Pass `has_sibling_after=true` when the next message is a sibling tool
@@ -266,7 +432,7 @@ impl Message {
                     "\u{276F} ",
                     Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
                 );
-                let mut lines = vec![Line::from("")];
+                let mut lines = vec![blank_line()];
                 for (i, part) in text.split('\n').enumerate() {
                     if i == 0 {
                         lines.push(Line::from(vec![
@@ -283,8 +449,8 @@ impl Message {
                 if text.is_empty() {
                     return vec![];
                 }
-                let dim = Style::default().fg(MUTED);
-                let prefix_text = "\u{23FA} ";
+                let dim = muted();
+                let prefix_text = "\u{25CF} ";
                 let prefix = Span::styled(prefix_text.to_string(), dim);
                 let blank_prefix = Span::raw(" ".repeat(prefix_text.width()));
                 markdown::render_markdown(text)
@@ -304,7 +470,7 @@ impl Message {
                 if text.is_empty() {
                     return vec![];
                 }
-                let dim_italic = Style::default().fg(MUTED).add_modifier(Modifier::ITALIC);
+                let dim_italic = muted().add_modifier(Modifier::ITALIC);
                 if self.collapsed {
                     return vec![Line::from(vec![
                         Span::styled(
@@ -312,7 +478,7 @@ impl Message {
                             dim_italic,
                         ),
                         Span::raw("  "),
-                        Span::styled("(Ctrl+O to expand)", Style::default().fg(MUTED)),
+                        Span::styled("(Ctrl+O to expand)", muted()),
                     ])];
                 }
                 let mut lines: Vec<Line<'static>> = Vec::new();
@@ -346,18 +512,30 @@ impl Message {
                 live_duration_ms,
             }),
             MessageContent::System(text) => {
-                let style = if text.starts_with(ERROR_MARKER) {
-                    Style::default().fg(Color::Red)
-                } else if text.starts_with(WARNING_MARKER)
-                    || text.starts_with(TURN_COMPLETION_MARKER)
-                {
-                    Style::default().fg(Color::Yellow)
+                if markdown::likely_markdown(text) {
+                    let mut lines = markdown::render_markdown(text);
+                    for line in &mut lines {
+                        for span in &mut line.spans {
+                            if span.style.fg.is_none() {
+                                span.style = span.style.fg(MUTED);
+                            }
+                        }
+                    }
+                    lines
                 } else {
-                    Style::default().fg(MUTED)
-                };
-                text.lines()
-                    .map(|l| Line::styled(l.to_string(), style))
-                    .collect()
+                    let style = if text.starts_with(ERROR_MARKER) {
+                        Style::default().fg(Color::Red)
+                    } else if text.starts_with(WARNING_MARKER)
+                        || text.starts_with(TURN_COMPLETION_MARKER)
+                    {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        muted()
+                    };
+                    text.lines()
+                        .map(|l| Line::styled(l.to_string(), style))
+                        .collect()
+                }
             }
         }
     }
@@ -389,7 +567,7 @@ impl Message {
         let mut header_spans: Vec<Span<'static>> = Vec::new();
         header_spans.push(Span::styled(
             format!("{indent}{child_prefix}"),
-            Style::default().fg(MUTED),
+            muted(),
         ));
         let bullet_color = if ctx.is_error {
             Color::Red
@@ -399,7 +577,7 @@ impl Message {
             Color::Green
         };
         header_spans.push(Span::styled(
-            "\u{23FA} ",
+            "\u{25CF} ",
             Style::default().fg(bullet_color),
         ));
         let display_name = super::user_facing_tool_name(ctx.name);
@@ -414,45 +592,79 @@ impl Message {
             } else {
                 format!("({})", cmd)
             };
-            header_spans.push(Span::styled(display, Style::default().fg(MUTED)));
+            header_spans.push(Span::styled(display, muted()));
         }
         lines.push(Line::from(header_spans));
 
-        // ── Output lines (diff-colored like expanded results) ──
-        for line in ctx.output_lines {
-            lines.push(Line::styled(
-                format!("{output_indent}{CONTINUATION_PREFIX}{}", line),
-                diff_line_style(line),
-            ));
+        // ── Shell output: show live lines with elapsed (aligned with CC ShellProgressMessage) ──
+        let is_shell = matches!(
+            ctx.name.to_lowercase().as_str(),
+            "bash" | "shell" | "bash_output"
+        );
+        if is_shell {
+            let has_output = !ctx.output_lines.is_empty();
+            if has_output {
+                for line in ctx.output_lines.iter() {
+                    lines.push(Line::styled(
+                        format!("{output_indent}  {}", line),
+                        muted(),
+                    ));
+                }
+            } else if ctx.live_duration_ms.is_some() {
+                let elapsed = ctx.live_duration_ms.unwrap_or(0);
+                let elapsed_str = if elapsed >= 1000 {
+                    format!("{:.1}s", elapsed as f64 / 1000.0)
+                } else {
+                    format!("{}ms", elapsed)
+                };
+                lines.push(Line::styled(
+                    format!("{output_indent}  Running\u{2026} ({})", elapsed_str),
+                    muted(),
+                ));
+            }
+            // Duration hint
+            let effective_dur = if ctx.duration_ms > 0 { Some(ctx.duration_ms) } else { ctx.live_duration_ms };
+            if let Some(d) = effective_dur {
+                if d > 0 {
+                    let elapsed = if d >= 1000 {
+                        format!("{:.1}s", d as f64 / 1000.0)
+                    } else {
+                        format!("{}ms", d)
+                    };
+                    lines.push(Line::styled(
+                        format!("{output_indent}  ({})", elapsed),
+                        muted(),
+                    ));
+                }
+            }
+        } else {
+            // Non-shell tools: output with indent
+            for line in ctx.output_lines {
+                lines.push(Line::styled(
+                    format!("{output_indent}  {line}"),
+                    diff_line_style(line),
+                ));
+            }
         }
 
-        // ── Duration hint (completed or live) ──
-        let effective_dur = if ctx.duration_ms > 0 {
-            Some(ctx.duration_ms)
-        } else {
-            ctx.live_duration_ms
-        };
-        if let Some(d) = effective_dur {
-            let dur = if d >= 1000 {
-                format!("{:.1}s", d as f64 / 1000.0)
+        // ── Duration hint (completed tools) ──
+        if ctx.duration_ms > 0 && !is_shell {
+            let dur = if ctx.duration_ms >= 1000 {
+                format!("{:.1}s", ctx.duration_ms as f64 / 1000.0)
             } else {
-                format!("{}ms", d)
+                format!("{}ms", ctx.duration_ms)
             };
-            let marker = if ctx.duration_ms > 0 && !ctx.is_error {
-                "✓ "
-            } else {
-                ""
-            };
+            let marker = if !ctx.is_error { "✓ " } else { "" };
             lines.push(Line::styled(
-                format!("{output_indent}{CONTINUATION_PREFIX}{marker}({})", dur),
-                Style::default().fg(MUTED),
+                format!("{output_indent}  {marker}({})", dur),
+                muted(),
             ));
         }
 
         // ── Error indicator ──
         if ctx.is_error {
             lines.push(Line::styled(
-                format!("{output_indent}{CONTINUATION_PREFIX}✗ failed"),
+                format!("{output_indent}  ✗ failed"),
                 Style::default().fg(Color::Red),
             ));
         }
@@ -467,36 +679,103 @@ impl Message {
                     for l in &preview_lines {
                         let style = diff_line_style(l);
                         lines.push(Line::styled(
-                            format!("{output_indent}{CONTINUATION_PREFIX}{}", l),
+                            format!("{output_indent}  {}", l),
                             style,
                         ));
                     }
                     if total > 5 {
                         lines.push(Line::styled(
                             format!(
-                                "{output_indent}{CONTINUATION_PREFIX}+ {} more lines (Ctrl+E to expand)",
+                                "{output_indent}  + {} more lines (Ctrl+E to expand)",
                                 total - 5
                             ),
-                            Style::default().fg(MUTED),
+                            muted(),
                         ));
                     }
                 } else {
                     let n = full.lines().count();
                     lines.push(Line::styled(
-                        format!("{output_indent}{CONTINUATION_PREFIX}+ {n} more lines (Ctrl+E to expand)"),
-                        Style::default().fg(MUTED),
+                        format!("{output_indent}  + {n} more lines (Ctrl+E to expand)"),
+                        muted(),
                     ));
                 }
             } else {
-                lines.push(Line::from(""));
-                for l in full.lines() {
-                    let style = diff_line_style(l);
-                    lines.push(Line::styled(
-                        format!("{output_indent}{CONTINUATION_PREFIX}{}", l),
-                        style,
-                    ));
+                let is_file_edit = matches!(
+                    ctx.name.to_lowercase().as_str(),
+                    "edit" | "write" | "multiedit" | "multi_edit"
+                );
+                if is_file_edit {
+                    // Structured diff with gutter + background colors.
+                    let border = "\u{2504}".repeat(50);
+                    lines.push(Line::styled(border.clone(), muted()));
+
+                    let mut old_line: u32 = 0;
+                    let mut new_line: u32 = 0;
+                    let mut in_hunk = false;
+                    let mut prev_line: Option<String> = None;
+
+                    for l in full.lines() {
+                        if l.starts_with("@@") {
+                            if let (Some(o), Some(n)) = (
+                                l.split('-').nth(1).and_then(|s| s.split(' ').next()),
+                                l.split('+').nth(1).and_then(|s| s.split(' ').next()),
+                            ) {
+                                old_line = o.split(',').next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                                new_line = n.split(',').next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                            }
+                            in_hunk = true;
+                            prev_line = None;
+                            lines.push(Line::styled(
+                                format!("{} \u{2026}", "\u{2504}".repeat(48)),
+                                muted(),
+                            ));
+                            lines.push(Line::styled(l.to_string(), Style::default().fg(Color::Magenta)));
+                            continue;
+                        }
+                        if l.starts_with("---") || l.starts_with("+++") {
+                            lines.push(Line::styled(l.to_string(), muted()));
+                            prev_line = None;
+                            continue;
+                        }
+                        if !in_hunk {
+                            lines.push(Line::styled(l.to_string(), muted()));
+                            continue;
+                        }
+
+                        let line_num = if l.starts_with('+') {
+                            let n = Some(new_line);
+                            new_line += 1;
+                            n
+                        } else if l.starts_with('-') {
+                            let n = Some(old_line);
+                            old_line += 1;
+                            n
+                        } else {
+                            let n = Some(new_line);
+                            old_line += 1;
+                            new_line += 1;
+                            n
+                        };
+
+                        let prev_ref = prev_line.as_deref();
+                        let (gutter, content_spans) = diff_gutter_line(l, line_num, prev_ref);
+                        let mut all_spans = vec![gutter];
+                        all_spans.extend(content_spans);
+                        lines.push(Line::from(all_spans));
+                        prev_line = Some(l.to_string());
+                    }
+                    lines.push(Line::styled(border, muted()));
+                } else {
+                    lines.push(blank_line());
+                    for l in full.lines() {
+                        let style = diff_line_style(l);
+                        lines.push(Line::styled(
+                            format!("{output_indent}  {}", l),
+                            style,
+                        ));
+                    }
+                    lines.push(blank_line());
                 }
-                lines.push(Line::from(""));
             }
         }
 
@@ -675,7 +954,7 @@ mod tests {
         let lines = msg.to_lines_with_context(false, None);
 
         assert_eq!(lines.len(), 2);
-        assert_eq!(line_text(&lines[0]), "\u{23FA} hello world");
+        assert_eq!(line_text(&lines[0]), "\u{25CF} hello world");
         assert_eq!(line_text(&lines[1]), "  next");
     }
 
@@ -718,5 +997,125 @@ mod tests {
         assert_eq!(lines.len(), 3);
         assert_eq!(line_text(&lines[1]), "  a");
         assert_eq!(line_text(&lines[2]), "  b");
+    }
+
+    #[test]
+    fn system_msg_with_markdown_is_rendered() {
+        let msg = Message::new(MessageContent::System(
+            "### Heading\n\n- list item\n\n| A | B |\n|---|---|".to_string(),
+        ));
+        let lines = msg.to_lines_with_context(false, None);
+        let text: String = lines.iter().flat_map(|l| l.spans.iter().map(|s| s.content.as_ref())).collect::<String>() + " ";
+        assert!(
+            text.contains("Heading") && !text.contains("###"),
+            "System markdown: '###' should be stripped, got: {text:?}"
+        );
+    }
+
+    #[test]
+    fn system_msg_plain_text_no_markdown_passthrough() {
+        let msg = Message::new(MessageContent::System("plain message".to_string()));
+        let lines = msg.to_lines_with_context(false, None);
+        assert!(!lines.is_empty());
+        let text: String = lines.iter().flat_map(|l| l.spans.iter().map(|s| s.content.as_ref())).collect();
+        assert_eq!(text, "plain message");
+    }
+
+    // ── Rendering verification ──
+
+    #[test]
+    fn verify_diff_gutter_format() {
+        let line = "+added line";
+        let (gutter, content) = diff_gutter_line(line, Some(5), None);
+        let gutter_text: String = gutter.content.to_string();
+        assert!(gutter_text.contains("+"), "gutter must have + marker");
+        // Content has green background
+        assert!(content.iter().any(|s| s.style.bg == Some(DIFF_ADDED_BG)));
+    }
+
+    #[test]
+    fn verify_diff_removed_line() {
+        let line = "-removed line";
+        let (gutter, content) = diff_gutter_line(line, Some(3), None);
+        let gutter_text: String = gutter.content.to_string();
+        assert!(gutter_text.contains("-"), "gutter must have - marker");
+        assert!(content.iter().any(|s| s.style.bg == Some(DIFF_REMOVED_BG)));
+    }
+
+    #[test]
+    fn verify_diff_context_no_bg() {
+        let line = " unchanged line";
+        let (_gutter, content) = diff_gutter_line(line, Some(10), None);
+        // Context lines have no background
+        assert!(content.iter().all(|s| s.style.bg.is_none()));
+    }
+
+    #[test]
+    fn render_dump_diff_and_agent() {
+        // Diff gutter dump
+        let diff = "--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,4 @@\n unchanged\n-removed line\n+added line\n unchanged2";
+        let mut old = 0u32; let mut new = 0u32;
+        eprintln!("\n═══ Diff Gutter 渲染输出 ═══");
+        for l in diff.lines() {
+            if l.starts_with("@@") { old = 1; new = 1; eprintln!("  [{l}]  ← magenta hunk header"); continue; }
+            if l.starts_with("---") || l.starts_with("+++") { eprintln!("  [{l}]  ← muted file header"); continue; }
+            let num = if l.starts_with('+') { let n = new; new += 1; Some(n) }
+                      else if l.starts_with('-') { let n = old; old += 1; Some(n) }
+                      else { old += 1; new += 1; Some(new-1) };
+            let (g, cs) = diff_gutter_line(l, num, None);
+            let gutter = g.content.to_string();
+            let content: String = cs.iter().map(|s| s.content.to_string()).collect();
+            let has_bg = cs.iter().any(|s| s.style.bg.is_some());
+            eprintln!("  gutter[{gutter}] content[{content}] bg={has_bg}");
+        }
+
+        // Agent progress dump
+        eprintln!("\n═══ Agent Progress 渲染输出 ═══");
+        let lines = render_agent_progress_line(
+            "code-reviewer", Color::Magenta, false, false, true, 5, 3200, "Working…".to_string(),
+        );
+        for (i, line) in lines.iter().enumerate() {
+            let parts: Vec<String> = line.spans.iter().map(|s| {
+                let fg = s.style.fg.map(|c| format!("fg={c:?}")).unwrap_or_default();
+                let bg = s.style.bg.map(|c| format!("bg={c:?}")).unwrap_or_default();
+                let b = if s.style.add_modifier.contains(Modifier::BOLD) { "B" } else { "" };
+                format!("[{}{}{}]{}", fg, bg, b, s.content)
+            }).collect();
+            eprintln!("  L{i}: {}", parts.join(""));
+        }
+    }
+
+    #[test]
+    fn verify_diff_line_style_colors() {
+        assert_eq!(diff_line_style("+added").fg, Some(Color::Green));
+        assert_eq!(diff_line_style("-removed").fg, Some(Color::Red));
+        assert_eq!(diff_line_style("@@ -1 +1 @@").fg, Some(Color::Magenta));
+        assert_eq!(diff_line_style("--- a/file").fg, Some(Color::Cyan));
+        assert_eq!(diff_line_style(" context").fg, Some(Color::Gray));
+    }
+
+    #[test]
+    fn verify_agent_progress_tree_chars() {
+        let lines = render_agent_progress_line(
+            "test-agent", Color::Cyan, true, false, true,
+            3, 1500, "Working\u{2026}".to_string(),
+        );
+        assert_eq!(lines.len(), 2); // main row + status sub-line
+        let main_text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        // Selected + last: uses ╘═ (U+2558 U+2550) double-line tree char
+        assert!(main_text.contains("\u{2558}\u{2550}"), "Selected tree char ╘═ missing");
+        assert!(main_text.contains("test-agent"), "Agent name missing");
+    }
+
+    #[test]
+    fn verify_agent_progress_badge_has_bg() {
+        let lines = render_agent_progress_line(
+            "agent", Color::Magenta, true, false, false,
+            0, 0, "Working\u{2026}".to_string(),
+        );
+        let badge_span = lines[0].spans.iter().find(|s| s.content.contains("agent"));
+        assert!(badge_span.is_some(), "Badge span missing");
+        assert_eq!(badge_span.unwrap().style.fg, Some(Color::Magenta));
+        assert!(badge_span.unwrap().style.add_modifier.contains(Modifier::BOLD));
     }
 }

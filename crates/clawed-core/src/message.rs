@@ -62,7 +62,12 @@ pub enum ContentBlock {
         is_error: bool,
     },
     #[serde(rename = "thinking")]
-    Thinking { thinking: String },
+    Thinking {
+        thinking: String,
+        #[serde(default)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
 }
 
 /// Content within a tool result — text or image.
@@ -191,11 +196,12 @@ mod tests {
     fn content_block_thinking_serde() {
         let block = ContentBlock::Thinking {
             thinking: "Let me think...".into(),
+            signature: None,
         };
         let json = serde_json::to_value(&block).unwrap();
         assert_eq!(json["type"], "thinking");
         let back: ContentBlock = serde_json::from_value(json).unwrap();
-        assert!(matches!(back, ContentBlock::Thinking { thinking } if thinking.contains("think")));
+        assert!(matches!(back, ContentBlock::Thinking { thinking, .. } if thinking.contains("think")));
     }
 
     #[test]

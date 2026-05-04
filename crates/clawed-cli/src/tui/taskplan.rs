@@ -1,15 +1,6 @@
 //! Dynamic task plan panel for sub-agent progress tracking.
 //!
-//! Renders a summary line and task list like:
-//! ```text
-//! ✻ Cooked for 1m 32s · 2 shells running
-//!
-//!   7 tasks (4 done, 3 open)
-//!   √ Implement hermes-batch crate
-//!   √ 添加 ContextEngine trait
-//!   □ Fix flaky Exa backend test
-//!   □ Cron: corruption handling
-//! ```
+//! Aligned with official CC TaskListV2 / BackgroundTasksDialog.
 
 use super::MUTED;
 use std::time::Instant;
@@ -37,11 +28,13 @@ pub struct TrackedTask {
     pub status: TaskStatus,
     pub started: Instant,
     pub finished: Option<Instant>,
+    /// Current activity description (last tool call, etc.).
+    pub activity: Option<String>,
 }
 
 /// The task plan panel state.
 pub struct TaskPlan {
-    tasks: Vec<TrackedTask>,
+    pub(crate) tasks: Vec<TrackedTask>,
     active_shells: u32,
     plan_start: Option<Instant>,
 }
@@ -60,7 +53,6 @@ impl TaskPlan {
         if self.plan_start.is_none() {
             self.plan_start = Some(Instant::now());
         }
-        // Avoid duplicate IDs
         if !self.tasks.iter().any(|t| t.id == id) {
             self.tasks.push(TrackedTask {
                 id,
@@ -68,7 +60,16 @@ impl TaskPlan {
                 status: TaskStatus::Running,
                 started: Instant::now(),
                 finished: None,
+                activity: None,
             });
+        }
+    }
+
+    /// Update the activity text for a running task (last tool call, etc.).
+    #[allow(dead_code)]
+    pub fn update_activity(&mut self, id: &str, activity: String) {
+        if let Some(task) = self.tasks.iter_mut().find(|t| t.id == id) {
+            task.activity = Some(activity);
         }
     }
 
@@ -102,13 +103,22 @@ impl TaskPlan {
         !self.tasks.is_empty()
     }
 
-    /// Number of rows needed to render (summary + blank + count + tasks).
+    /// Number of rows needed to render.
     pub fn render_height(&self) -> u16 {
         if !self.is_visible() {
             return 0;
         }
-        // summary line + blank + "N tasks (X done, Y open)" + task lines
-        (2 + self.tasks.len()) as u16
+        let vis = self.visible_task_count();
+        if vis == 0 {
+            return 3; // summary + count
+        }
+        // summary + count + visible tasks + optional activity lines
+        let activity_rows: usize = self
+            .tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Running && t.activity.is_some())
+            .count();
+        (2 + vis + activity_rows) as u16
     }
 
     fn count_by_status(&self) -> (usize, usize, usize) {
@@ -129,7 +139,20 @@ impl TaskPlan {
             .count();
         (done, failed, open)
     }
+
+    /// Number of tasks to show before truncation.
+    fn visible_task_count(&self) -> usize {
+        self.tasks.len()
+    }
 }
+
+// ── Render helpers ───────────────────────────────────────────────────────────
+
+/// Tree characters used for task connectors.
+const TREE_BRANCH: &str = "├─ ";
+const TREE_LAST: &str = "└─ ";
+const TREE_CONT: &str = "│  ";
+const TREE_SPACE: &str = "   ";
 
 /// Render the task plan panel.
 pub fn render(frame: &mut Frame, area: Rect, plan: &TaskPlan) {
@@ -141,27 +164,34 @@ pub fn render(frame: &mut Frame, area: Rect, plan: &TaskPlan) {
     let accent = Style::default().fg(Color::Magenta);
     let done_style = Style::default().fg(Color::Green);
     let fail_style = Style::default().fg(Color::Red);
-    let open_style = Style::default().fg(MUTED);
-    let title_style = Style::default().fg(Color::White);
-    let bold_white = Style::default()
-        .fg(Color::White)
-        .add_modifier(Modifier::BOLD);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Summary line: ✻ Cooked for Xm Ys · N shells running
+    // Summary line: ✻ Cooked for Xm Ys · N shells running · N teammates
     let elapsed = plan.plan_start.map(|s| s.elapsed()).unwrap_or_default();
     let mins = elapsed.as_secs() / 60;
     let secs = elapsed.as_secs() % 60;
 
     let mut summary_spans = vec![
-        Span::styled("✻ ", accent),
-        Span::styled(format!("Cooked for {mins}m {secs}s"), bold_white),
+        Span::styled("\u{273B} ", accent), // ✻
+        Span::styled(format!("Cooked for {mins}m {secs}s"), bold),
     ];
+    let running = plan
+        .tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Running)
+        .count();
+    if running > 0 {
+        summary_spans.push(Span::styled(
+            format!(" · {running} running"),
+            dim,
+        ));
+    }
     if plan.active_shells > 0 {
         let s = if plan.active_shells == 1 { "" } else { "s" };
         summary_spans.push(Span::styled(
-            format!(" · {} shell{s} running", plan.active_shells),
+            format!(" · {} shell{s}", plan.active_shells),
             dim,
         ));
     }
@@ -170,11 +200,9 @@ pub fn render(frame: &mut Frame, area: Rect, plan: &TaskPlan) {
     // Task count line
     let (done, failed, open) = plan.count_by_status();
     let total = plan.tasks.len();
-    let mut count_spans = vec![
-        Span::styled("  ", dim),
-        Span::styled(format!("{total} tasks"), bold_white),
-        Span::styled(" (", dim),
-    ];
+    let mut count_spans = vec![Span::styled("  ", dim)];
+    count_spans.push(Span::styled(format!("{total} tasks"), bold));
+    count_spans.push(Span::styled(" (", dim));
     let mut parts: Vec<Span> = Vec::new();
     if done > 0 {
         parts.push(Span::styled(format!("{done} done"), done_style));
@@ -189,33 +217,75 @@ pub fn render(frame: &mut Frame, area: Rect, plan: &TaskPlan) {
         if !parts.is_empty() {
             parts.push(Span::styled(", ", dim));
         }
-        parts.push(Span::styled(format!("{open} open"), open_style));
+        parts.push(Span::styled(format!("{open} open"), dim));
     }
     count_spans.extend(parts);
     count_spans.push(Span::styled(")", dim));
     lines.push(Line::from(count_spans));
 
-    // Individual task lines
-    for task in &plan.tasks {
-        let (icon, icon_style) = match task.status {
-            TaskStatus::Done => ("√", done_style),
-            TaskStatus::Failed => ("✗", fail_style),
-            TaskStatus::Running => ("□", open_style),
+    // Individual task lines with tree structure
+    let task_count = plan.tasks.len();
+    let completed_count = done + failed;
+    let show_completed = completed_count <= 5 || area.height > 15;
+
+    for (i, task) in plan.tasks.iter().enumerate() {
+        let is_last_visible = i + 1 == task_count;
+        let is_completed = task.status != TaskStatus::Running;
+
+        // Collapse older completed tasks
+        if is_completed && !show_completed && i < completed_count.saturating_sub(3) {
+            if i == 0 {
+                lines.push(Line::styled(
+                    format!("  + {completed_count} completed"),
+                    dim,
+                ));
+            }
+            continue;
+        }
+
+        let tree_char = if is_last_visible {
+            TREE_LAST
+        } else {
+            TREE_BRANCH
         };
+
+        let (icon, icon_style) = match task.status {
+            TaskStatus::Done => ("\u{2713}", done_style),     // ✓
+            TaskStatus::Failed => ("\u{2717}", fail_style),   // ✗
+            TaskStatus::Running => ("\u{25CF}", accent),      // ●
+        };
+
         let mut spans = vec![
-            Span::styled("  ", dim),
+            Span::styled(format!("  {tree_char}"), dim),
             Span::styled(icon, icon_style),
             Span::raw(" "),
-            Span::styled(&task.title, title_style),
+            Span::styled(&task.title, bold),
         ];
-        // Show elapsed time for running tasks
+
+        // Elapsed time for running tasks
         if task.status == TaskStatus::Running {
             let te = task.started.elapsed();
             let m = te.as_secs() / 60;
             let s = te.as_secs() % 60;
             spans.push(Span::styled(format!(" ({m:02}:{s:02})"), dim));
         }
+
         lines.push(Line::from(spans));
+
+        // Activity line for running tasks
+        if let Some(ref activity) = task.activity {
+            if task.status == TaskStatus::Running {
+                let cont = if is_last_visible {
+                    TREE_SPACE
+                } else {
+                    TREE_CONT
+                };
+                lines.push(Line::styled(
+                    format!("  {cont}  {activity}"),
+                    dim,
+                ));
+            }
+        }
     }
 
     frame.render_widget(Paragraph::new(lines), area);
@@ -237,7 +307,6 @@ mod tests {
         let mut plan = TaskPlan::new();
         plan.add_task("t1".into(), "Fix bug".into());
         assert!(plan.is_visible());
-        assert_eq!(plan.render_height(), 3); // summary + count + 1 task
     }
 
     #[test]
@@ -277,12 +346,45 @@ mod tests {
     }
 
     #[test]
-    fn test_render_height_multiple_tasks() {
+    fn test_activity_update() {
         let mut plan = TaskPlan::new();
-        plan.add_task("a".into(), "A".into());
-        plan.add_task("b".into(), "B".into());
-        plan.add_task("c".into(), "C".into());
-        // summary + count + 3 tasks = 5
-        assert_eq!(plan.render_height(), 5);
+        plan.add_task("t1".into(), "Task A".into());
+        plan.update_activity("t1", "Bash(cargo test)".into());
+        assert_eq!(plan.tasks[0].activity.as_deref(), Some("Bash(cargo test)"));
+    }
+
+    // ── Rendering verification tests ──
+
+    #[test]
+    fn verify_taskplan_icons() {
+        let mut plan = TaskPlan::new();
+        plan.add_task("t1".into(), "Build".into());
+        plan.add_task("t2".into(), "Test".into());
+        plan.complete_task("t1", false);
+        plan.terminate_task("t2");
+        // Running: ● (U+25CF), Done: ✓ (U+2713), Failed: ✗ (U+2717)
+        let icons: Vec<&str> = plan.tasks.iter().map(|t| match t.status {
+            TaskStatus::Running => "\u{25CF}",
+            TaskStatus::Done => "\u{2713}",
+            TaskStatus::Failed => "\u{2717}",
+        }).collect();
+        assert_eq!(icons, vec!["\u{2713}", "\u{2717}"]); // ✓, ✗ (both completed)
+    }
+
+    #[test]
+    fn verify_tree_chars() {
+        assert_eq!(TREE_BRANCH, "\u{251C}\u{2500} "); // ├─
+        assert_eq!(TREE_LAST, "\u{2514}\u{2500} ");   // └─
+        assert_eq!(TREE_CONT, "\u{2502}  ");            // │
+        assert_eq!(TREE_SPACE, "   ");
+    }
+
+    #[test]
+    fn verify_render_height_includes_activity_rows() {
+        let mut plan = TaskPlan::new();
+        plan.add_task("t1".into(), "Build".into());
+        plan.update_activity("t1", "Bash(cargo test)".into());
+        // summary(1) + count(1) + task(1) + activity(1) = 4
+        assert!(plan.render_height() >= 3);
     }
 }

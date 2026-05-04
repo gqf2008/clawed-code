@@ -60,11 +60,10 @@ pub fn check_path_safety(path: &Path) -> Option<String> {
                 let seg_lower = segment.to_lowercase();
                 if DANGEROUS_DIRECTORIES.contains(&seg_lower.as_str()) {
                     // Exception: .claude/worktrees/ is allowed
-                    if seg_lower == ".claude" {
-                        if is_claude_worktrees_path(path) {
+                    if seg_lower == ".claude"
+                        && is_claude_worktrees_path(path) {
                             continue;
                         }
-                    }
                     return Some(format!(
                         "Protected directory: {}/ — editing contents requires explicit approval",
                         segment

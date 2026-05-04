@@ -173,7 +173,7 @@ impl HookRegistry {
                                 );
                                 // 2xx → treat like exit 0, use body as stdout
                                 // 3xx/4xx/5xx → treat like non-zero exit
-                                let exit_code = if (200..300).contains(&status) { 0 } else { 1 };
+                                let exit_code = i32::from(!(200..300).contains(&status));
                                 interpret_output(event, exit_code, body)
                             }
                             Err(e) => {

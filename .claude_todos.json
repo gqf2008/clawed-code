@@ -1,7 +1,43 @@
 [
   {
-    "id": "review-sourcemap",
-    "content": "审查与 claude-code-sourcemap 的功能对齐状态，重点TUI部分",
+    "id": "explore-tui",
+    "content": "Explore TUI module structure and key files",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "id": "review-messages",
+    "content": "Review messages.rs (modified, uncommitted)",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "id": "review-mod",
+    "content": "Review mod.rs (modified, uncommitted)",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "id": "review-markdown",
+    "content": "Review markdown.rs and rendering logic",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "id": "review-themes",
+    "content": "Review theme/styling code",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "id": "review-input",
+    "content": "Review input handling and event loop",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "id": "summary",
+    "content": "Compile findings and recommendations",
     "status": "completed",
     "priority": "high"
   }

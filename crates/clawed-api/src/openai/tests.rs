@@ -731,7 +731,7 @@ fn from_openai_response_with_reasoning_content() {
     assert_eq!(resp.content.len(), 2);
     // Thinking block comes first
     match &resp.content[0] {
-        ResponseContentBlock::Thinking { thinking } => {
+        ResponseContentBlock::Thinking { thinking, .. } => {
             assert_eq!(thinking, "I need to calculate...");
         }
         _ => panic!("Expected Thinking block"),

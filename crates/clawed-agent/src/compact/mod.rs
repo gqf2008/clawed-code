@@ -284,7 +284,7 @@ fn messages_for_compact(messages: &[Message]) -> Vec<ApiMessage> {
                                 input: input.clone(),
                             })
                         }
-                        clawed_core::message::ContentBlock::Thinking { thinking } => {
+                        clawed_core::message::ContentBlock::Thinking { thinking, .. } => {
                             Some(ApiContentBlock::Text {
                                 text: format!("<thinking>{}</thinking>", thinking),
                                 cache_control: None,

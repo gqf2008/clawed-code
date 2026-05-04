@@ -474,6 +474,7 @@ mod tests {
         Message::Assistant(AssistantMessage {
             uuid: "a-think".into(),
             content: vec![ContentBlock::Thinking {
+                signature: None,
                 thinking: "let me think...".into(),
             }],
             stop_reason: None,
@@ -527,6 +528,7 @@ mod tests {
                 uuid: "a-mixed".into(),
                 content: vec![
                     ContentBlock::Thinking {
+                        signature: None,
                         thinking: "hmm".into(),
                     },
                     ContentBlock::Text {
@@ -713,6 +715,7 @@ mod tests {
                 uuid: "a1".into(),
                 content: vec![
                     ContentBlock::Thinking {
+                        signature: None,
                         thinking: "hmm".into(),
                     },
                     ContentBlock::Text {

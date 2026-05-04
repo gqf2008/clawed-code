@@ -34,10 +34,32 @@ pub struct ToolInfo {
     pub started: Instant,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum AgentState {
+    Active,
+    Idle,
+    Stopping,
+    AwaitingApproval,
+}
+
 pub struct AgentInfo {
     pub name: String,
     pub started: Instant,
-    /// Teammate color for terminal display.
+    #[allow(dead_code)]
+    pub state: AgentState,
+    /// Current activity description (last tool call, etc.).
+    pub activity: Option<String>,
+    /// Number of tool uses completed by this agent.
+    #[allow(dead_code)]
+    pub tool_count: u32,
+    /// Estimated token usage by this agent.
+    #[allow(dead_code)]
+    pub token_estimate: u64,
+    /// When the agent became idle (for "Idle for X" display).
+    #[allow(dead_code)]
+    pub idle_since: Option<Instant>,
+    /// Agent identity color (stable hash-based assignment).
     pub color: Color,
 }
 
@@ -264,7 +286,7 @@ fn stall_style(base: Style, intensity: f64) -> Style {
 
 /// Build the dynamic status spans (spinner, verb, tokens, tools, shells, agents).
 /// Returns an empty vec when there is nothing to show.
-pub fn build_spans(state: &TuiStatusState) -> Vec<Span<'static>> {
+pub fn build_spans(state: &TuiStatusState, max_width: u16) -> Vec<Span<'static>> {
     if !state.should_show() {
         return Vec::new();
     }
@@ -272,6 +294,12 @@ pub fn build_spans(state: &TuiStatusState) -> Vec<Span<'static>> {
     let dim = Style::default().fg(MUTED);
     let warn = Style::default().fg(Color::Yellow);
     let tool_style = Style::default().fg(Color::Blue);
+    let width = max_width as usize;
+    // Progressive width gating (CC behavior):
+    // < 50: spinner + verb only. >= 50: tokens. >= 70: thought. >= 90: elapsed + tools/shells/agents.
+    let show_tokens = width >= 50;
+    let show_thought = width >= 70;
+    let show_details = width >= 90;
 
     let elapsed = state.session_start.elapsed();
     let mins = elapsed.as_secs() / 60;
@@ -298,11 +326,15 @@ pub fn build_spans(state: &TuiStatusState) -> Vec<Span<'static>> {
         spans.push(Span::styled(mode, spinner_style));
         spans.push(Span::raw(" "));
 
-        // Label: verb or teammate count.
-        let agent_count = state.active_agents.len();
-        if agent_count > 0 {
-            // Leader shows teammate count instead of verb.
-            let label = format!("{} teammate{}", agent_count, if agent_count == 1 { "" } else { "s" });
+        // Label: verb or teammate summary.
+        if !state.active_agents.is_empty() {
+            let count = state.active_agents.len();
+            let label = if count == 1 {
+                let a = state.active_agents.values().next().unwrap();
+                format!("{} \u{00B7} {} running", a.name, count)
+            } else {
+                format!("{} teammates \u{00B7} {} running", count, count)
+            };
             spans.push(Span::styled(label, dim));
         } else {
             // Shimmer: sweep a highlight window across the verb.
@@ -328,47 +360,46 @@ pub fn build_spans(state: &TuiStatusState) -> Vec<Span<'static>> {
             }
         }
 
-        // Token counter (smooth increment).
-        if state.displayed_token_estimate > 0 {
+        // Token counter (>= 50 cols)
+        if show_tokens && state.displayed_token_estimate > 0 {
             spans.push(Span::styled(
-                format!("  ~{}", state.displayed_token_estimate),
+                format!(" \u{00B7} \u{2193} {} tokens", state.displayed_token_estimate),
                 dim,
             ));
         }
 
-        // "Thought for Ns" display.
-        if state.should_show_thought_for() {
+        // "Thought for Ns" (>= 70 cols)
+        if show_thought && state.should_show_thought_for() {
             spans.push(Span::styled(
-                format!("  {}", state.thought_for_text()),
+                format!(" \u{00B7} {}", state.thought_for_text()),
                 dim,
             ));
         }
     }
 
-    // Elapsed time.
-    spans.push(Span::raw("  "));
-    spans.push(Span::styled(format!("{mins:02}:{secs:02}"), dim));
-
-    let tool_count = state.active_tools.len();
-    if tool_count > 0 {
-        if let Some(tool) = state.active_tools.values().next() {
-            push_active_item(&mut spans, &tool.name, tool.started.elapsed(), tool_count, warn);
-        }
-    }
-
-    if state.active_shells > 0 {
-        let s = if state.active_shells == 1 { "" } else { "s" };
+    // Elapsed + details (>= 90 cols)
+    if show_details {
         spans.push(Span::raw("  "));
-        spans.push(Span::styled(
-            format!("{} shell{s}", state.active_shells),
-            tool_style,
-        ));
-    }
+        spans.push(Span::styled(format!("{mins:02}:{secs:02}"), dim));
 
-    let agent_count = state.active_agents.len();
-    if agent_count > 0 {
-        if let Some(agent) = state.active_agents.values().next() {
-            push_active_item(&mut spans, &agent.name, agent.started.elapsed(), agent_count, warn);
+        let tool_count = state.active_tools.len();
+        if tool_count > 0 {
+            if let Some(tool) = state.active_tools.values().next() {
+                push_active_item(&mut spans, &tool.name, tool.started.elapsed(), tool_count, warn);
+            }
+        }
+
+        if state.active_shells > 0 {
+            let s = if state.active_shells == 1 { "" } else { "s" };
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(format!("{} shell{s}", state.active_shells), tool_style));
+        }
+
+        let agent_count = state.active_agents.len();
+        if agent_count > 0 {
+            let names: Vec<&str> = state.active_agents.values().map(|a| a.name.as_str()).collect();
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(format!("{}: {}", agent_count, names.join(", ")), dim));
         }
     }
 
@@ -400,6 +431,7 @@ mod tests {
             ToolInfo {
                 name: "Bash".into(),
                 started: Instant::now(),
+                
             },
         );
         assert!(state.should_show());

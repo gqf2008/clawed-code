@@ -3,7 +3,7 @@
 //! The footer rows adapt to terminal width. Description, buttons, and hints may
 //! each take multiple wrapped rows on narrow terminals.
 
-use super::MUTED;
+use super::muted;
 use clawed_bus::events::{PermissionRequest, PermissionResponse, RiskLevel};
 use ratatui::{
     layout::Rect,
@@ -278,7 +278,7 @@ fn build_button(
             .bg(accent)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(MUTED)
+        muted()
     };
 
     let width = text.width();
@@ -293,7 +293,7 @@ fn build_detail_lines(perm: &PendingPermission) -> Vec<Line<'static>> {
         Span::raw("  "),
         Span::styled(
             "Input:",
-            Style::default().fg(MUTED).add_modifier(Modifier::BOLD),
+            muted().add_modifier(Modifier::BOLD),
         ),
     ]));
 
@@ -314,13 +314,13 @@ fn build_detail_lines(perm: &PendingPermission) -> Vec<Line<'static>> {
 fn build_hint_line() -> Line<'static> {
     Line::from(vec![
         Span::styled("Tab", Style::default().fg(Color::Cyan)),
-        Span::styled(": select  ", Style::default().fg(MUTED)),
+        Span::styled(": select  ", muted()),
         Span::styled("Shift+Tab", Style::default().fg(Color::Cyan)),
-        Span::styled(": prev  ", Style::default().fg(MUTED)),
+        Span::styled(": prev  ", muted()),
         Span::styled("Enter", Style::default().fg(Color::Cyan)),
-        Span::styled(": confirm  ", Style::default().fg(MUTED)),
+        Span::styled(": confirm  ", muted()),
         Span::styled("Esc", Style::default().fg(Color::Cyan)),
-        Span::styled(": deny", Style::default().fg(MUTED)),
+        Span::styled(": deny", muted()),
     ])
 }
 
