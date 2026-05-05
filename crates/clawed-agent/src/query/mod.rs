@@ -387,8 +387,13 @@ pub fn query_stream_with_injection(
                                     current_tool_input.clear();
                                     yield AgentEvent::ToolUseStart { id: id.clone(), name: name.clone() };
                                 }
-                                ResponseContentBlock::Thinking { thinking, .. } => {
+                                ResponseContentBlock::Thinking { thinking, signature } => {
                                     thinking_text = thinking.clone();
+                                    if thinking_signature.is_none() {
+                                        thinking_signature = signature
+                                            .clone()
+                                            .filter(|s| !s.is_empty());
+                                    }
                                     yield AgentEvent::ThinkingDelta(thinking.clone());
                                 }
                             }
@@ -406,7 +411,8 @@ pub fn query_stream_with_injection(
                                 yield AgentEvent::ThinkingDelta(thinking);
                             }
                             DeltaBlock::SignatureDelta { signature } => {
-                                thinking_signature = Some(signature.clone());
+                                thinking_signature = Some(signature.clone())
+                                    .filter(|s| !s.is_empty());
                             }
                         },
                         StreamEvent::ContentBlockStop { .. } => {

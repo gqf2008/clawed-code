@@ -501,12 +501,12 @@ fn synthesize_stream_events(response: MessagesResponse) -> Vec<StreamEvent> {
                 });
                 events.push(StreamEvent::ContentBlockStop { index: idx });
             }
-            ResponseContentBlock::Thinking { thinking, .. } => {
+            ResponseContentBlock::Thinking { thinking, signature } => {
                 events.push(StreamEvent::ContentBlockStart {
                     index: idx,
                     content_block: ResponseContentBlock::Thinking {
                         thinking: String::new(),
-                        signature: None,
+                        signature: signature.clone(),
                     },
                 });
                 events.push(StreamEvent::ContentBlockDelta {
@@ -515,6 +515,18 @@ fn synthesize_stream_events(response: MessagesResponse) -> Vec<StreamEvent> {
                         thinking: thinking.clone(),
                     },
                 });
+                // Synthesize signature_delta so the agent captures the signature
+                // (required by the API when thinking mode is enabled).
+                if let Some(sig) = signature {
+                    if !sig.is_empty() {
+                        events.push(StreamEvent::ContentBlockDelta {
+                            index: idx,
+                            delta: DeltaBlock::SignatureDelta {
+                                signature: sig.clone(),
+                            },
+                        });
+                    }
+                }
                 events.push(StreamEvent::ContentBlockStop { index: idx });
             }
         }
@@ -753,6 +765,7 @@ mod tests {
 
     #[test]
     fn synthesize_thinking_block() {
+        // Without signature
         let response = make_test_response(
             vec![ResponseContentBlock::Thinking {
                 thinking: "let me think...".into(),
@@ -761,6 +774,7 @@ mod tests {
             Some("end_turn".into()),
         );
         let events = synthesize_stream_events(response);
+        // MessageStart + Start + ThinkingDelta + Stop + MessageDelta = 5
         assert_eq!(events.len(), 5);
         match &events[2] {
             StreamEvent::ContentBlockDelta {
@@ -770,6 +784,40 @@ mod tests {
                 assert_eq!(thinking, "let me think...");
             }
             _ => panic!("expected ThinkingDelta"),
+        }
+    }
+
+    #[test]
+    fn synthesize_thinking_block_with_signature() {
+        let response = make_test_response(
+            vec![ResponseContentBlock::Thinking {
+                thinking: "let me think...".into(),
+                signature: Some("EqoBCkgI...".into()),
+            }],
+            Some("end_turn".into()),
+        );
+        let events = synthesize_stream_events(response);
+        // MessageStart + Start + ThinkingDelta + SignatureDelta + Stop + MessageDelta = 6
+        assert_eq!(events.len(), 6);
+        // Verify ContentBlockStart preserves signature
+        match &events[1] {
+            StreamEvent::ContentBlockStart {
+                content_block: ResponseContentBlock::Thinking { signature, .. },
+                ..
+            } => {
+                assert_eq!(signature.as_deref(), Some("EqoBCkgI..."));
+            }
+            _ => panic!("expected Thinking ContentBlockStart"),
+        }
+        // Verify SignatureDelta is synthesized
+        match &events[3] {
+            StreamEvent::ContentBlockDelta {
+                delta: DeltaBlock::SignatureDelta { signature },
+                ..
+            } => {
+                assert_eq!(signature, "EqoBCkgI...");
+            }
+            _ => panic!("expected SignatureDelta"),
         }
     }
 

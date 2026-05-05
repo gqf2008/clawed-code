@@ -202,16 +202,23 @@ pub(super) fn messages_to_api(
     skip_cache: bool,
     has_thinking: bool,
 ) -> Vec<ApiMessage> {
+    let to_api_content = |content: &[ContentBlock]| {
+        content
+            .iter()
+            .map(|b| block_to_api(b, has_thinking))
+            .filter(|b| !matches!(b, ApiContentBlock::Text { text, .. } if text.is_empty()))
+            .collect()
+    };
     let mut api_msgs: Vec<ApiMessage> = messages
         .iter()
         .filter_map(|msg| match msg {
             Message::User(u) => Some(ApiMessage {
                 role: "user".into(),
-                content: u.content.iter().map(|b| block_to_api(b, has_thinking)).collect(),
+                content: to_api_content(&u.content),
             }),
             Message::Assistant(a) => Some(ApiMessage {
                 role: "assistant".into(),
-                content: a.content.iter().map(|b| block_to_api(b, has_thinking)).collect(),
+                content: to_api_content(&a.content),
             }),
             Message::System(_) => None,
         })
@@ -276,11 +283,14 @@ pub(super) fn block_to_api(block: &ContentBlock, has_thinking: bool) -> ApiConte
             cache_control: None,
         },
         ContentBlock::Thinking { thinking, signature } => {
-            if has_thinking {
+            if has_thinking && signature.as_deref().is_some_and(|s| !s.is_empty()) {
                 ApiContentBlock::Thinking {
                     thinking: thinking.clone(),
                     signature: signature.clone(),
                 }
+            } else if has_thinking {
+                // Drop thinking blocks without valid signature — API requires it
+                ApiContentBlock::Text { text: String::new(), cache_control: None }
             } else {
                 ApiContentBlock::Text {
                     text: format!("<thinking>{}</thinking>", thinking),

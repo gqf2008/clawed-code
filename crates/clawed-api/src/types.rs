@@ -525,6 +525,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn stream_event_signature_delta() {
+        let json = json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": { "type": "signature_delta", "signature": "EqoBCkgI..." }
+        });
+        let event: StreamEvent = serde_json::from_value(json).unwrap();
+        match event {
+            StreamEvent::ContentBlockDelta { index, delta } => {
+                assert_eq!(index, 0);
+                match delta {
+                    DeltaBlock::SignatureDelta { signature } => {
+                        assert_eq!(signature, "EqoBCkgI...");
+                    }
+                    _ => panic!("Expected SignatureDelta"),
+                }
+            }
+            _ => panic!("Expected ContentBlockDelta"),
+        }
+    }
+
     // ── ApiUsage ────────────────────────────────────────────────────────
 
     #[test]
