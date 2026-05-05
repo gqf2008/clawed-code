@@ -321,6 +321,16 @@ struct FooterPicker {
     scroll_offset: usize,
 }
 
+/// Search state for inline message search (Ctrl+F).
+#[derive(Debug)]
+struct SearchState {
+    query: String,
+    cursor_offset: usize,
+    /// (line_index_in_cached_lines, col_start) for each match.
+    matches: Vec<(usize, usize)>,
+    current_match: usize,
+}
+
 enum FooterPickerAction {
     Consumed,
     Dismissed,
@@ -650,6 +660,8 @@ struct App {
     task_list: tasklist::TaskListState,
     permission: Option<PendingPermission>,
     overlay: Option<Overlay>,
+    /// Inline message search state (Ctrl+F).
+    search_state: Option<SearchState>,
     bottom_bar_hidden: bool,
     running: bool,
     /// Set to true when the terminal needs a full clear before the next draw.
@@ -760,6 +772,7 @@ impl App {
             task_list: tasklist::TaskListState::new(),
             permission: None,
             overlay: None,
+            search_state: None,
             bottom_bar_hidden: false,
             running: true,
             needs_full_clear: false,
@@ -994,6 +1007,72 @@ impl App {
         self.cached_visible_lines = lines;
         self.cached_visible_lines_dirty = false;
         self.cached_visible_line_count = None;
+        self.refresh_search_matches();
+        self.apply_search_highlight();
+    }
+
+    // ── Search helpers ──────────────────────────────────────────────────
+
+    /// Recompute match positions from the current query against cached lines.
+    fn refresh_search_matches(&mut self) {
+        let Some(search) = self.search_state.as_mut() else {
+            return;
+        };
+        search.matches.clear();
+        search.current_match = 0;
+        if search.query.is_empty() {
+            return;
+        }
+        let q_lower = search.query.to_lowercase();
+        for (line_idx, line) in self.cached_visible_lines.iter().enumerate() {
+            let text: String = line
+                .spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect();
+            if text.to_lowercase().contains(&q_lower) {
+                search.matches.push((line_idx, 0));
+            }
+        }
+    }
+
+    /// Apply reverse-video styling to cached lines that match the search query.
+    fn apply_search_highlight(&mut self) {
+        let Some(search) = self.search_state.as_ref() else {
+            return;
+        };
+        if search.matches.is_empty() {
+            return;
+        }
+        for &(line_idx, _) in &search.matches {
+            if let Some(line) = self.cached_visible_lines.get_mut(line_idx) {
+                for span in line.spans.iter_mut() {
+                    span.style = span.style.add_modifier(Modifier::REVERSED);
+                }
+            }
+        }
+    }
+
+    /// Scroll the message viewport so the match at `line_idx` is roughly centered.
+    fn scroll_to_match(&mut self, line_idx: usize) {
+        self.auto_scroll = false;
+        let approx_viewport = (self.term_height.saturating_sub(8)).max(5) as usize;
+        let total_lines = self.cached_visible_lines.len().max(1);
+        if total_lines <= approx_viewport {
+            self.scroll_offset = 0;
+            self.request_redraw();
+            return;
+        }
+        let max_scroll = total_lines - approx_viewport;
+        let target = line_idx.saturating_sub(approx_viewport / 2);
+        self.scroll_offset = max_scroll.saturating_sub(target);
+        self.request_redraw();
+    }
+
+    fn clear_search(&mut self) {
+        if self.search_state.take().is_some() {
+            self.invalidate_visible_lines();
+        }
     }
 
     /// Returns true when two consecutive messages should be visually separated
@@ -1990,7 +2069,8 @@ fn render(frame: &mut Frame, app: &mut App) {
         app.queued_inputs.len().min(5) as u16
     };
 
-    let input_sep_rows = 0;
+    let search_rows =
+        if has_permission { 0 } else { u16::from(app.search_state.is_some()) };
 
     let tip_rows = if has_permission { 0 } else { u16::from(app.status.has_tip()) };
 
@@ -2007,7 +2087,7 @@ fn render(frame: &mut Frame, app: &mut App) {
         Constraint::Length(1 + tip_rows),          // info line + optional tip
         Constraint::Length(queue_rows),            // queue items (0 or n)
         Constraint::Length(suggestion_rows),       // context suggestion overlay
-        Constraint::Length(input_sep_rows),        // input separator (always 1, except perm)
+        Constraint::Length(search_rows),           // search box (0 or 1)
         Constraint::Length(footer_rows),           // input/permission footer
     ];
 
@@ -2018,7 +2098,7 @@ fn render(frame: &mut Frame, app: &mut App) {
     let sep_area = chunks[3];
     let queue_area = chunks[4];
     let suggestion_area = chunks[5];
-    let _input_sep_area = chunks[6];
+    let search_area = chunks[6];
     let footer_area = chunks[7];
 
     // Teammate view header: fixed 1 row above messages when viewing a teammate.
@@ -2046,6 +2126,10 @@ fn render(frame: &mut Frame, app: &mut App) {
     }
 
     render_separator(frame, sep_area, app.scroll_offset, app);
+
+    if search_rows > 0 {
+        render_search_box(frame, search_area, app);
+    }
 
     if queue_rows > 0 {
         render_queue_banner(frame, queue_area, &app.queued_inputs);
@@ -2539,6 +2623,63 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
             tip_area,
         );
     }
+}
+
+/// Render a single-line search box showing the query and match count.
+fn render_search_box(frame: &mut Frame, area: Rect, app: &App) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let Some(search) = app.search_state.as_ref() else {
+        return;
+    };
+    let dim = Style::default().fg(MUTED);
+    let active = Style::default().fg(Color::White);
+    let count_style = Style::default().fg(Color::Yellow);
+
+    let prefix = "\u{2305} "; // ⌕
+    let prefix_w = prefix.width();
+
+    let count_text = if search.matches.is_empty() {
+        "no matches".to_string()
+    } else {
+        format!("{}/{}", search.current_match + 1, search.matches.len())
+    };
+
+    let available = area.width.saturating_sub(prefix_w as u16 + 2) as usize; // 2 for padding
+    let query_w = search.query.width();
+    let count_w = count_text.width();
+
+    let mut spans: Vec<Span> = Vec::new();
+    spans.push(Span::styled(prefix.to_string(), dim));
+
+    if query_w + count_w + 2 <= available {
+        spans.push(Span::styled(search.query.clone(), active));
+        let padding = " ".repeat(available.saturating_sub(query_w + count_w));
+        if !padding.is_empty() {
+            spans.push(Span::raw(padding));
+        }
+        spans.push(Span::styled(count_text, count_style));
+    } else {
+        // Truncate query to fit count
+        let max_query = available.saturating_sub(count_w + 2);
+        let mut truncated = String::new();
+        let mut w = 0usize;
+        for ch in search.query.chars() {
+            let cw = ch.width().unwrap_or(0);
+            if w + cw + 1 > max_query {
+                truncated.push('\u{2026}');
+                break;
+            }
+            truncated.push(ch);
+            w += cw;
+        }
+        spans.push(Span::styled(truncated, active));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(count_text, count_style));
+    }
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 /// Pre-computed 5-segment unicode context bar (0–5 filled blocks).
@@ -3342,7 +3483,156 @@ pub async fn run_tui(
                             }
                             continue;
                         }
+                        (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
+                            if app.footer_picker.is_none() && app.overlay.is_none() {
+                                app.set_footer_picker(build_model_picker(&app.model));
+                            }
+                            continue;
+                        }
+                        (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
+                            if app.search_state.is_none()
+                                && app.footer_picker.is_none()
+                                && app.overlay.is_none()
+                            {
+                                app.search_state = Some(SearchState {
+                                    query: String::new(),
+                                    cursor_offset: 0,
+                                    matches: Vec::new(),
+                                    current_match: 0,
+                                });
+                                app.invalidate_visible_lines();
+                            }
+                            continue;
+                        }
                         _ => {}
+                    }
+
+                    // Search mode: intercept all keys except Ctrl+C.
+                    if let Some(ref mut search) = app.search_state {
+                        match (key.code, key.modifiers) {
+                            (KeyCode::Esc, _) => {
+                                app.clear_search();
+                                continue;
+                            }
+                            (KeyCode::Enter, _) => {
+                                if !search.matches.is_empty() {
+                                    let (line_idx, _) = search.matches[search.current_match];
+                                    app.scroll_to_match(line_idx);
+                                }
+                                app.clear_search();
+                                continue;
+                            }
+                            (KeyCode::Up, _) => {
+                                if !search.matches.is_empty() {
+                                    search.current_match =
+                                        search.current_match.saturating_sub(1);
+                                    let (line_idx, _) = search.matches[search.current_match];
+                                    app.scroll_to_match(line_idx);
+                                }
+                                app.request_redraw();
+                                continue;
+                            }
+                            (KeyCode::Down, _) => {
+                                if !search.matches.is_empty()
+                                    && search.current_match + 1 < search.matches.len()
+                                {
+                                    search.current_match += 1;
+                                    let (line_idx, _) = search.matches[search.current_match];
+                                    app.scroll_to_match(line_idx);
+                                }
+                                app.request_redraw();
+                                continue;
+                            }
+                            (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+                                let pos = search.cursor_offset;
+                                search.query.insert(pos, c);
+                                search.cursor_offset += c.len_utf8();
+                                app.invalidate_visible_lines();
+                                continue;
+                            }
+                            (KeyCode::Backspace, KeyModifiers::NONE) => {
+                                if search.cursor_offset > 0 {
+                                    let pos = search.cursor_offset;
+                                    let prev_char = search.query[..pos]
+                                        .chars()
+                                        .next_back()
+                                        .map(char::len_utf8)
+                                        .unwrap_or(1);
+                                    search.query.drain((pos - prev_char)..pos);
+                                    search.cursor_offset -= prev_char;
+                                    app.invalidate_visible_lines();
+                                }
+                                continue;
+                            }
+                            (KeyCode::Delete, KeyModifiers::NONE) => {
+                                if search.cursor_offset < search.query.len() {
+                                    let pos = search.cursor_offset;
+                                    let next_char = search.query[pos..]
+                                        .chars()
+                                        .next()
+                                        .map(char::len_utf8)
+                                        .unwrap_or(1);
+                                    search.query.drain(pos..(pos + next_char));
+                                    app.invalidate_visible_lines();
+                                }
+                                continue;
+                            }
+                            (KeyCode::Left, KeyModifiers::NONE) => {
+                                let pos = search.cursor_offset;
+                                search.cursor_offset = search.query[..pos]
+                                    .chars()
+                                    .next_back()
+                                    .map(|c| pos - c.len_utf8())
+                                    .unwrap_or(0);
+                                app.request_redraw();
+                                continue;
+                            }
+                            (KeyCode::Right, KeyModifiers::NONE) => {
+                                let pos = search.cursor_offset;
+                                search.cursor_offset = search.query[pos..]
+                                    .chars()
+                                    .next()
+                                    .map(|c| pos + c.len_utf8())
+                                    .unwrap_or(search.query.len());
+                                app.request_redraw();
+                                continue;
+                            }
+                            (KeyCode::Home, KeyModifiers::NONE) => {
+                                search.cursor_offset = 0;
+                                app.request_redraw();
+                                continue;
+                            }
+                            (KeyCode::End, KeyModifiers::NONE) => {
+                                search.cursor_offset = search.query.len();
+                                app.request_redraw();
+                                continue;
+                            }
+                            // Ctrl+W: delete word backward
+                            (KeyCode::Char('w'), KeyModifiers::CONTROL) => {
+                                let pos = search.cursor_offset;
+                                let before = &search.query[..pos];
+                                let new_start = before
+                                    .trim_end()
+                                    .rfind(char::is_whitespace)
+                                    .map(|i| i + 1)
+                                    .unwrap_or(0);
+                                search.query.drain(new_start..pos);
+                                search.cursor_offset = new_start;
+                                app.invalidate_visible_lines();
+                                continue;
+                            }
+                            // Ctrl+U: clear query
+                            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                                search.query.clear();
+                                search.cursor_offset = 0;
+                                app.invalidate_visible_lines();
+                                continue;
+                            }
+                            _ => {
+                                app.request_redraw();
+                                continue;
+                            }
+                        }
                     }
 
                     if app.footer_picker.is_some() {
@@ -8000,8 +8290,7 @@ mod tests {
                 color: Color::Cyan,
             });
             app.status.is_generating = true; app.status.spinner_frame = 3;
-            app.#[allow(dead_code)]
-    selected_agent_index = Some(0);
+            app.selected_agent_index = Some(0);
         });
 
         eprintln!("Delivery screenshots: {}/", dir);

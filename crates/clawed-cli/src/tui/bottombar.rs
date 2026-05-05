@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use unicode_width::UnicodeWidthStr;
 
 /// Single-line status bar shown at the bottom of the TUI.
-
+///
 /// Render agent pills (aligned with CC BackgroundTaskStatus).
 /// Horizontal scrollable pills showing @agentName with status color.
 #[allow(dead_code)]
@@ -89,7 +89,9 @@ pub fn render(frame: &mut Frame, area: Rect, is_generating: bool, permission_mod
             left_spans.push(Span::styled(" (shift+tab) · ", dim));
         }
         left_spans.push(Span::styled("ctrl+t", key_style));
-        left_spans.push(Span::styled(" to hide tasks", dim));
+        left_spans.push(Span::styled(" to hide tasks  ", dim));
+        left_spans.push(Span::styled("ctrl+p", key_style));
+        left_spans.push(Span::styled(" model", dim));
     }
 
     let left_width = left_spans.iter().map(|s| s.content.width()).sum::<usize>() as u16;

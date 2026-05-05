@@ -572,6 +572,7 @@ pub fn build_status_overlay(
 
 /// Build a teammate detail overlay (aligned with CC InProcessTeammateDetailDialog).
 #[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
 pub fn build_teammate_detail_overlay(
     agent_name: String,
     agent_color: Color,
