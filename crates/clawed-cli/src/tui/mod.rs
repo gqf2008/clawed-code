@@ -29,6 +29,7 @@ pub(crate) mod verbs;
 
 pub use input::InputWidget;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -207,58 +208,62 @@ fn parse_inline_spans(line: &str) -> Vec<Span<'static>> {
 }
 
 /// Map raw tool names to user-facing display names (CC-aligned).
-/// Uses byte-level comparison to avoid allocation on the render path.
-pub(super) fn user_facing_tool_name(raw: &str) -> &str {
+/// Uses byte-level comparison; returns `Cow::Borrowed` for static names
+/// and `Cow::Owned` only for dynamic `mcp__*` or unknown names.
+pub(super) fn user_facing_tool_name(raw: &str) -> Cow<'static, str> {
     match raw.as_bytes() {
-        b"bash" | b"Bash" | b"shell" | b"Shell" => "Bash",
-        b"read" | b"Read" | b"read_file" | b"ReadFile" => "Read",
-        b"write" | b"Write" | b"write_file" | b"WriteFile" => "Write",
-        b"edit" | b"Edit" | b"multi_edit" | b"MultiEdit" => "Edit",
-        b"glob" | b"Glob" => "Glob",
-        b"grep" | b"Grep" => "Grep",
-        b"ls" | b"LS" | b"Ls" => "LS",
-        b"web_search" | b"WebSearch" | b"websearch" | b"Web_Search" => "Web Search",
-        b"web_fetch" | b"WebFetch" | b"webfetch" | b"Web_Fetch" => "Web Fetch",
-        b"task" | b"Task" | b"task_create" | b"TaskCreate" => "Task",
-        b"agent" | b"Agent" => "Agent",
+        b"bash" | b"Bash" | b"shell" | b"Shell" => Cow::Borrowed("Bash"),
+        b"read" | b"Read" | b"read_file" | b"ReadFile" => Cow::Borrowed("Read"),
+        b"write" | b"Write" | b"write_file" | b"WriteFile" => Cow::Borrowed("Write"),
+        b"edit" | b"Edit" | b"multi_edit" | b"MultiEdit" => Cow::Borrowed("Edit"),
+        b"glob" | b"Glob" => Cow::Borrowed("Glob"),
+        b"grep" | b"Grep" => Cow::Borrowed("Grep"),
+        b"ls" | b"LS" | b"Ls" => Cow::Borrowed("LS"),
+        b"web_search" | b"WebSearch" | b"websearch" | b"Web_Search" => {
+            Cow::Borrowed("Web Search")
+        }
+        b"web_fetch" | b"WebFetch" | b"webfetch" | b"Web_Fetch" => {
+            Cow::Borrowed("Web Fetch")
+        }
+        b"task" | b"Task" | b"task_create" | b"TaskCreate" => Cow::Borrowed("Task"),
+        b"agent" | b"Agent" => Cow::Borrowed("Agent"),
         s if s.starts_with(b"mcp__") => {
             // Format mcp__server__tool as "server › tool"
             let after_prefix = &raw[5..];
             if let Some(pos) = after_prefix.find("__") {
                 let server = &after_prefix[..pos];
                 let tool = &after_prefix[pos + 2..];
-                // Return a static string: we leak a small bounded string here.
-                // This is acceptable because tool names are finite and bounded.
-                let formatted = format!("{} › {}", server, tool);
-                Box::leak(formatted.into_boxed_str())
+                Cow::Owned(format!("{} › {}", server, tool))
             } else {
-                after_prefix
+                Cow::Owned(after_prefix.to_string())
             }
         }
-        _ => raw,
+        _ => Cow::Owned(raw.to_string()),
     }
 }
 
 fn extract_tool_input_display(tool_name: &str, input: &serde_json::Value) -> Option<String> {
-    match tool_name.to_lowercase().as_str() {
-        "bash" | "shell" => input.get("command").and_then(|v| v.as_str()).map(String::from),
+    let lower = tool_name.to_lowercase();
+    let get_str = |key: &str| input.get(key).and_then(|v| v.as_str()).map(String::from);
+    match lower.as_str() {
+        "bash" | "shell" => get_str("command"),
         "read" | "read_file" | "write" | "write_file" | "edit" | "multi_edit" => {
-            input.get("file_path").and_then(|v| v.as_str()).map(String::from)
+            get_str("file_path")
         }
-        "web_search" | "websearch" => input.get("query").and_then(|v| v.as_str()).map(String::from),
-        "web_fetch" | "webfetch" => input.get("url").and_then(|v| v.as_str()).map(String::from),
-        "ls" => input.get("path").and_then(|v| v.as_str()).map(String::from),
-        "glob" => input.get("pattern").and_then(|v| v.as_str()).map(String::from),
-        "grep" => input.get("pattern").and_then(|v| v.as_str()).map(String::from),
-        "agent" => input.get("agent_type").and_then(|v| v.as_str()).map(String::from),
-        "task_create" => input.get("subject").and_then(|v| v.as_str()).map(String::from),
+        "web_search" | "websearch" => get_str("query"),
+        "web_fetch" | "webfetch" => get_str("url"),
+        "ls" => get_str("path"),
+        "glob" => get_str("pattern"),
+        "grep" => get_str("pattern"),
+        "agent" => get_str("agent_type"),
+        "task_create" => get_str("subject"),
         "notebookedit" | "notebook_edit" => {
             let path = input.get("notebook_path").and_then(|v| v.as_str())?;
             let cell = input.get("cell_number").and_then(|v| v.as_u64()).unwrap_or(0);
             let mode = input.get("edit_mode").and_then(|v| v.as_str()).unwrap_or("replace");
             Some(format!("{} cell [{}] {}", path, cell, mode))
         }
-        _ if tool_name.to_lowercase().starts_with("mcp__") => {
+        _ if lower.starts_with("mcp__") => {
             // For MCP tools, show the first meaningful string param as input hint
             input.as_object().and_then(|obj| {
                 obj.iter().find_map(|(k, v)| {
@@ -275,8 +280,9 @@ fn extract_tool_input_display(tool_name: &str, input: &serde_json::Value) -> Opt
 }
 
 pub(crate) fn is_shell_tool(tool_name: &str) -> bool {
-    let lower = tool_name.to_ascii_lowercase();
-    lower.contains("bash") || lower.contains("shell")
+    let b = tool_name.as_bytes();
+    b.windows(4).any(|w| w.eq_ignore_ascii_case(b"bash"))
+        || b.windows(5).any(|w| w.eq_ignore_ascii_case(b"shell"))
 }
 
 fn should_clear_message_area(previous_total_visual: Option<usize>, total_visual: usize) -> bool {
@@ -772,25 +778,6 @@ struct App {
     bash_mode: bash_mode::BashModeState,
     /// Latest progress text per active agent, rendered ephemerally (not in message history).
     agent_progress: HashMap<String, String>,
-    /// Bridge gateway status (platforms, sessions, adapters).
-    bridge_status: Option<BridgeStatusInfo>,
-    /// Teleport / CCR remote session status.
-    teleport_status: Option<TeleportStatusInfo>,
-}
-
-/// Bridge gateway status for TUI display.
-#[derive(Debug, Clone)]
-struct BridgeStatusInfo {
-    platforms: Vec<String>,
-    session_count: usize,
-    adapter_count: usize,
-}
-
-/// Teleport / CCR status for TUI display.
-#[derive(Debug, Clone)]
-struct TeleportStatusInfo {
-    remote_active: bool,
-    environment_name: Option<String>,
 }
 
 /// A single context suggestion (file, MCP resource, or agent).
@@ -874,8 +861,6 @@ impl App {
             teammate_selection: None,
             bash_mode: bash_mode::BashModeState::new(),
             agent_progress: HashMap::new(),
-            bridge_status: None,
-            teleport_status: None,
         }
     }
 
@@ -1924,13 +1909,9 @@ impl App {
                 {
                     return None;
                 }
-                self.bridge_status = Some(BridgeStatusInfo {
-                    platforms: platforms.clone(),
-                    session_count,
-                    adapter_count,
-                });
                 self.status.bridge_platforms = platforms.clone();
                 self.status.bridge_sessions = session_count;
+                self.status.bridge_adapters = adapter_count;
                 self.request_redraw();
             }
             AgentNotification::TeleportStatus {
@@ -1942,10 +1923,6 @@ impl App {
                 {
                     return None;
                 }
-                self.teleport_status = Some(TeleportStatusInfo {
-                    remote_active,
-                    environment_name: environment_name.clone(),
-                });
                 self.status.teleport_remote = remote_active;
                 self.status.teleport_env = environment_name.clone();
                 self.request_redraw();
@@ -2114,18 +2091,14 @@ impl App {
                 self.pending_command = Some(result);
             }
             crate::commands::CommandResult::Bridge => {
-                let text = if let Some(ref status) = self.bridge_status {
-                    let platforms = if status.platforms.is_empty() {
-                        "none".to_string()
-                    } else {
-                        status.platforms.join(", ")
-                    };
+                let text = if self.status.bridge_platforms.is_empty() {
+                    "Bridge Gateway\n  Status:      Not running\n  \n  The bridge connects this session to external platforms\n  (Lark, Telegram, Slack). Start with bridge config.".to_string()
+                } else {
+                    let platforms = self.status.bridge_platforms.join(", ");
                     format!(
                         "Bridge Gateway\n  Platforms:   {platforms}\n  Sessions:    {}\n  Adapters:    {}",
-                        status.session_count, status.adapter_count
+                        self.status.bridge_sessions, self.status.bridge_adapters
                     )
-                } else {
-                    "Bridge Gateway\n  Status:      Not running\n  \n  The bridge connects this session to external platforms\n  (Lark, Telegram, Slack). Start with bridge config.".to_string()
                 };
                 self.overlay = Some(overlay::build_info_overlay("Bridge Status", &text));
                 self.request_redraw();
@@ -2133,21 +2106,15 @@ impl App {
             crate::commands::CommandResult::Teleport => {
                 let remote_env =
                     std::env::var("CLAUDE_CODE_REMOTE").unwrap_or_else(|_| "not set".to_string());
-                let text = if let Some(ref status) = self.teleport_status {
-                    let env = status.environment_name.as_deref().unwrap_or("unknown");
-                    let state = if status.remote_active {
-                        format!("Connected ({env})")
-                    } else {
-                        "Not connected".to_string()
-                    };
-                    format!(
-                        "Teleport / CCR\n  Status:      {state}\n  Environment: {env}\n  \n  CLAUDE_CODE_REMOTE: {remote_env}"
-                    )
+                let env = self.status.teleport_env.as_deref().unwrap_or("unknown");
+                let state = if self.status.teleport_remote {
+                    format!("Connected ({env})")
                 } else {
-                    format!(
-                        "Teleport / CCR\n  Status:      Not connected\n  \n  CLAUDE_CODE_REMOTE: {remote_env}\n  \n  Teleport manages remote Claude Code sessions.\n  Set CLAUDE_CODE_REMOTE to enable."
-                    )
+                    "Not connected".to_string()
                 };
+                let text = format!(
+                    "Teleport / CCR\n  Status:      {state}\n  Environment: {env}\n  \n  CLAUDE_CODE_REMOTE: {remote_env}"
+                );
                 self.overlay = Some(overlay::build_info_overlay("Teleport Status", &text));
                 self.request_redraw();
             }

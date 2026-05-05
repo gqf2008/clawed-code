@@ -117,23 +117,18 @@ pub fn render(frame: &mut Frame, area: Rect, state: &BashModeState) {
     lines.push(Line::styled(border.clone(), dim));
 
     // Command line: "▸ bash (cargo test)"
-    if let Some(ref cmd) = state.command {
-        let elapsed = state
-            .started
-            .map(|s| s.elapsed().as_secs())
-            .unwrap_or(0);
-        let elapsed_str = if elapsed >= 60 {
-            format!("{}m", elapsed / 60)
-        } else {
-            format!("{elapsed}s")
-        };
-        lines.push(Line::from(vec![
-            Span::styled("\u{25B8} ", dim),
-            Span::styled("bash ", cmd_style),
-            Span::styled(format!("({cmd})"), dim),
-            Span::styled(format!("  \u{00B7} {elapsed_str}"), dim),
-        ]));
-    }
+    let elapsed = state
+        .started
+        .map(|s| s.elapsed().as_secs())
+        .unwrap_or(0);
+    let elapsed_str = super::overlay::format_elapsed(elapsed);
+    let cmd = state.command.as_ref().expect("render returns early when command is None");
+    lines.push(Line::from(vec![
+        Span::styled("\u{25B8} ", dim),
+        Span::styled("bash ", cmd_style),
+        Span::styled(format!("({cmd})"), dim),
+        Span::styled(format!("  \u{00B7} {elapsed_str}"), dim),
+    ]));
 
     // Output lines
     if state.output_lines.is_empty() {

@@ -595,7 +595,7 @@ pub fn plain_text(&self) -> String {
         ));
         let display_name = super::user_facing_tool_name(ctx.name);
         header_spans.push(Span::styled(
-            display_name.to_string(),
+            display_name,
             Style::default().add_modifier(Modifier::BOLD),
         ));
         if let Some(cmd) = ctx.input {

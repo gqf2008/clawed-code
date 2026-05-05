@@ -118,6 +118,8 @@ pub struct TuiStatusState {
     pub bridge_platforms: Vec<String>,
     /// Bridge active session count.
     pub bridge_sessions: usize,
+    /// Bridge adapter count.
+    pub bridge_adapters: usize,
     /// Teleport / CCR remote active flag.
     pub teleport_remote: bool,
     /// Teleport environment name (if connected).
@@ -150,6 +152,7 @@ impl TuiStatusState {
             thinking_end: None,
             bridge_platforms: Vec::new(),
             bridge_sessions: 0,
+            bridge_adapters: 0,
             teleport_remote: false,
             teleport_env: None,
             voice_state: None,

@@ -65,6 +65,7 @@ pub fn set(style: DiffStyle) {
     STYLE_IDX.store(style as u8, Ordering::Relaxed);
 }
 
+#[allow(dead_code)]
 pub fn current() -> DiffStyle {
     match STYLE_IDX.load(Ordering::Relaxed) {
         1 => DiffStyle::Dim,
