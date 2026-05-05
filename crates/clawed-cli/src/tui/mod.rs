@@ -27,6 +27,7 @@ pub(crate) mod verbs;
 
 pub use input::InputWidget;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{io, path::PathBuf};
@@ -730,6 +731,8 @@ struct App {
     selected_suggestion: usize,
     #[allow(dead_code)]
     selected_agent_index: Option<usize>,
+    /// Latest progress text per active agent, rendered ephemerally (not in message history).
+    agent_progress: HashMap<String, String>,
 }
 
 /// A single context suggestion (file, MCP resource, or agent).
@@ -807,7 +810,8 @@ impl App {
             suggestions: Vec::new(),
             selected_suggestion: 0,
             #[allow(dead_code)]
-    selected_agent_index: None,
+            selected_agent_index: None,
+            agent_progress: HashMap::new(),
         }
     }
 
@@ -1113,6 +1117,7 @@ impl App {
         self.cached_visible_line_count = None;
         self.last_rendered_message_visual_count = None;
         self.footer_picker = None;
+        self.agent_progress.clear();
         self.request_redraw();
     }
 
@@ -1544,6 +1549,7 @@ impl App {
             } => {
                 self.task_plan.complete_task(&agent_id, is_error);
                 self.status.active_agents.remove(&agent_id);
+                self.agent_progress.remove(&agent_id);
                 let icon = if is_error { verbs::ERROR_MARKER } else { "\u{2713}" };
                 self.push_message(MessageContent::System(format!(
                     "{icon} Agent finished: {result}"
@@ -1552,6 +1558,7 @@ impl App {
             AgentNotification::AgentTerminated { agent_id, reason } => {
                 self.task_plan.terminate_task(&agent_id);
                 self.status.active_agents.remove(&agent_id);
+                self.agent_progress.remove(&agent_id);
                 self.push_message(MessageContent::System(format!(
                     "{warn} Agent terminated: {reason}",
                     warn = verbs::WARNING_MARKER
@@ -1731,7 +1738,7 @@ impl App {
             }
             // Background agent progress
             AgentNotification::AgentProgress { agent_id, text } => {
-                self.push_message(MessageContent::System(format!("  ↳ [{agent_id}] {text}",)));
+                self.agent_progress.insert(agent_id, text);
             }
             // Conflict warning for concurrent agents
             AgentNotification::ConflictDetected { file_path, agents } => {
@@ -2289,6 +2296,53 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.new_messages_count > 0 && app.scroll_offset > 0 {
         render_new_messages_pill(frame, area, app.new_messages_count);
     }
+
+    // Render ephemeral agent progress lines at the bottom of the message area.
+    render_agent_progress(frame, area, app);
+}
+
+/// Render ephemeral agent progress as an overlay at the bottom of the message area.
+/// Progress disappears automatically when agents complete or terminate.
+fn render_agent_progress(frame: &mut Frame, area: Rect, app: &App) {
+    if app.agent_progress.is_empty() {
+        return;
+    }
+
+    let style = Style::default().fg(MUTED);
+    let max_text_width = area.width.saturating_sub(4) as usize;
+    let mut lines = Vec::new();
+    for (id, text) in &app.agent_progress {
+        let prefix = format!("↳ [{id}] ");
+        let prefix_width = prefix.width();
+        let available = max_text_width.saturating_sub(prefix_width);
+        let truncated = if text.width() > available {
+            let mut s = String::new();
+            let mut w = 0;
+            for ch in text.chars() {
+                let cw = ch.width().unwrap_or(0);
+                if w + cw > available.saturating_sub(1) {
+                    s.push('\u{2026}');
+                    break;
+                }
+                w += cw;
+                s.push(ch);
+            }
+            s
+        } else {
+            text.clone()
+        };
+        lines.push(Line::styled(format!("{prefix}{truncated}"), style));
+    }
+
+    let height = lines.len().min(area.height as usize) as u16;
+    let progress_area = Rect::new(
+        area.x,
+        area.y + area.height - height,
+        area.width,
+        height,
+    );
+    frame.render_widget(Clear, progress_area);
+    frame.render_widget(Paragraph::new(lines), progress_area);
 }
 
 /// Compute how many rows the sticky header should occupy (0 or 1).
