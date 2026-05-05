@@ -31,8 +31,8 @@ fn make_skin() -> MadSkin {
     let blue_c = termimad::rgb(0, 100, 255);
     let none_attrs = termimad::crossterm::style::Attributes::none();
 
-    // Inline code: blue (matches current renderer)
-    skin.inline_code = CompoundStyle::new(Some(blue_c), None, none_attrs);
+    // Inline code: blue on dark background
+    skin.inline_code = CompoundStyle::new(Some(blue_c), Some(termimad::rgb(30, 30, 40)), none_attrs);
 
     // Headers
     let mut h1_style = CompoundStyle::new(
@@ -74,17 +74,18 @@ fn make_skin() -> MadSkin {
         '-',
     );
 
-    // Table borders in muted
+    // Table borders in muted, rounded style with full top/bottom borders
     skin.table = LineStyle {
         compound_style: CompoundStyle::new(Some(muted_c), None, none_attrs),
         align: Alignment::Left,
         left_margin: 0,
         right_margin: 0,
     };
+    skin.table_border_chars = termimad::ROUNDED_TABLE_BORDER_CHARS;
 
-    // Code blocks: plain style (termimad does not do syntax highlighting)
+    // Code blocks: subtle dark background
     skin.code_block = LineStyle {
-        compound_style: CompoundStyle::new(None, None, none_attrs),
+        compound_style: CompoundStyle::new(None, Some(termimad::rgb(30, 30, 40)), none_attrs),
         align: Alignment::Left,
         left_margin: 0,
         right_margin: 0,
@@ -168,7 +169,7 @@ fn ansi_to_lines(ansi: &str) -> Vec<Line<'static>> {
                             codes[code_count] = num;
                             code_count += 1;
                         }
-                        while let Some(c) = chars.next() {
+                        for c in chars.by_ref() {
                             if c.is_ascii_alphabetic() {
                                 break;
                             }
@@ -320,6 +321,17 @@ pub(crate) fn likely_markdown(text: &str) -> bool {
             {
                 return true;
             }
+            // Single * or _ for italic (must be followed by non-space and have closing pair)
+            if (b == b'*' || b == b'_') && next != b' ' && next != b'\n' {
+                // Look for closing pair
+                let mut j = i + 1;
+                while j < bytes.len() {
+                    if bytes[j] == b && j + 1 < bytes.len() && bytes[j + 1] != b {
+                        return true;
+                    }
+                    j += 1;
+                }
+            }
         }
 
         // Line-start patterns
@@ -338,20 +350,19 @@ pub(crate) fn likely_markdown(text: &str) -> bool {
                             return true;
                         }
                     }
-                    if b == b'-' || b == b'*' {
-                        if i + 2 < bytes.len()
-                            && bytes[i + 1] == b
-                            && bytes[i + 2] == b
+                    if (b == b'-' || b == b'*')
+                        && i + 2 < bytes.len()
+                        && bytes[i + 1] == b
+                        && bytes[i + 2] == b
+                    {
+                        let mut j = i + 3;
+                        while j < bytes.len()
+                            && (bytes[j] == b' ' || bytes[j] == b'\t')
                         {
-                            let mut j = i + 3;
-                            while j < bytes.len()
-                                && (bytes[j] == b' ' || bytes[j] == b'\t')
-                            {
-                                j += 1;
-                            }
-                            if j == bytes.len() || bytes[j] == b'\n' {
-                                return true;
-                            }
+                            j += 1;
+                        }
+                        if j == bytes.len() || bytes[j] == b'\n' {
+                            return true;
                         }
                     }
                 }
@@ -410,6 +421,18 @@ mod tests {
             .find(|s| s.content == "foo")
             .expect("inline code span should contain 'foo'");
         assert_eq!(code_span.style.fg, Some(Color::Rgb(0, 100, 255)));
+    }
+
+    #[test]
+    fn italic_text() {
+        let lines = render_markdown("hello *italic* world");
+        assert_eq!(lines.len(), 1);
+        let italic_span = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.content == "italic")
+            .expect("should find italic span");
+        assert!(italic_span.style.add_modifier.contains(Modifier::ITALIC));
     }
 
     #[test]
@@ -637,4 +660,4 @@ mod tests {
             "inline code must be blue"
         );
     }
-}
+  }
