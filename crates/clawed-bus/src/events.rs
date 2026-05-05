@@ -425,6 +425,17 @@ pub enum VoiceState {
     Playing,
 }
 
+impl std::fmt::Display for VoiceState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Idle => write!(f, "idle"),
+            Self::Recording => write!(f, "recording"),
+            Self::Transcribing => write!(f, "transcribing"),
+            Self::Playing => write!(f, "playing"),
+        }
+    }
+}
+
 /// Risk level for permission requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

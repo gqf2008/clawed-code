@@ -744,6 +744,33 @@ pub fn notification_to_jsonrpc(notif: &AgentNotification) -> Notification {
                 )],
             ),
         ),
+        // ── Remote / Bridge / Voice ──
+        AgentNotification::BridgeStatus {
+            platforms,
+            session_count,
+            adapter_count,
+        } => Notification::new(
+            "agent.bridgeStatus",
+            Some(serde_json::json!({
+                "platforms": platforms,
+                "session_count": session_count,
+                "adapter_count": adapter_count,
+            })),
+        ),
+        AgentNotification::TeleportStatus {
+            remote_active,
+            environment_name,
+        } => Notification::new(
+            "agent.teleportStatus",
+            Some(serde_json::json!({
+                "remote_active": remote_active,
+                "environment_name": environment_name,
+            })),
+        ),
+        AgentNotification::VoiceStatus { state } => Notification::new(
+            "agent.voiceStatus",
+            Some(serde_json::json!({ "state": state.to_string() })),
+        ),
     }
 }
 
