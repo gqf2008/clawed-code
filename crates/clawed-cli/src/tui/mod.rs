@@ -2298,7 +2298,10 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     // Render ephemeral agent progress lines at the bottom of the message area.
-    render_agent_progress(frame, area, app);
+    // Hidden when scrolled up so the overlay does not obscure message history.
+    if app.scroll_offset == 0 {
+        render_agent_progress(frame, area, app);
+    }
 }
 
 /// Render ephemeral agent progress as an overlay at the bottom of the message area.
