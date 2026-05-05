@@ -114,7 +114,7 @@ pub struct TuiStatusState {
     pub thinking_end: Option<Instant>,
 
     // --- Remote status ---
-    /// Bridge gateway platforms (e.g. ["lark", "telegram"]). Empty = no bridge.
+    /// Bridge gateway platforms (e.g. `lark`, `telegram`). Empty = no bridge.
     pub bridge_platforms: Vec<String>,
     /// Bridge active session count.
     pub bridge_sessions: usize,

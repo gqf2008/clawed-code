@@ -610,7 +610,7 @@ pub fn plain_text(&self) -> String {
         lines.push(Line::from(header_spans));
 
         // ── Shell output: show live lines with elapsed (aligned with CC ShellProgressMessage) ──
-        let is_shell = super::is_shell_tool(&ctx.name);
+        let is_shell = super::is_shell_tool(ctx.name);
         if is_shell {
             let has_output = !ctx.output_lines.is_empty();
             if has_output {

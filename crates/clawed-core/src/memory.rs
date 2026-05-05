@@ -537,11 +537,8 @@ pub fn prune_memories(dir: &Path, config: &PruneConfig) -> std::io::Result<(usiz
         }
     }
 
-    let mut final_survivors = Vec::new();
     for (i, h) in survivors.into_iter().enumerate() {
-        if keep[i] {
-            final_survivors.push(h);
-        } else {
+        if !keep[i] {
             if let Ok(meta) = std::fs::metadata(&h.file_path) {
                 bytes_freed += meta.len();
             }

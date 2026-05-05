@@ -7875,6 +7875,9 @@ mod tests {
         std::fs::write(repo.join("file.txt"), "hello").unwrap();
         run_git(repo, &["add", "file.txt"]);
         run_git(repo, &["commit", "-m", "initial"]);
+        // Create a new change and stage it so prepare_commit_prompt sees work to do
+        std::fs::write(repo.join("file.txt"), "hello world").unwrap();
+        run_git(repo, &["add", "file.txt"]);
 
         let engine = Arc::new(
             QueryEngine::builder("test-key", repo)
@@ -7884,6 +7887,9 @@ mod tests {
         );
         let (mut bus, client) = EventBus::new(16);
         let mut app = App::new("test".to_string());
+
+        // Switch to the temp repo so prepare_commit_prompt uses the correct cwd
+        let _guard = std::env::set_current_dir(repo);
 
         // Commit goes to pending_command, then handle_async_command submits to engine
         handle_async_command(
