@@ -364,6 +364,13 @@ async fn run() -> anyhow::Result<()> {
         theme::init_theme(theme_setting);
     }
 
+    // Initialize diff background style from settings (bright / dim)
+    if let Some(ref ds) = settings.diff_style {
+        if let Ok(style) = ds.parse::<crate::tui::diff_style::DiffStyle>() {
+            crate::tui::diff_style::init(style);
+        }
+    }
+
     // Inject env vars from settings.json before auth resolution (single-threaded init)
     let _env_backup = settings.apply_env();
 

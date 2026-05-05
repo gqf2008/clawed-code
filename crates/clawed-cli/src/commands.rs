@@ -162,6 +162,10 @@ pub enum SlashCommand {
     Chrome {
         sub: String,
     },
+    /// Bridge gateway status (/bridge).
+    Bridge,
+    /// Teleport / CCR remote status (/teleport).
+    Teleport,
     Exit,
     Unknown(String),
 }
@@ -248,6 +252,8 @@ impl SlashCommand {
             "feedback" => Self::Feedback { text: args },
             "stats" | "usage" => Self::Stats,
             "chrome" => Self::Chrome { sub: args },
+            "bridge" => Self::Bridge,
+            "teleport" => Self::Teleport,
             "exit" | "quit" => Self::Exit,
             name => {
                 // Check if it matches a loaded skill
@@ -431,6 +437,8 @@ impl SlashCommand {
             }
             Self::Stats => CommandResult::Stats,
             Self::Chrome { sub } => CommandResult::Chrome { sub: sub.clone() },
+            Self::Bridge => CommandResult::Bridge,
+            Self::Teleport => CommandResult::Teleport,
             Self::Exit => CommandResult::Exit,
             Self::Unknown(cmd) => {
                 CommandResult::Print(format!("Unknown command: /{}. Type /help.", cmd))
@@ -573,6 +581,10 @@ pub enum CommandResult {
     Chrome {
         sub: String,
     },
+    /// Bridge gateway status (/bridge).
+    Bridge,
+    /// Teleport / CCR remote status (/teleport).
+    Teleport,
     /// Agent definitions management (/agents list, info, create, delete).
     Agents {
         sub: String,
@@ -718,6 +730,10 @@ const HELP_TEXT_BASE: &str = "\
   /reload-context    Reload CLAUDE.md, memory, and settings
   /mcp               Show discovered MCP servers
   /plugin            List loaded plugins (alias: /plugins)
+
+\x1b[1mRemote\x1b[0m
+  /bridge            Show bridge gateway status (Lark/Telegram/Slack)
+  /teleport          Show CCR remote session status
 
 \x1b[1mSession & Memory\x1b[0m
   /resume            Resume a saved session (interactive picker)

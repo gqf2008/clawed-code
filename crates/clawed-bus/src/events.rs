@@ -218,6 +218,24 @@ pub enum AgentNotification {
     /// Conditional skills were activated based on file paths touched by tools.
     SkillsActivated { names: Vec<String>, },
 
+    // ── Remote / Bridge ──
+    /// Bridge gateway status update (platforms, sessions, adapters).
+    BridgeStatus {
+        platforms: Vec<String>,
+        session_count: usize,
+        adapter_count: usize,
+    },
+
+    /// Teleport / CCR remote session status.
+    TeleportStatus {
+        remote_active: bool,
+        environment_name: Option<String>,
+    },
+
+    // ── Voice ──
+    /// Voice input/output state change.
+    VoiceStatus { state: VoiceState },
+
     // ── Errors ──
     /// A non-fatal error occurred.
     Error { code: ErrorCode, message: String },
@@ -393,6 +411,20 @@ pub struct ToolInfo {
     pub enabled: bool,
 }
 
+/// Voice input/output state for VoiceIndicator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VoiceState {
+    /// No voice activity.
+    Idle,
+    /// Recording user voice input.
+    Recording,
+    /// Transcribing recorded audio.
+    Transcribing,
+    /// Playing assistant TTS response.
+    Playing,
+}
+
 /// Risk level for permission requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -559,6 +591,21 @@ mod tests {
                     description: "Run shell commands".into(),
                     enabled: true,
                 }],
+            },
+            AgentNotification::BridgeStatus {
+                platforms: vec!["lark".into(), "telegram".into()],
+                session_count: 3,
+                adapter_count: 2,
+            },
+            AgentNotification::TeleportStatus {
+                remote_active: true,
+                environment_name: Some("prod".into()),
+            },
+            AgentNotification::VoiceStatus {
+                state: VoiceState::Recording,
+            },
+            AgentNotification::VoiceStatus {
+                state: VoiceState::Idle,
             },
         ];
 

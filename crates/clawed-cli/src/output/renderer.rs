@@ -390,6 +390,11 @@ impl OutputRenderer {
                     names.join(", ")
                 );
             }
+            AgentNotification::BridgeStatus { .. }
+            | AgentNotification::TeleportStatus { .. }
+            | AgentNotification::VoiceStatus { .. } => {
+                // TUI-only notifications: remote status and voice state.
+            }
         }
         false
     }

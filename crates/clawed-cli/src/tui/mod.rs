@@ -12,7 +12,9 @@
 //! Tab: complete  Ctrl+J: newline  Ctrl+C: abort/quit          (hint bar, toggleable)
 //! ```
 
+mod bash_mode;
 mod bottombar;
+pub(crate) mod diff_style;
 mod input;
 mod markdown;
 mod messages;
@@ -219,28 +221,62 @@ pub(super) fn user_facing_tool_name(raw: &str) -> &str {
         b"web_fetch" | b"WebFetch" | b"webfetch" | b"Web_Fetch" => "Web Fetch",
         b"task" | b"Task" | b"task_create" | b"TaskCreate" => "Task",
         b"agent" | b"Agent" => "Agent",
-        s if s.starts_with(b"mcp__") => &raw[5..],
+        s if s.starts_with(b"mcp__") => {
+            // Format mcp__server__tool as "server › tool"
+            let after_prefix = &raw[5..];
+            if let Some(pos) = after_prefix.find("__") {
+                let server = &after_prefix[..pos];
+                let tool = &after_prefix[pos + 2..];
+                // Return a static string: we leak a small bounded string here.
+                // This is acceptable because tool names are finite and bounded.
+                let formatted = format!("{} › {}", server, tool);
+                Box::leak(formatted.into_boxed_str())
+            } else {
+                after_prefix
+            }
+        }
         _ => raw,
     }
 }
 
 fn extract_tool_input_display(tool_name: &str, input: &serde_json::Value) -> Option<String> {
-    let key = match tool_name.to_lowercase().as_str() {
-        "bash" | "shell" => "command",
-        "read" | "read_file" | "write" | "write_file" | "edit" | "multi_edit" => "file_path",
-        "web_search" | "websearch" => "query",
-        "web_fetch" | "webfetch" => "url",
-        "ls" => "path",
-        "glob" => "pattern",
-        "grep" => "pattern",
-        "agent" => "agent_type",
-        "task_create" => "subject",
-        _ => return None,
-    };
-    input
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+    match tool_name.to_lowercase().as_str() {
+        "bash" | "shell" => input.get("command").and_then(|v| v.as_str()).map(String::from),
+        "read" | "read_file" | "write" | "write_file" | "edit" | "multi_edit" => {
+            input.get("file_path").and_then(|v| v.as_str()).map(String::from)
+        }
+        "web_search" | "websearch" => input.get("query").and_then(|v| v.as_str()).map(String::from),
+        "web_fetch" | "webfetch" => input.get("url").and_then(|v| v.as_str()).map(String::from),
+        "ls" => input.get("path").and_then(|v| v.as_str()).map(String::from),
+        "glob" => input.get("pattern").and_then(|v| v.as_str()).map(String::from),
+        "grep" => input.get("pattern").and_then(|v| v.as_str()).map(String::from),
+        "agent" => input.get("agent_type").and_then(|v| v.as_str()).map(String::from),
+        "task_create" => input.get("subject").and_then(|v| v.as_str()).map(String::from),
+        "notebookedit" | "notebook_edit" => {
+            let path = input.get("notebook_path").and_then(|v| v.as_str())?;
+            let cell = input.get("cell_number").and_then(|v| v.as_u64()).unwrap_or(0);
+            let mode = input.get("edit_mode").and_then(|v| v.as_str()).unwrap_or("replace");
+            Some(format!("{} cell [{}] {}", path, cell, mode))
+        }
+        _ if tool_name.to_lowercase().starts_with("mcp__") => {
+            // For MCP tools, show the first meaningful string param as input hint
+            input.as_object().and_then(|obj| {
+                obj.iter().find_map(|(k, v)| {
+                    if k == "server" || k == "uri" || k == "query" {
+                        v.as_str().map(String::from)
+                    } else {
+                        v.as_str().filter(|s| !s.is_empty() && *k != "format").map(String::from)
+                    }
+                })
+            })
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn is_shell_tool(tool_name: &str) -> bool {
+    let lower = tool_name.to_ascii_lowercase();
+    lower.contains("bash") || lower.contains("shell")
 }
 
 fn should_clear_message_area(previous_total_visual: Option<usize>, total_visual: usize) -> bool {
@@ -729,10 +765,32 @@ struct App {
     /// Context suggestions overlay (file / MCP / agent suggestions above input).
     suggestions: Vec<SuggestionItem>,
     selected_suggestion: usize,
-    #[allow(dead_code)]
-    selected_agent_index: Option<usize>,
+    /// Keyboard selection mode for active agents (pointer on spinner row).
+    /// Some(selected_index) when cycling through agents with Tab/Enter.
+    teammate_selection: Option<usize>,
+    /// BashModeProgress top-level panel state.
+    bash_mode: bash_mode::BashModeState,
     /// Latest progress text per active agent, rendered ephemerally (not in message history).
     agent_progress: HashMap<String, String>,
+    /// Bridge gateway status (platforms, sessions, adapters).
+    bridge_status: Option<BridgeStatusInfo>,
+    /// Teleport / CCR remote session status.
+    teleport_status: Option<TeleportStatusInfo>,
+}
+
+/// Bridge gateway status for TUI display.
+#[derive(Debug, Clone)]
+struct BridgeStatusInfo {
+    platforms: Vec<String>,
+    session_count: usize,
+    adapter_count: usize,
+}
+
+/// Teleport / CCR status for TUI display.
+#[derive(Debug, Clone)]
+struct TeleportStatusInfo {
+    remote_active: bool,
+    environment_name: Option<String>,
 }
 
 /// A single context suggestion (file, MCP resource, or agent).
@@ -761,8 +819,12 @@ struct ViewedTeammate {
     color: Color,
 }
 
+
 impl App {
     fn new(model: String) -> Self {
+        let ide_kind = detect_ide();
+        let mut status = TuiStatusState::new();
+        status.ide_kind = ide_kind.clone();
         Self {
             messages: Vec::new(),
             scroll_offset: 0,
@@ -770,7 +832,7 @@ impl App {
             auto_scroll: true,
             input: InputWidget::new(),
             footer_picker: None,
-            status: TuiStatusState::new(),
+            status,
             task_plan: taskplan::TaskPlan::new(),
             task_list: tasklist::TaskListState::new(),
             permission: None,
@@ -809,9 +871,11 @@ impl App {
             viewed_teammate: None,
             suggestions: Vec::new(),
             selected_suggestion: 0,
-            #[allow(dead_code)]
-            selected_agent_index: None,
+            teammate_selection: None,
+            bash_mode: bash_mode::BashModeState::new(),
             agent_progress: HashMap::new(),
+            bridge_status: None,
+            teleport_status: None,
         }
     }
 
@@ -852,6 +916,42 @@ impl App {
         if self.viewed_teammate.take().is_some() {
             self.invalidate_visible_lines();
             self.request_redraw();
+        }
+    }
+
+    // ── Teammate selection (pointer + tab/enter keyboard navigation) ──────────
+
+    fn enter_teammate_selection(&mut self) {
+        if !self.status.active_agents.is_empty() {
+            self.teammate_selection = Some(0);
+            self.request_redraw();
+        }
+    }
+
+    fn exit_teammate_selection(&mut self) {
+        if self.teammate_selection.take().is_some() {
+            self.request_redraw();
+        }
+    }
+
+    fn cycle_teammate_selection(&mut self, delta: isize) {
+        let Some(ref mut sel) = self.teammate_selection else { return };
+        let count = self.status.active_agents.len();
+        if count == 0 {
+            self.exit_teammate_selection();
+            return;
+        }
+        let new = *sel as isize + delta;
+        *sel = new.rem_euclid(count as isize) as usize;
+        self.request_redraw();
+    }
+
+    fn confirm_teammate_selection(&mut self) {
+        let Some(sel) = self.teammate_selection else { return };
+        self.exit_teammate_selection();
+        let sorted = status::sorted_agent_entries(&self.status.active_agents);
+        if let Some((agent_id, info)) = sorted.get(sel) {
+            self.view_teammate((*agent_id).clone(), info.name.clone());
         }
     }
 
@@ -1333,8 +1433,7 @@ impl App {
             }
             AgentNotification::ToolUseStart { tool_name, .. } => {
                 self.status.record_token();
-                let tool_lower = tool_name.to_ascii_lowercase();
-                if tool_lower.contains("bash") || tool_lower.contains("shell") {
+                if is_shell_tool(&tool_name) {
                     self.status.active_shells += 1;
                     self.task_plan.set_shells(self.status.active_shells);
                 }
@@ -1374,10 +1473,14 @@ impl App {
                         input: ref mut inp, ..
                     } = &mut msg.content
                     {
-                        *inp = input_str;
+                        *inp = input_str.clone();
                     }
                     msg.invalidate_cache();
                     self.invalidate_visible_lines();
+                }
+                // Start BashModeProgress panel for shell commands.
+                if is_shell_tool(&tool_name) {
+                    self.bash_mode.start(tool_name.clone(), input_str.unwrap_or_default());
                 }
             }
             AgentNotification::ToolUseComplete {
@@ -1386,12 +1489,10 @@ impl App {
                 result_preview,
                 ..
             } => {
-                if !tool_name.is_empty() {
-                    let tool_lower = tool_name.to_ascii_lowercase();
-                    if tool_lower.contains("bash") || tool_lower.contains("shell") {
-                        self.status.active_shells = self.status.active_shells.saturating_sub(1);
-                        self.task_plan.set_shells(self.status.active_shells);
-                    }
+                if !tool_name.is_empty() && is_shell_tool(&tool_name) {
+                    self.status.active_shells = self.status.active_shells.saturating_sub(1);
+                    self.task_plan.set_shells(self.status.active_shells);
+                    self.bash_mode.end();
                 }
                 let duration_ms = self
                     .status
@@ -1424,6 +1525,10 @@ impl App {
             AgentNotification::ToolOutputLine {
                 tool_name, line, ..
             } => {
+                // Forward to BashModeProgress if applicable.
+                if is_shell_tool(&tool_name) {
+                    self.bash_mode.add_line(&tool_name, &line);
+                }
                 // Append output line to the last matching ToolExecution message.
                 // Fall back to last ToolExecution if name doesn't match (name lookup may fail).
                 let msg = if tool_name.is_empty() {
@@ -1809,6 +1914,49 @@ impl App {
                     "  ↳ [{team_name}/{agent_id}] idle",
                 )));
             }
+            AgentNotification::BridgeStatus {
+                platforms,
+                session_count,
+                adapter_count,
+            } => {
+                if self.status.bridge_platforms == *platforms
+                    && self.status.bridge_sessions == session_count
+                {
+                    return None;
+                }
+                self.bridge_status = Some(BridgeStatusInfo {
+                    platforms: platforms.clone(),
+                    session_count,
+                    adapter_count,
+                });
+                self.status.bridge_platforms = platforms.clone();
+                self.status.bridge_sessions = session_count;
+                self.request_redraw();
+            }
+            AgentNotification::TeleportStatus {
+                remote_active,
+                environment_name,
+            } => {
+                if self.status.teleport_remote == remote_active
+                    && self.status.teleport_env == environment_name
+                {
+                    return None;
+                }
+                self.teleport_status = Some(TeleportStatusInfo {
+                    remote_active,
+                    environment_name: environment_name.clone(),
+                });
+                self.status.teleport_remote = remote_active;
+                self.status.teleport_env = environment_name.clone();
+                self.request_redraw();
+            }
+            AgentNotification::VoiceStatus { state } => {
+                if self.status.voice_state == Some(state) {
+                    return None;
+                }
+                self.status.voice_state = Some(state);
+                self.request_redraw();
+            }
         }
         None
     }
@@ -1965,6 +2113,44 @@ impl App {
             crate::commands::CommandResult::Vim { .. } => {
                 self.pending_command = Some(result);
             }
+            crate::commands::CommandResult::Bridge => {
+                let text = if let Some(ref status) = self.bridge_status {
+                    let platforms = if status.platforms.is_empty() {
+                        "none".to_string()
+                    } else {
+                        status.platforms.join(", ")
+                    };
+                    format!(
+                        "Bridge Gateway\n  Platforms:   {platforms}\n  Sessions:    {}\n  Adapters:    {}",
+                        status.session_count, status.adapter_count
+                    )
+                } else {
+                    "Bridge Gateway\n  Status:      Not running\n  \n  The bridge connects this session to external platforms\n  (Lark, Telegram, Slack). Start with bridge config.".to_string()
+                };
+                self.overlay = Some(overlay::build_info_overlay("Bridge Status", &text));
+                self.request_redraw();
+            }
+            crate::commands::CommandResult::Teleport => {
+                let remote_env =
+                    std::env::var("CLAUDE_CODE_REMOTE").unwrap_or_else(|_| "not set".to_string());
+                let text = if let Some(ref status) = self.teleport_status {
+                    let env = status.environment_name.as_deref().unwrap_or("unknown");
+                    let state = if status.remote_active {
+                        format!("Connected ({env})")
+                    } else {
+                        "Not connected".to_string()
+                    };
+                    format!(
+                        "Teleport / CCR\n  Status:      {state}\n  Environment: {env}\n  \n  CLAUDE_CODE_REMOTE: {remote_env}"
+                    )
+                } else {
+                    format!(
+                        "Teleport / CCR\n  Status:      Not connected\n  \n  CLAUDE_CODE_REMOTE: {remote_env}\n  \n  Teleport manages remote Claude Code sessions.\n  Set CLAUDE_CODE_REMOTE to enable."
+                    )
+                };
+                self.overlay = Some(overlay::build_info_overlay("Teleport Status", &text));
+                self.request_redraw();
+            }
             crate::commands::CommandResult::Exit => {
                 self.running = false;
             }
@@ -2026,6 +2212,30 @@ impl App {
     }
 }
 
+/// Detect the IDE environment from environment variables.
+/// Returns `Some("vscode")`, `Some("jetbrains")`, etc., or `None` for standalone terminal.
+fn detect_ide() -> Option<String> {
+    if std::env::var("VSCODE_PID").is_ok()
+        || std::env::var("VSCODE_CWD").is_ok()
+        || std::env::var("TERM_PROGRAM").ok().as_deref() == Some("vscode")
+    {
+        Some("vscode".to_string())
+    } else if std::env::var("TERMINAL_EMULATOR")
+        .ok()
+        .map(|s| s.to_lowercase().contains("jetbrains"))
+        .unwrap_or(false)
+        || std::env::var("JETBRAINS_IDE").is_ok()
+    {
+        Some("jetbrains".to_string())
+    } else if std::env::var("Cursor").is_ok() || std::env::var("CURSOR").is_ok() {
+        Some("cursor".to_string())
+    } else if std::env::var("Windsurf").is_ok() || std::env::var("WINDSURF").is_ok() {
+        Some("windsurf".to_string())
+    } else {
+        None
+    }
+}
+
 // -- Rendering ----------------------------------------------------------------
 
 fn render(frame: &mut Frame, app: &mut App) {
@@ -2050,6 +2260,7 @@ fn render(frame: &mut Frame, app: &mut App) {
     };
     let task_plan_rows = app.task_plan.render_height();
     let task_list_rows = app.task_list.render_height();
+    let bash_mode_rows = app.bash_mode.render_height();
 
     let input_rows = if app.footer_picker.is_some() || app.input.has_completion() {
         1
@@ -2091,6 +2302,7 @@ fn render(frame: &mut Frame, app: &mut App) {
         Constraint::Min(1),                        // messages
         Constraint::Length(task_list_rows),        // task list (0 if empty/collapsed)
         Constraint::Length(task_plan_rows),        // task plan (0 if empty)
+        Constraint::Length(bash_mode_rows),        // BashModeProgress panel (0 if inactive)
         Constraint::Length(1 + tip_rows),          // info line + optional tip
         Constraint::Length(queue_rows),            // queue items (0 or n)
         Constraint::Length(suggestion_rows),       // context suggestion overlay
@@ -2102,11 +2314,12 @@ fn render(frame: &mut Frame, app: &mut App) {
     let msg_area = chunks[0];
     let task_list_area = chunks[1];
     let task_area = chunks[2];
-    let sep_area = chunks[3];
-    let queue_area = chunks[4];
-    let suggestion_area = chunks[5];
-    let search_area = chunks[6];
-    let footer_area = chunks[7];
+    let bash_area = chunks[3];
+    let sep_area = chunks[4];
+    let queue_area = chunks[5];
+    let suggestion_area = chunks[6];
+    let search_area = chunks[7];
+    let footer_area = chunks[8];
 
     // Teammate view header: fixed 1 row above messages when viewing a teammate.
     let teammate_header_rows = u16::from(app.viewed_teammate.is_some());
@@ -2126,6 +2339,10 @@ fn render(frame: &mut Frame, app: &mut App) {
 
     if task_plan_rows > 0 {
         taskplan::render(frame, task_area, &app.task_plan);
+    }
+
+    if bash_mode_rows > 0 {
+        bash_mode::render(frame, bash_area, &app.bash_mode);
     }
 
     if suggestion_rows > 0 {
@@ -2535,7 +2752,11 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         .add_modifier(Modifier::BOLD);
 
     // --- Dynamic status spans (spinner, elapsed, tools, shells, agents) — leftmost ---
-    let status_spans = status::build_spans(&app.status, area.width);
+    let status_spans = status::build_spans(
+        &app.status,
+        area.width,
+        app.teammate_selection,
+    );
     let status_w: usize = status_spans.iter().map(|s| s.content.width()).sum();
 
     let mut spans: Vec<Span> = Vec::new();
@@ -3443,6 +3664,29 @@ pub async fn run_tui(
                         continue;
                     }
 
+                    // Teammate selection mode (pointer + tab/enter keyboard navigation)
+                    if app.teammate_selection.is_some() {
+                        match (key.code, key.modifiers) {
+                            (KeyCode::Esc, _) => {
+                                app.exit_teammate_selection();
+                                continue;
+                            }
+                            (KeyCode::Enter, _) => {
+                                app.confirm_teammate_selection();
+                                continue;
+                            }
+                            (KeyCode::Tab, _) | (KeyCode::Right, _) => {
+                                app.cycle_teammate_selection(1);
+                                continue;
+                            }
+                            (KeyCode::BackTab, _) | (KeyCode::Left, _) => {
+                                app.cycle_teammate_selection(-1);
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+
                     // Global shortcuts
                     match (key.code, key.modifiers) {
                         (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
@@ -3461,6 +3705,14 @@ pub async fn run_tui(
                         }
                         (KeyCode::Esc, _) if app.spinner_active() => {
                             abort_session(&client, &mut app, &engine).await;
+                            continue;
+                        }
+                        // Ctrl+A: enter teammate selection mode when agents are active.
+                        (KeyCode::Char('a'), KeyModifiers::CONTROL)
+                            if app.teammate_selection.is_none()
+                                && !app.status.active_agents.is_empty() =>
+                        {
+                            app.enter_teammate_selection();
                             continue;
                         }
                         (KeyCode::Char('t'), KeyModifiers::CONTROL) => {
@@ -4856,7 +5108,9 @@ async fn handle_async_command(
         | CommandResult::Effort { .. }
         | CommandResult::Tag { .. }
         | CommandResult::Stickers
-        | CommandResult::Exit => {
+        | CommandResult::Exit
+        | CommandResult::Bridge
+        | CommandResult::Teleport => {
             // Should not reach here — these are handled in handle_slash_command
         }
     }
@@ -8347,7 +8601,6 @@ mod tests {
                 color: Color::Cyan,
             });
             app.status.is_generating = true; app.status.spinner_frame = 3;
-            app.selected_agent_index = Some(0);
         });
 
         eprintln!("Delivery screenshots: {}/", dir);

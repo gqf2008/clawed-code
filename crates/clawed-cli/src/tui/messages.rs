@@ -1,3 +1,4 @@
+use super::diff_style;
 use super::verbs::{ERROR_MARKER, THINKING_MARKER, TURN_COMPLETION_MARKER, WARNING_MARKER};
 use super::{blank_line, line_text, markdown, muted, MUTED};
 
@@ -9,6 +10,24 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
+
+/// Returns an appropriate style for a JSON line (used by MCP tool rendering).
+fn json_line_style(line: &str) -> Style {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with('{') || trimmed.starts_with('}') {
+        Style::default().fg(Color::Cyan)
+    } else if trimmed.starts_with('[') || trimmed.starts_with(']') {
+        Style::default().fg(Color::Magenta)
+    } else if trimmed.starts_with('"') {
+        Style::default().fg(Color::Green)
+    } else if trimmed.starts_with("true") || trimmed.starts_with("false") || trimmed.starts_with("null") {
+        Style::default().fg(Color::Yellow)
+    } else if trimmed.chars().next().is_some_and(|c| c.is_ascii_digit() || c == '-') {
+        Style::default().fg(Color::Blue)
+    } else {
+        muted()
+    }
+}
 
 /// Returns an appropriate style for a line in a unified diff.
 fn diff_line_style(line: &str) -> Style {
@@ -27,12 +46,6 @@ fn diff_line_style(line: &str) -> Style {
     }
 }
 
-/// Background colors for structured diff lines (aligned with CC).
-const DIFF_ADDED_BG: Color = Color::Rgb(0, 60, 0);
-const DIFF_REMOVED_BG: Color = Color::Rgb(60, 0, 0);
-const DIFF_ADDED_WORD_BG: Color = Color::Rgb(0, 100, 0);
-const DIFF_REMOVED_WORD_BG: Color = Color::Rgb(100, 0, 0);
-
 /// Renders a diff line with line-number gutter and background coloring.
 /// Returns (gutter_span, content_spans) for multi-span content with word-level diff.
 fn diff_gutter_line(
@@ -40,12 +53,13 @@ fn diff_gutter_line(
     _line_num: Option<u32>,
     prev_line: Option<&str>,
 ) -> (Span<'static>, Vec<Span<'static>>) {
-    let (marker, bg) = if line.starts_with('+') {
-        ("+", Some(DIFF_ADDED_BG))
+    let palette = diff_style::palette();
+    let (marker, bg, word_bg) = if line.starts_with('+') {
+        ("+", Some(palette.added_bg), Some(palette.added_word_bg))
     } else if line.starts_with('-') {
-        ("-", Some(DIFF_REMOVED_BG))
+        ("-", Some(palette.removed_bg), Some(palette.removed_word_bg))
     } else {
-        (" ", None)
+        (" ", None, None)
     };
 
     let gutter = format!("{} ", marker);
@@ -57,12 +71,12 @@ fn diff_gutter_line(
     };
 
     // Word-level diff: compare with previous line if it's a complementary change
-    let content_spans = if let (Some(bg_color), Some(prev)) = (bg, prev_line) {
+    let content_spans = if let (Some(bg_color), Some(word_color), Some(prev)) = (bg, word_bg, prev_line) {
         let prev_prefix = if prev.starts_with('+') { "+" } else if prev.starts_with('-') { "-" } else { " " };
         let curr_prefix = if line.starts_with('+') { "+" } else if line.starts_with('-') { "-" } else { " " };
         // Only do word diff for opposite add/remove pairs
         if prev_prefix != curr_prefix && prev_prefix != " " && curr_prefix != " " {
-            word_diff_spans(prev, line, bg_color)
+            word_diff_spans(prev, line, bg_color, word_color)
         } else {
             vec![Span::styled(format!(" {}", line), Style::default().bg(bg_color))]
         }
@@ -76,7 +90,7 @@ fn diff_gutter_line(
 }
 
 /// Compute word-level diff spans between removed (prev) and added (curr) lines.
-fn word_diff_spans(prev: &str, curr: &str, bg: Color) -> Vec<Span<'static>> {
+fn word_diff_spans(prev: &str, curr: &str, bg: Color, word_bg: Color) -> Vec<Span<'static>> {
     let prev_trimmed = prev.trim_start_matches(&['+', '-', ' '][..]);
     let curr_trimmed = curr.trim_start_matches(&['+', '-', ' '][..]);
 
@@ -98,7 +112,6 @@ fn word_diff_spans(prev: &str, curr: &str, bg: Color) -> Vec<Span<'static>> {
     let prefix = &prev_trimmed[..common_prefix_len];
     let suffix = &prev_trimmed[prev_trimmed.len().saturating_sub(common_suffix_len)..];
 
-    let word_bg = if bg == DIFF_ADDED_BG { DIFF_ADDED_WORD_BG } else { DIFF_REMOVED_WORD_BG };
     let base = Style::default().bg(bg);
     let highlight = Style::default().bg(word_bg);
 
@@ -597,10 +610,7 @@ pub fn plain_text(&self) -> String {
         lines.push(Line::from(header_spans));
 
         // ── Shell output: show live lines with elapsed (aligned with CC ShellProgressMessage) ──
-        let is_shell = matches!(
-            ctx.name.to_lowercase().as_str(),
-            "bash" | "shell" | "bash_output"
-        );
+        let is_shell = super::is_shell_tool(&ctx.name);
         if is_shell {
             let has_output = !ctx.output_lines.is_empty();
             if has_output {
@@ -637,12 +647,24 @@ pub fn plain_text(&self) -> String {
                     ));
                 }
             }
-        } else {
+        }
+        let tool_lower = ctx.name.to_lowercase();
+        let is_web = tool_lower.contains("web");
+        let is_mcp = tool_lower.starts_with("mcp__")
+            || tool_lower.starts_with("mcp_");
+        let is_notebook = tool_lower.contains("notebook");
+
+        if !is_shell {
             // Non-shell tools: output with indent
             for line in ctx.output_lines {
+                let style = if is_web || is_notebook {
+                    muted()
+                } else {
+                    diff_line_style(line)
+                };
                 lines.push(Line::styled(
                     format!("{output_indent}  {line}"),
-                    diff_line_style(line),
+                    style,
                 ));
             }
         }
@@ -677,7 +699,13 @@ pub fn plain_text(&self) -> String {
                     let preview_lines: Vec<&str> = full.lines().take(5).collect();
                     let total = full.lines().count();
                     for l in &preview_lines {
-                        let style = diff_line_style(l);
+                        let style = if is_mcp {
+                            json_line_style(l)
+                        } else if is_web || is_notebook {
+                            muted()
+                        } else {
+                            diff_line_style(l)
+                        };
                         lines.push(Line::styled(
                             format!("{output_indent}  {}", l),
                             style,
@@ -765,6 +793,61 @@ pub fn plain_text(&self) -> String {
                         prev_line = Some(l.to_string());
                     }
                     lines.push(Line::styled(border, muted()));
+                } else if is_web {
+                    // WebFetch/WebSearch: render as markdown (tool already converts HTML→MD).
+                    let md_lines = markdown::render_markdown(full);
+                    let md_count = md_lines.len();
+                    if md_count > 30 {
+                        // Long results: show first 30 lines + fold hint
+                        for mut line in md_lines.into_iter().take(30) {
+                            line.spans.insert(0, Span::raw(output_indent.clone() + "  "));
+                            lines.push(line);
+                        }
+                        lines.push(Line::styled(
+                            format!("{output_indent}  + {} more lines (Ctrl+E to expand)",
+                                md_count - 30),
+                            muted(),
+                        ));
+                    } else {
+                        for mut line in md_lines {
+                            line.spans.insert(0, Span::raw(output_indent.clone() + "  "));
+                            lines.push(line);
+                        }
+                    }
+                } else if is_mcp {
+                    // MCP tools: pretty-print JSON if detected, else plain text.
+                    let trimmed = full.trim();
+                    let is_json = trimmed.starts_with('{') || trimmed.starts_with('[');
+                    if is_json {
+                        lines.push(blank_line());
+                        for l in full.lines() {
+                            let style = json_line_style(l);
+                            lines.push(Line::styled(
+                                format!("{output_indent}  {}", l),
+                                style,
+                            ));
+                        }
+                        lines.push(blank_line());
+                    } else {
+                        lines.push(blank_line());
+                        for l in full.lines() {
+                            lines.push(Line::styled(
+                                format!("{output_indent}  {}", l),
+                                muted(),
+                            ));
+                        }
+                        lines.push(blank_line());
+                    }
+                } else if is_notebook {
+                    // NotebookEdit: plain text with subtle icon.
+                    lines.push(blank_line());
+                    for l in full.lines() {
+                        lines.push(Line::styled(
+                            format!("{output_indent}  {}", l),
+                            muted(),
+                        ));
+                    }
+                    lines.push(blank_line());
                 } else {
                     lines.push(blank_line());
                     for l in full.lines() {
@@ -1029,8 +1112,9 @@ mod tests {
         let (gutter, content) = diff_gutter_line(line, Some(5), None);
         let gutter_text: String = gutter.content.to_string();
         assert!(gutter_text.contains("+"), "gutter must have + marker");
-        // Content has green background
-        assert!(content.iter().any(|s| s.style.bg == Some(DIFF_ADDED_BG)));
+        // Content has the active palette's added background
+        let expected = diff_style::palette().added_bg;
+        assert!(content.iter().any(|s| s.style.bg == Some(expected)));
     }
 
     #[test]
@@ -1039,7 +1123,8 @@ mod tests {
         let (gutter, content) = diff_gutter_line(line, Some(3), None);
         let gutter_text: String = gutter.content.to_string();
         assert!(gutter_text.contains("-"), "gutter must have - marker");
-        assert!(content.iter().any(|s| s.style.bg == Some(DIFF_REMOVED_BG)));
+        let expected = diff_style::palette().removed_bg;
+        assert!(content.iter().any(|s| s.style.bg == Some(expected)));
     }
 
     #[test]

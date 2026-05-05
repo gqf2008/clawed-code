@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use ratatui::{
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::Span,
 };
 
@@ -63,6 +63,15 @@ pub struct AgentInfo {
     pub color: Color,
 }
 
+/// Return active agents sorted by name (stable ordering for UI selection).
+pub fn sorted_agent_entries(
+    agents: &HashMap<String, AgentInfo>,
+) -> Vec<(&String, &AgentInfo)> {
+    let mut sorted: Vec<(&String, &AgentInfo)> = agents.iter().collect();
+    sorted.sort_by(|a, b| a.1.name.cmp(&b.1.name));
+    sorted
+}
+
 pub struct TuiStatusState {
     pub active_tools: HashMap<String, ToolInfo>,
     pub active_shells: u32,
@@ -103,6 +112,20 @@ pub struct TuiStatusState {
     pub last_thinking_elapsed_ms: u64,
     /// When the thinking block ended (for display timing).
     pub thinking_end: Option<Instant>,
+
+    // --- Remote status ---
+    /// Bridge gateway platforms (e.g. ["lark", "telegram"]). Empty = no bridge.
+    pub bridge_platforms: Vec<String>,
+    /// Bridge active session count.
+    pub bridge_sessions: usize,
+    /// Teleport / CCR remote active flag.
+    pub teleport_remote: bool,
+    /// Teleport environment name (if connected).
+    pub teleport_env: Option<String>,
+    /// Voice input/output state.
+    pub voice_state: Option<clawed_bus::events::VoiceState>,
+    /// Detected IDE environment (e.g. "vscode", "jetbrains").
+    pub ide_kind: Option<String>,
 }
 
 impl TuiStatusState {
@@ -125,6 +148,12 @@ impl TuiStatusState {
             total_thinking_ms: 0,
             last_thinking_elapsed_ms: 0,
             thinking_end: None,
+            bridge_platforms: Vec::new(),
+            bridge_sessions: 0,
+            teleport_remote: false,
+            teleport_env: None,
+            voice_state: None,
+            ide_kind: None,
         }
     }
 
@@ -286,7 +315,14 @@ fn stall_style(base: Style, intensity: f64) -> Style {
 
 /// Build the dynamic status spans (spinner, verb, tokens, tools, shells, agents).
 /// Returns an empty vec when there is nothing to show.
-pub fn build_spans(state: &TuiStatusState, max_width: u16) -> Vec<Span<'static>> {
+///
+/// `teammate_selection` is `Some(selected_index)` when the user is cycling
+/// through active agents on the spinner row (pointer + tab/enter nav).
+pub fn build_spans(
+    state: &TuiStatusState,
+    max_width: u16,
+    teammate_selection: Option<usize>,
+) -> Vec<Span<'static>> {
     if !state.should_show() {
         return Vec::new();
     }
@@ -326,16 +362,40 @@ pub fn build_spans(state: &TuiStatusState, max_width: u16) -> Vec<Span<'static>>
         spans.push(Span::styled(mode, spinner_style));
         spans.push(Span::raw(" "));
 
-        // Label: verb or teammate summary.
+        // Label: verb or teammate summary / selection list.
         if !state.active_agents.is_empty() {
             let count = state.active_agents.len();
-            let label = if count == 1 {
-                let a = state.active_agents.values().next().unwrap();
-                format!("{} \u{00B7} {} running", a.name, count)
+            if let Some(selected) = teammate_selection {
+                // Selection mode: list agents with pointer on the selected one.
+                let sorted = sorted_agent_entries(&state.active_agents);
+                for (i, (_id, agent)) in sorted.iter().enumerate() {
+                    if i > 0 {
+                        spans.push(Span::styled(" \u{00B7} ", dim));
+                    }
+                    if i == selected {
+                        spans.push(Span::styled(
+                            format!("\u{25B8} {}", agent.name),
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        ));
+                    } else {
+                        spans.push(Span::styled(agent.name.clone(), dim));
+                    }
+                }
+                if count > 1 {
+                    spans.push(Span::styled(
+                        format!("  ({} / {})", selected + 1, count),
+                        dim,
+                    ));
+                }
             } else {
-                format!("{} teammates \u{00B7} {} running", count, count)
-            };
-            spans.push(Span::styled(label, dim));
+                let label = if count == 1 {
+                    let a = state.active_agents.values().next().unwrap();
+                    format!("{} \u{00B7} {} running", a.name, count)
+                } else {
+                    format!("{} teammates \u{00B7} {} running", count, count)
+                };
+                spans.push(Span::styled(label, dim));
+            }
         } else {
             // Shimmer: sweep a highlight window across the verb.
             let label = state.current_verb.unwrap_or(verbs::THINKING_VERB);
@@ -401,6 +461,49 @@ pub fn build_spans(state: &TuiStatusState, max_width: u16) -> Vec<Span<'static>>
             spans.push(Span::raw("  "));
             spans.push(Span::styled(format!("{}: {}", agent_count, names.join(", ")), dim));
         }
+
+        // Bridge status
+        if !state.bridge_platforms.is_empty() {
+            let platforms = state.bridge_platforms.join(", ");
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(
+                format!("bridge: {platforms} ({})", state.bridge_sessions),
+                dim,
+            ));
+        }
+
+        // Teleport status
+        if state.teleport_remote {
+            let env = state.teleport_env.as_deref().unwrap_or("remote");
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(format!("teleport: {env}"), dim));
+        }
+    }
+
+    // Voice indicator (shown only when not idle)
+    if let Some(ref voice) = state.voice_state {
+        if !matches!(voice, clawed_bus::events::VoiceState::Idle) {
+            let (icon, label) = match voice {
+                clawed_bus::events::VoiceState::Idle => unreachable!(),
+                clawed_bus::events::VoiceState::Recording => ("\u{1F534}", "recording"),
+                clawed_bus::events::VoiceState::Transcribing => ("\u{23F3}", "transcribing"),
+                clawed_bus::events::VoiceState::Playing => ("\u{1F50A}", "playing"),
+            };
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(
+                format!("{icon} {label}"),
+                Style::default().fg(Color::Magenta),
+            ));
+        }
+    }
+
+    // IDE integration hint
+    if let Some(ref ide) = state.ide_kind {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            format!("\u{1F4BB} {ide}"),
+            Style::default().fg(Color::Cyan),
+        ));
     }
 
     spans

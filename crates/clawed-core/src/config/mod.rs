@@ -114,6 +114,9 @@ pub struct Settings {
     /// Custom status line configuration (external shell command).
     #[serde(default, rename = "statusLine")]
     pub status_line: Option<StatusLineConfig>,
+    /// Diff background style: `"bright"` (saturated, default) or `"dim"` (low-saturation).
+    #[serde(default, rename = "diffStyle")]
+    pub diff_style: Option<String>,
 }
 
 /// Status line external command configuration.
@@ -216,6 +219,7 @@ fn merge_settings(base: Settings, overlay: &Settings) -> Settings {
         minimal_mode: overlay.minimal_mode.or(base.minimal_mode),
         theme: overlay.theme.clone().or(base.theme),
         status_line: overlay.status_line.clone().or(base.status_line),
+        diff_style: overlay.diff_style.clone().or(base.diff_style),
     }
 }
 

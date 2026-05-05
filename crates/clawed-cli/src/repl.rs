@@ -1044,6 +1044,16 @@ pub async fn run(
                             CommandResult::Stats => {
                                 handle_stats_command(&engine, session_start).await;
                             }
+                            CommandResult::Bridge => {
+                                println!("Bridge gateway status:");
+                                println!("  Status: Not available in REPL mode (TUI only)");
+                            }
+                            CommandResult::Teleport => {
+                                let remote_env = std::env::var("CLAUDE_CODE_REMOTE").unwrap_or_else(|_| "not set".to_string());
+                                println!("Teleport / CCR status:");
+                                println!("  CLAUDE_CODE_REMOTE: {remote_env}");
+                                println!("  Status: Not connected");
+                            }
                         }
                     }
                     continue;
