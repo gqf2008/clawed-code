@@ -180,10 +180,19 @@ impl ApiBackend for OpenAIBackend {
             anyhow::bail!("API error {} ({}): {}", status, self.provider, body);
         }
 
-        let openai_resp: ChatCompletionResponse = response
-            .json()
+        let body_text = response
+            .text()
             .await
-            .context("Failed to parse OpenAI-compatible response")?;
+            .unwrap_or_else(|_| "<failed to read body>".into());
+        let openai_resp: ChatCompletionResponse =
+            serde_json::from_str(&body_text).with_context(|| {
+                tracing::error!(
+                    provider = %self.provider,
+                    error = "Failed to parse OpenAI-compatible response",
+                    body_preview = %body_text.chars().take(500).collect::<String>(),
+                );
+                "Failed to parse response: body was not valid JSON".to_string()
+            })?;
 
         Ok(from_openai_response(openai_resp))
     }
