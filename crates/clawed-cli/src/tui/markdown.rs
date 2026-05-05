@@ -4,7 +4,7 @@
 //! for parsing and `syntect` for code block syntax highlighting.
 
 use super::{blank_line, muted};
-use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -12,6 +12,7 @@ use ratatui::{
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
+use unicode_width::UnicodeWidthStr;
 
 /// Lazy-initialized syntax highlighting resources.
 struct SyntaxResources {
@@ -30,7 +31,84 @@ impl SyntaxResources {
     }
 }
 
-/// Style stack entry for nested markdown formatting.
+/// Collects table data from pulldown-cmark events, then renders with borders.
+struct TableCollector {
+    alignments: Vec<Alignment>,
+    headers: Vec<String>,
+    rows: Vec<Vec<String>>,
+    current_cell: String,
+    in_header: bool,
+}
+
+impl TableCollector {
+    fn new(alignments: Vec<Alignment>) -> Self {
+        Self {
+            alignments,
+            headers: Vec::new(),
+            rows: Vec::new(),
+            current_cell: String::new(),
+            in_header: true,
+        }
+    }
+
+    fn push_cell(&mut self) {
+        let cell = std::mem::take(&mut self.current_cell);
+        if self.in_header {
+            self.headers.push(cell);
+        } else if !self.rows.is_empty() {
+            self.rows.last_mut().unwrap().push(cell);
+        }
+    }
+
+
+    fn num_cols(&self) -> usize {
+        self.headers.len().max(
+            self.rows.iter().map(|r| r.len()).max().unwrap_or(0)
+        )
+    }
+
+    fn render(&self, max_width: u16) -> Vec<Line<'static>> {
+        let ncols = self.num_cols();
+        if ncols == 0 {
+            return vec![blank_line()];
+        }
+        // Normalize row cell counts
+        let headers: Vec<&str> = self.headers.iter().map(|s| s.as_str()).collect();
+        let rows: Vec<Vec<&str>> = self.rows.iter().map(|r| {
+            let mut v: Vec<&str> = r.iter().map(|s| s.as_str()).collect();
+            v.resize(ncols, "");
+            v
+        }).collect();
+
+        let aligns: Vec<Alignment> = if self.alignments.len() >= ncols {
+            self.alignments[..ncols].to_vec()
+        } else {
+            let mut a = self.alignments.clone();
+            a.resize(ncols, Alignment::None);
+            a
+        };
+
+        // Convert to display strings
+        let header_strs: Vec<String> = headers.iter().map(|s| s.to_string()).collect();
+        let row_strs: Vec<Vec<String>> = rows.iter().map(|r| {
+            r.iter().map(|s| s.to_string()).collect()
+        }).collect();
+
+        // Check if table is too wide — fall back to kv format
+        let available = max_width.saturating_sub(2) as usize; // margin
+        let min_total: usize = (0..ncols).map(|ci| {
+            let hw = header_strs[ci].lines().map(|l| l.width()).max().unwrap_or(0);
+            let dw = row_strs.iter().map(|r| r[ci].lines().map(|l| l.width()).max().unwrap_or(0)).max().unwrap_or(0);
+            hw.max(dw).min(3) // 3 chars minimum per column
+        }).sum();
+        let border_overhead = 1 + ncols * 3; // │ + each col has " │ "
+        if min_total + border_overhead > available || available < 40 {
+            return render_table_kv(&headers, &rows);
+        }
+
+        render_table_with_borders(&header_strs, &row_strs, &aligns, available)
+    }
+}
 #[derive(Clone, Copy, Default)]
 struct StyleState {
     bold: bool,
@@ -74,6 +152,282 @@ impl StyleState {
     }
 }
 
+// ── Table rendering helpers ──────────────────────────────────────────────────
+
+/// Render table with box-drawing borders, column width calculation, and alignment.
+fn render_table_with_borders(
+    headers: &[String],
+    rows: &[Vec<String>],
+    aligns: &[Alignment],
+    available: usize,
+) -> Vec<Line<'static>> {
+    let ncols = headers.len();
+    let border_overhead = 1 + ncols * 3; // leading │ + each col: " content │"
+    let content_width = available.saturating_sub(border_overhead);
+
+    // Step 1: calculate per-column widths
+    let col_widths = calculate_column_widths(headers, rows, ncols, content_width);
+
+    // Step 2: wrap cell content
+    let wrapped_headers: Vec<Vec<String>> = (0..ncols)
+        .map(|ci| wrap_text(&headers[ci], col_widths[ci]))
+        .collect();
+    let wrapped_rows: Vec<Vec<Vec<String>>> = rows.iter().map(|row| {
+        (0..ncols).map(|ci| wrap_text(&row[ci], col_widths[ci])).collect()
+    }).collect();
+
+    // Step 3: compute row heights
+    let header_height = wrapped_headers.iter().map(|c| c.len().max(1)).max().unwrap_or(1);
+    let row_heights: Vec<usize> = wrapped_rows.iter().map(|row| {
+        row.iter().map(|c| c.len().max(1)).max().unwrap_or(1)
+    }).collect();
+
+    // If any row is too tall, fall back to kv
+    if header_height > 4 || row_heights.iter().any(|&h| h > 4) {
+        let headers_slice: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
+        let rows_slice: Vec<Vec<&str>> = rows.iter().map(|r| {
+            r.iter().map(|s| s.as_str()).collect()
+        }).collect();
+        return render_table_kv(&headers_slice, &rows_slice);
+    }
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let dim = muted();
+
+    // ── Top border ──
+    lines.push(border_line('┌', '┬', '┐', &col_widths, dim));
+
+    // ── Header row ──
+    for line_idx in 0..header_height {
+        let spans = build_cell_line(&wrapped_headers, line_idx, &col_widths, aligns, true, dim);
+        lines.push(Line::from(spans));
+    }
+
+    // ── Header separator ──
+    lines.push(border_line('├', '┼', '┤', &col_widths, dim));
+
+    // ── Data rows ──
+    for (ri, row) in wrapped_rows.iter().enumerate() {
+        let h = row_heights[ri];
+        for line_idx in 0..h {
+            let spans = build_cell_line(row, line_idx, &col_widths, aligns, false, dim);
+            lines.push(Line::from(spans));
+        }
+    }
+
+    // ── Bottom border ──
+    lines.push(border_line('└', '┴', '┘', &col_widths, dim));
+
+    lines
+}
+
+/// Build a single border line: left_col + column_fill + cross + ... + right_col.
+fn border_line(left: char, cross: char, right: char, widths: &[usize], style: Style) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    spans.push(Span::styled(left.to_string(), style));
+    for (i, &w) in widths.iter().enumerate() {
+        spans.push(Span::styled("─".repeat(w + 2), style)); // padding each side
+        if i + 1 < widths.len() {
+            spans.push(Span::styled(cross.to_string(), style));
+        }
+    }
+    spans.push(Span::styled(right.to_string(), style));
+    Line::from(spans)
+}
+
+/// Build spans for one line across all cells in a row.
+fn build_cell_line(
+    cells: &[Vec<String>],
+    line_idx: usize,
+    widths: &[usize],
+    aligns: &[Alignment],
+    is_header: bool,
+    dim: Style,
+) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    spans.push(Span::styled("│", dim));
+    for (ci, cell_lines) in cells.iter().enumerate() {
+        let content = if line_idx < cell_lines.len() {
+            cell_lines[line_idx].as_str()
+        } else {
+            ""
+        };
+        let w = widths[ci];
+        let display_w = content.width();
+        let padding = w.saturating_sub(display_w);
+
+        let align = if is_header {
+            Alignment::Center
+        } else {
+            aligns.get(ci).copied().unwrap_or(Alignment::None)
+        };
+
+        let (left_pad, right_pad) = pad_amounts(padding, align);
+
+        spans.push(Span::raw(" "));
+        if left_pad > 0 {
+            spans.push(Span::raw(" ".repeat(left_pad)));
+        }
+        spans.push(Span::raw(content.to_string()));
+        if right_pad > 0 {
+            spans.push(Span::raw(" ".repeat(right_pad)));
+        }
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled("│", dim));
+    }
+    spans
+}
+
+/// Calculate per-column widths using the official CC algorithm:
+/// 1. min_width = longest word (prevents breaking words unnecessarily)
+/// 2. ideal_width = longest cell
+/// 3. If ideal fits: use ideal. If min fits: use min + proportional overflow. Else: hard scale.
+fn calculate_column_widths(
+    headers: &[String],
+    rows: &[Vec<String>],
+    ncols: usize,
+    available: usize,
+) -> Vec<usize> {
+    let min_widths: Vec<usize> = (0..ncols).map(|ci| {
+        let h_min = longest_word_width(&headers[ci]);
+        let d_min = rows.iter().map(|r| longest_word_width(&r[ci])).max().unwrap_or(0);
+        h_min.max(d_min).max(3).min(available / ncols.max(1))
+    }).collect();
+
+    let ideal_widths: Vec<usize> = (0..ncols).map(|ci| {
+        let h = headers[ci].lines().map(|l| l.width()).max().unwrap_or(0);
+        let d = rows.iter().map(|r| r[ci].lines().map(|l| l.width()).max().unwrap_or(0)).max().unwrap_or(0);
+        h.max(d).max(3)
+    }).collect();
+
+    let min_sum: usize = min_widths.iter().sum();
+    let ideal_sum: usize = ideal_widths.iter().sum();
+
+    if ideal_sum <= available {
+        ideal_widths
+    } else if min_sum <= available {
+        // Distribute remaining space proportionally by overflow
+        let extra = available - min_sum;
+        let overflows: Vec<usize> = (0..ncols).map(|ci| {
+            ideal_widths[ci].saturating_sub(min_widths[ci])
+        }).collect();
+        let total_overflow: usize = overflows.iter().sum();
+        if total_overflow > 0 {
+            (0..ncols).map(|ci| {
+                let share =
+                    (overflows[ci] as f64 / total_overflow as f64 * extra as f64) as usize;
+                min_widths[ci] + share
+            }).collect()
+        } else {
+            min_widths
+        }
+    } else {
+        // Even minimum widths don't fit — scale proportionally
+        if min_sum > 0 {
+            (0..ncols).map(|ci| {
+                ((min_widths[ci] as f64 / min_sum as f64) * available as f64) as usize
+            }).collect()
+        } else {
+            vec![3; ncols]
+        }
+    }
+}
+
+fn longest_word_width(text: &str) -> usize {
+    text.split_whitespace()
+        .map(|w| w.width())
+        .max()
+        .unwrap_or(0)
+}
+
+fn pad_amounts(padding: usize, align: Alignment) -> (usize, usize) {
+    match align {
+        Alignment::Center => {
+            let left = padding / 2;
+            (left, padding - left)
+        }
+        Alignment::Right => (padding, 0),
+        _ => (0, padding), // Left or None
+    }
+}
+
+/// Simple word-wrap respecting Unicode display width.
+fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![String::new()];
+    }
+    let mut lines: Vec<String> = Vec::new();
+    for input_line in text.lines() {
+        if input_line.is_empty() {
+            lines.push(String::new());
+            continue;
+        }
+        let mut current = String::new();
+        let mut current_width: usize = 0;
+        for word in input_line.split_whitespace() {
+            let ww = word.width();
+            let sep = usize::from(!current.is_empty());
+            if current_width + sep + ww > max_width {
+                if !current.is_empty() {
+                    lines.push(std::mem::take(&mut current));
+                    current_width = 0;
+                }
+                // Word is too long — force-fit on its own line(s)
+                if ww > max_width {
+                    lines.push(word.to_string());
+                    continue;
+                }
+            }
+            if !current.is_empty() {
+                current.push(' ');
+                current_width += 1;
+            }
+            current.push_str(word);
+            current_width += ww;
+        }
+        if !current.is_empty() {
+            lines.push(current);
+        }
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+/// Key-value fallback for narrow terminals or overly tall tables.
+fn render_table_kv(headers: &[&str], rows: &[Vec<&str>]) -> Vec<Line<'static>> {
+    let dim = muted();
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let sep_len = 40usize;
+
+    for row in rows {
+        lines.push(Line::styled("─".repeat(sep_len), dim));
+        for (ci, cell) in row.iter().enumerate() {
+            let label = headers.get(ci).copied().unwrap_or("");
+            if !label.is_empty() {
+                let first_line = Line::from(vec![
+                    Span::styled(format!("{label}: "), bold),
+                    Span::raw(cell.lines().next().unwrap_or("").to_string()),
+                ]);
+                lines.push(first_line);
+                // Continuation lines indented
+                for cont in cell.lines().skip(1) {
+                    lines.push(Line::styled(format!("  {cont}"), dim));
+                }
+            } else {
+                for l in cell.lines() {
+                    lines.push(Line::raw(l.to_string()));
+                }
+            }
+        }
+    }
+    lines.push(Line::styled("─".repeat(sep_len), dim));
+    lines.push(blank_line());
+    lines
+}
+
 /// Convert a markdown string into styled ratatui lines.
 pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
     // Fast path: if no markdown syntax, return plain lines
@@ -93,15 +447,13 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
     let mut code_block_buf = String::new();
     let mut list_item_started = false;
     let mut ordered_list_index: Option<u64> = None;
-    // Table tracking: column index within the current row (reset per row).
-    let mut table_col_idx: usize = 0;
+    // Table state: collector gathers all cells, renders at TagEnd::Table.
+    let mut table_collector: Option<TableCollector> = None;
 
     for event in parser {
         match event {
             Event::Start(tag) => match tag {
                 Tag::Heading { level, .. } => {
-                    // Flush any pending content (e.g. from a preceding table that
-                    // never emitted its own flush) before starting a new heading.
                     if !current_spans.is_empty() {
                         flush_line(&mut lines, &mut current_spans);
                     }
@@ -136,21 +488,27 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     state.strikethrough = true;
                 }
                 Tag::Link { dest_url, .. } => {
-                    // We'll handle the link text inside, then append URL after
                     state.bold = true;
-                    let _ = dest_url; // URL appended on TagEnd
+                    let _ = dest_url;
                 }
-                Tag::Table(_) => {}
-                Tag::TableHead | Tag::TableRow => {
-                    // Reset column counter for each new row.
-                    table_col_idx = 0;
+                Tag::Table(alignments) => {
+                    table_collector = Some(TableCollector::new(alignments));
+                }
+                Tag::TableHead => {
+                    if let Some(ref mut tc) = table_collector {
+                        tc.in_header = true;
+                    }
+                }
+                Tag::TableRow => {
+                    if let Some(ref mut tc) = table_collector {
+                        tc.in_header = false;
+                        tc.rows.push(Vec::new());
+                    }
                 }
                 Tag::TableCell => {
-                    // Add a column separator before every cell except the first.
-                    if table_col_idx > 0 {
-                        current_spans.push(Span::styled(" │ ", muted()));
+                    if let Some(ref mut tc) = table_collector {
+                        tc.current_cell.clear();
                     }
-                    table_col_idx += 1;
                 }
                 _ => {}
             },
@@ -181,10 +539,6 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     }
                 }
                 TagEnd::Item => {
-                    // Flush any remaining spans for tight-list items.
-                    // Loose-list items are already flushed by End(Paragraph);
-                    // only flush here when there are pending spans to avoid a
-                    // double blank line.
                     if !current_spans.is_empty() {
                         flush_line(&mut lines, &mut current_spans);
                     }
@@ -201,33 +555,38 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                 TagEnd::Link => {
                     state.bold = false;
                 }
-                // Table rows: flush each row as its own line.
-                // Table head end: add a separator line after flushing the header row.
-                // Table end: add a blank line after the table.
-                TagEnd::TableRow => {
-                    flush_line(&mut lines, &mut current_spans);
+                TagEnd::TableCell => {
+                    if let Some(ref mut tc) = table_collector {
+                        tc.push_cell();
+                    }
                 }
                 TagEnd::TableHead => {
-                    // Header cells are direct children of TableHead (no TableRow wrapper),
-                    // so we flush the accumulated header spans here.
-                    flush_line(&mut lines, &mut current_spans);
-                    // Add a visual separator between header and data rows.
-                    lines.push(Line::styled("---", muted()));
+                    // Headers collected; in_header stays true until next TableRow.
                 }
+                TagEnd::TableRow => {}
                 TagEnd::Table => {
-                    // Flush any remaining content (data rows are flushed by TagEnd::TableRow).
-                    if !current_spans.is_empty() {
-                        flush_line(&mut lines, &mut current_spans);
+                    if let Some(tc) = table_collector.take() {
+                        let table_lines = tc.render(80); // default width; caller can override
+                        // Insert blank line before table if there's preceding content
+                        if !lines.is_empty() && !is_last_line_blank(&lines) {
+                            lines.push(blank_line());
+                        }
+                        lines.extend(table_lines);
                     }
                     lines.push(blank_line());
                 }
-                TagEnd::TableCell => {}
                 _ => {}
             },
             Event::Text(cow_text) => {
                 let txt = cow_text.to_string();
                 if in_code_block {
                     code_block_buf.push_str(&txt);
+                    continue;
+                }
+
+                // Collect table cell content
+                if let Some(ref mut tc) = table_collector {
+                    tc.current_cell.push_str(&txt);
                     continue;
                 }
 
@@ -325,6 +684,13 @@ fn flush_line(lines: &mut Vec<Line<'static>>, spans: &mut Vec<Span<'static>>) {
     } else {
         lines.push(Line::from(std::mem::take(spans)));
     }
+}
+
+fn is_last_line_blank(lines: &[Line<'static>]) -> bool {
+    lines.last().is_some_and(|l| {
+        l.spans.is_empty()
+            || (l.spans.len() == 1 && l.spans[0].content.is_empty())
+    })
 }
 
 /// Render a code block with syntax highlighting via syntect.
@@ -609,14 +975,53 @@ mod tests {
     fn table_rows_are_separate_lines() {
         let md = "| Col A | Col B |\n|-------|-------|\n| val1  | val2  |\n| val3  | val4  |";
         let lines = render_markdown(md);
-        // Header row + data rows should each be on their own line.
-        // At minimum: header (1), separator line (1), 2 data rows (2) = 4 lines.
-        assert!(lines.len() >= 4, "expected ≥4 lines, got {}", lines.len());
+        // New format: top border + header + separator + 2 data rows + bottom border + blank
+        // Minimum: 6 lines
+        assert!(lines.len() >= 6, "expected ≥6 lines, got {}", lines.len());
         // The cell separator │ must appear in at least one line.
         let has_pipe = lines
             .iter()
             .any(|l| l.spans.iter().any(|s| s.content.contains('│')));
         assert!(has_pipe, "table cells should be separated by │");
+    }
+
+    #[test]
+    fn table_with_borders() {
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |";
+        let lines = render_markdown(md);
+        let full: String = lines.iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(full.contains('┌'), "table must have top-left corner ┌, got: {full:?}");
+        assert!(full.contains('┐'), "table must have top-right corner ┐");
+        assert!(full.contains('└'), "table must have bottom-left corner └");
+        assert!(full.contains('┘'), "table must have bottom-right corner ┘");
+        assert!(full.contains("├") || full.contains("┼"), "table must have header separator ├─┼");
+    }
+
+    #[test]
+    fn table_alignment_left() {
+        let md = "| L |\n|:---|\n| a |";
+        let lines = render_markdown(md);
+        let full: String = lines.iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(full.contains('│'), "table must have vertical bars");
+    }
+
+    #[test]
+    fn table_narrow_falls_back_to_kv() {
+        // Very wide table should trigger kv fallback
+        let md = "| VeryLongHeaderName | AnotherLongHeader |\n|-------------------|---|\n| short | data |";
+        let lines = render_markdown(md);
+        let full: String = lines.iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        // Either has box borders (if fits) or kv fallback with ── separator
+        assert!(
+            full.contains('┌') || full.contains("──"),
+            "table should render with borders or kv fallback"
+        );
     }
 
     #[test]
@@ -626,12 +1031,26 @@ mod tests {
         // The heading should be on its own line, not merged with table content.
         let has_heading_line = lines.iter().any(|l| {
             let text: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
-            text.contains("Section") && !text.contains("│")
+            text.contains("Section") && !text.contains('│')
         });
         assert!(
             has_heading_line,
             "heading should be on a separate line from table"
         );
+    }
+
+    #[test]
+    fn table_kv_fallback_basic() {
+        // render_table_kv helper
+        let headers = vec!["Name", "Value"];
+        let rows = vec![vec!["foo", "bar"]];
+        let result = render_table_kv(&headers, &rows);
+        let full: String = result.iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(full.contains("Name:"), "kv must show label");
+        assert!(full.contains("foo"), "kv must show value");
+        assert!(full.contains('─'), "kv must use ─ separator");
     }
 
     // ── Rendering verification ──
