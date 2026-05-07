@@ -270,7 +270,14 @@ mod tests {
         assert!(spawn.success);
 
         let spawn2 = net
-            .spawn_agent("dev", "reviewer", None, Some("Review code".into()), None, None)
+            .spawn_agent(
+                "dev",
+                "reviewer",
+                None,
+                Some("Review code".into()),
+                None,
+                None,
+            )
             .await
             .unwrap();
         assert!(spawn2.success);

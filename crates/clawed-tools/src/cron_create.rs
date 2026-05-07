@@ -109,10 +109,17 @@ impl Tool for CronCreateTool {
         let human = cron_to_human(cron_expr);
         let days = default_max_age_days();
 
-        let kind = if recurring { "recurring job" } else { "one-shot task" };
+        let kind = if recurring {
+            "recurring job"
+        } else {
+            "one-shot task"
+        };
         let session = if durable { "" } else { ", session-only" };
         let suffix = if recurring {
-            format!(". Auto-expires after {} days. Use CronDelete to cancel sooner.", days)
+            format!(
+                ". Auto-expires after {} days. Use CronDelete to cancel sooner.",
+                days
+            )
         } else {
             ". It will fire once then auto-delete.".to_string()
         };

@@ -14,7 +14,8 @@ use super::prompt::PreparedPrompt;
 /// Maximum file size to read (10 MB).
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
-const SIMPLIFY_SYSTEM_PROMPT: &str = "Review all changed files for reuse, quality, and efficiency. Fix any issues found.\n\n\
+const SIMPLIFY_SYSTEM_PROMPT: &str =
+    "Review all changed files for reuse, quality, and efficiency. Fix any issues found.\n\n\
 ## Phase 1: Identify Changes\n\n\
 ## Phase 2: Review\n\n\
 Perform three parallel reviews on the changes above:\n\n\
@@ -72,9 +73,8 @@ pub(crate) fn prepare_simplify_submission(
 
     // If the first argument is an existing file path, treat all as file paths
     let first_token = args.split_whitespace().next();
-    let has_file_path = first_token.is_some_and(|t| {
-        resolve_path_safe(t, cwd).is_ok_and(|p| p.is_file())
-    });
+    let has_file_path =
+        first_token.is_some_and(|t| resolve_path_safe(t, cwd).is_ok_and(|p| p.is_file()));
 
     if has_file_path {
         return prepare_file_simplify(args, cwd);

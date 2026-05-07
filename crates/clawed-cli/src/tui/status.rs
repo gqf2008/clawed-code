@@ -1,7 +1,9 @@
 //! Dynamic status line for the TUI (ratatui version).
 //! Aligned with official Claude Code SpinnerAnimationRow.
 
-use super::verbs::{self, SHIMMER_INTERVAL_REQUESTING_MS, SHIMMER_INTERVAL_THINKING_MS, SPINNER_TICK_INTERVAL_MS};
+use super::verbs::{
+    self, SHIMMER_INTERVAL_REQUESTING_MS, SHIMMER_INTERVAL_THINKING_MS, SPINNER_TICK_INTERVAL_MS,
+};
 use super::MUTED;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -64,9 +66,7 @@ pub struct AgentInfo {
 }
 
 /// Return active agents sorted by name (stable ordering for UI selection).
-pub fn sorted_agent_entries(
-    agents: &HashMap<String, AgentInfo>,
-) -> Vec<(&String, &AgentInfo)> {
+pub fn sorted_agent_entries(agents: &HashMap<String, AgentInfo>) -> Vec<(&String, &AgentInfo)> {
     let mut sorted: Vec<(&String, &AgentInfo)> = agents.iter().collect();
     sorted.sort_by(|a, b| a.1.name.cmp(&b.1.name));
     sorted
@@ -262,7 +262,9 @@ impl TuiStatusState {
         let since_end = end.elapsed().as_millis() as u64;
         // Show after 3s delay, persist for at least 2s.
         since_end >= THOUGHT_DISPLAY_DELAY_MS
-            && since_end < THOUGHT_DISPLAY_DELAY_MS + THOUGHT_DISPLAY_MIN_MS.max(self.last_thinking_elapsed_ms)
+            && since_end
+                < THOUGHT_DISPLAY_DELAY_MS
+                    + THOUGHT_DISPLAY_MIN_MS.max(self.last_thinking_elapsed_ms)
     }
 
     /// Format "thought for Ns" text.
@@ -361,7 +363,11 @@ pub fn build_spans(
         spans.push(Span::styled(ch, spinner_style));
 
         // SpinnerModeGlyph: ↑ requesting, ↓ responding.
-        let mode = if state.last_token_time.is_some() { "\u{2193}" } else { "\u{2191}" };
+        let mode = if state.last_token_time.is_some() {
+            "\u{2193}"
+        } else {
+            "\u{2191}"
+        };
         spans.push(Span::styled(mode, spinner_style));
         spans.push(Span::raw(" "));
 
@@ -378,7 +384,9 @@ pub fn build_spans(
                     if i == selected {
                         spans.push(Span::styled(
                             format!("\u{25B8} {}", agent.name),
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
                         ));
                     } else {
                         spans.push(Span::styled(agent.name.clone(), dim));
@@ -407,11 +415,9 @@ pub fn build_spans(
             } else {
                 SHIMMER_INTERVAL_REQUESTING_MS
             };
-            let shimmer_tick =
-                ((state.spinner_frame as u64 * SPINNER_TICK_INTERVAL_MS) / shimmer_interval)
-                    as usize;
-            let (before, shimmer, after) =
-                verbs::compute_shimmer_segments(label, shimmer_tick);
+            let shimmer_tick = ((state.spinner_frame as u64 * SPINNER_TICK_INTERVAL_MS)
+                / shimmer_interval) as usize;
+            let (before, shimmer, after) = verbs::compute_shimmer_segments(label, shimmer_tick);
             if !before.is_empty() {
                 spans.push(Span::styled(before, dim));
             }
@@ -426,7 +432,10 @@ pub fn build_spans(
         // Token counter (>= 50 cols)
         if show_tokens && state.displayed_token_estimate > 0 {
             spans.push(Span::styled(
-                format!(" \u{00B7} \u{2193} {} tokens", state.displayed_token_estimate),
+                format!(
+                    " \u{00B7} \u{2193} {} tokens",
+                    state.displayed_token_estimate
+                ),
                 dim,
             ));
         }
@@ -448,21 +457,37 @@ pub fn build_spans(
         let tool_count = state.active_tools.len();
         if tool_count > 0 {
             if let Some(tool) = state.active_tools.values().next() {
-                push_active_item(&mut spans, &tool.name, tool.started.elapsed(), tool_count, warn);
+                push_active_item(
+                    &mut spans,
+                    &tool.name,
+                    tool.started.elapsed(),
+                    tool_count,
+                    warn,
+                );
             }
         }
 
         if state.active_shells > 0 {
             let s = if state.active_shells == 1 { "" } else { "s" };
             spans.push(Span::raw("  "));
-            spans.push(Span::styled(format!("{} shell{s}", state.active_shells), tool_style));
+            spans.push(Span::styled(
+                format!("{} shell{s}", state.active_shells),
+                tool_style,
+            ));
         }
 
         let agent_count = state.active_agents.len();
         if agent_count > 0 {
-            let names: Vec<&str> = state.active_agents.values().map(|a| a.name.as_str()).collect();
+            let names: Vec<&str> = state
+                .active_agents
+                .values()
+                .map(|a| a.name.as_str())
+                .collect();
             spans.push(Span::raw("  "));
-            spans.push(Span::styled(format!("{}: {}", agent_count, names.join(", ")), dim));
+            spans.push(Span::styled(
+                format!("{}: {}", agent_count, names.join(", ")),
+                dim,
+            ));
         }
 
         // Bridge status
@@ -537,7 +562,6 @@ mod tests {
             ToolInfo {
                 name: "Bash".into(),
                 started: Instant::now(),
-                
             },
         );
         assert!(state.should_show());

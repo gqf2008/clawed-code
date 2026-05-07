@@ -59,7 +59,11 @@ impl Tool for GlobTool {
         let full = search_dir.join(pattern).to_string_lossy().to_string();
         let search_canonical = match search_dir.canonicalize() {
             Ok(c) => c,
-            Err(e) => return Ok(ToolResult::error(format!("Cannot access search directory: {e}"))),
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Cannot access search directory: {e}"
+                )))
+            }
         };
         let mut matches: Vec<String> = Vec::new();
         for entry in glob::glob(&full).map_err(|e| anyhow::anyhow!("Bad glob: {e}"))? {

@@ -505,9 +505,7 @@ async fn test_prompt_hook_injects_text() {
 #[tokio::test]
 async fn test_prompt_hook_empty_command_skipped() {
     let mut config = HooksConfig::default();
-    config
-        .session_start
-        .push(make_prompt_rule(None, ""));
+    config.session_start.push(make_prompt_rule(None, ""));
     let reg = HookRegistry::from_config(config, ".", "test");
     let ctx = reg.prompt_ctx(HookEvent::SessionStart, None);
     let decision = reg.run(HookEvent::SessionStart, ctx).await;

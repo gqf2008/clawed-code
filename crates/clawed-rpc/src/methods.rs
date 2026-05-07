@@ -424,10 +424,7 @@ pub fn notification_to_jsonrpc(notif: &AgentNotification) -> Notification {
                 "context_usage_pct".into(),
                 serde_json::json!(context_usage_pct),
             );
-            map.insert(
-                "total_cost_usd".into(),
-                serde_json::json!(total_cost_usd),
-            );
+            map.insert("total_cost_usd".into(), serde_json::json!(total_cost_usd));
             Notification::new("session.status", Some(Value::Object(map)))
         }
         AgentNotification::HistoryCleared => Notification::new("agent.historyCleared", None),

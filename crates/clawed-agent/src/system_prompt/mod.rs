@@ -53,10 +53,7 @@ impl SystemPrompt {
 pub fn trim_system_prompt(system_prompt: &str, level: SectionTrimLevel) -> (String, u64) {
     let sections_to_drop: &[&str] = match level {
         SectionTrimLevel::Full => return (system_prompt.to_string(), 0),
-        SectionTrimLevel::Standard => &[
-            section_testing_guidance(),
-            section_debugging_guidance(),
-        ],
+        SectionTrimLevel::Standard => &[section_testing_guidance(), section_debugging_guidance()],
         SectionTrimLevel::Minimal => &[
             section_testing_guidance(),
             section_debugging_guidance(),
@@ -629,7 +626,8 @@ mod tests {
             trim_level: SectionTrimLevel::Full,
             ..Default::default()
         };
-        let prompt = build_system_prompt_ext(&cwd, "claude-sonnet-4-20250514", &[], "", "", &dynamic);
+        let prompt =
+            build_system_prompt_ext(&cwd, "claude-sonnet-4-20250514", &[], "", "", &dynamic);
         assert!(prompt.text.contains("File editing best practices"));
         assert!(prompt.text.contains("Git operations"));
         assert!(prompt.text.contains("Testing"));
@@ -643,7 +641,8 @@ mod tests {
             trim_level: SectionTrimLevel::Standard,
             ..Default::default()
         };
-        let prompt = build_system_prompt_ext(&cwd, "claude-sonnet-4-20250514", &[], "", "", &dynamic);
+        let prompt =
+            build_system_prompt_ext(&cwd, "claude-sonnet-4-20250514", &[], "", "", &dynamic);
         assert!(prompt.text.contains("File editing best practices"));
         assert!(prompt.text.contains("Git operations"));
         assert!(!prompt.text.contains("\n# Testing\n"));
@@ -659,7 +658,8 @@ mod tests {
             coordinator_mode: true,
             ..Default::default()
         };
-        let prompt = build_system_prompt_ext(&cwd, "claude-sonnet-4-20250514", &[], "", "", &dynamic);
+        let prompt =
+            build_system_prompt_ext(&cwd, "claude-sonnet-4-20250514", &[], "", "", &dynamic);
         assert!(!prompt.text.contains("File editing best practices"));
         assert!(!prompt.text.contains("Git operations"));
         assert!(!prompt.text.contains("\n# Testing\n"));
@@ -680,7 +680,14 @@ mod tests {
     #[test]
     fn test_plan_mode_not_in_build() {
         let cwd = PathBuf::from(".");
-        let prompt = build_system_prompt_ext(&cwd, "claude-sonnet-4-20250514", &[], "", "", &DynamicSections::default());
+        let prompt = build_system_prompt_ext(
+            &cwd,
+            "claude-sonnet-4-20250514",
+            &[],
+            "",
+            "",
+            &DynamicSections::default(),
+        );
         assert!(!prompt.text.contains("Plan Mode"));
     }
 
@@ -716,9 +723,15 @@ mod tests {
         assert_eq!(suggest_trim_level(40_000, 100_000), SectionTrimLevel::Full);
         assert_eq!(suggest_trim_level(55_000, 100_000), SectionTrimLevel::Full);
         // Critical (≥75%) → Standard
-        assert_eq!(suggest_trim_level(80_000, 100_000), SectionTrimLevel::Standard);
+        assert_eq!(
+            suggest_trim_level(80_000, 100_000),
+            SectionTrimLevel::Standard
+        );
         // Imminent (≥90%) → Minimal
-        assert_eq!(suggest_trim_level(95_000, 100_000), SectionTrimLevel::Minimal);
+        assert_eq!(
+            suggest_trim_level(95_000, 100_000),
+            SectionTrimLevel::Minimal
+        );
         // Zero context window → Full (safe fallback)
         assert_eq!(suggest_trim_level(1_000_000, 0), SectionTrimLevel::Full);
     }

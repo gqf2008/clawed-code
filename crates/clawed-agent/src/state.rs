@@ -283,9 +283,15 @@ impl Default for AppState {
 impl AppState {
     /// Record a tool invocation.
     pub fn record_tool_use(&mut self, tool_name: &str, success: bool) {
-        *self.tool_usage_counts.entry(tool_name.to_string()).or_insert(0) += 1;
+        *self
+            .tool_usage_counts
+            .entry(tool_name.to_string())
+            .or_insert(0) += 1;
         if success {
-            *self.tool_success_counts.entry(tool_name.to_string()).or_insert(0) += 1;
+            *self
+                .tool_success_counts
+                .entry(tool_name.to_string())
+                .or_insert(0) += 1;
         }
     }
 

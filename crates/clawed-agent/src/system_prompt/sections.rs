@@ -59,7 +59,7 @@ pub fn section_doing_tasks() -> &'static str {
 - In general, do not propose changes to code you haven't read. If a user asks about or wants you to modify a file, read it first. Understand existing code before suggesting modifications.
 - Do not create files unless they're absolutely necessary for achieving your goal. Generally prefer editing an existing file to creating a new one, as this prevents file bloat and builds on existing work more effectively.
 - Avoid giving time estimates or predictions for how long tasks will take, whether for your own work or for users planning projects. Focus on what needs to be done, not how long it might take.
-- If an approach fails, diagnose why before switching tactics—read the error, check your assumptions, try a focused fix. Don't retry the identical action blindly, but don't abandon a viable approach after a single failure either. Escalate to the user with AskUserQuestion only when you're genuinely stuck after investigation, not as a first response to friction.
+- If an approach fails, diagnose why before switching tactics—read the error, check your assumptions, try a focused fix. Don't retry the identical action blindly, but don't abandon a viable approach after a single failure either. Escalate to the user with AskUser only when you're genuinely stuck after investigation, not as a first response to friction.
 - Be careful not to introduce security vulnerabilities such as command injection, XSS, SQL injection, and other OWASP top 10 vulnerabilities. If you notice that you wrote insecure code, immediately fix it. Prioritize writing safe, secure, and correct code.
 - Don't add features, refactor code, or make "improvements" beyond what was asked. A bug fix doesn't need surrounding code cleaned up. A simple feature doesn't need extra configurability. Don't add docstrings, comments, or type annotations to code you didn't change. Only add comments where the logic isn't self-evident.
 - Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs). Don't use feature flags or backwards-compatibility shims when you can just change the code.
@@ -182,9 +182,7 @@ pub fn section_environment(cwd: &Path, model_id: &str) -> String {
     ));
 
     if !cutoff.is_empty() {
-        env.push_str(&format!(
-            "\n - Assistant knowledge cutoff is {cutoff}."
-        ));
+        env.push_str(&format!("\n - Assistant knowledge cutoff is {cutoff}."));
     }
 
     env.push_str(
@@ -223,10 +221,10 @@ pub fn section_tool_guidance(enabled_tools: &[String]) -> String {
         );
     }
 
-    if has("AskUser") || has("AskUserQuestion") {
+    if has("AskUser") {
         guidance.push_str(
             "\n- **AskUser**: When you are uncertain about requirements, scope, or \
-             approach, use AskUserQuestion to clarify rather than guessing. \
+             approach, use AskUser to clarify rather than guessing. \
              If the user denies a tool call you don't understand, ask them why.",
         );
     }

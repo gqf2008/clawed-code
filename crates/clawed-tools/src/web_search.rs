@@ -153,13 +153,16 @@ async fn do_search(
         urlencoding::encode(&search_query),
         MAX_RESULTS
     );
-    let resp = tokio::time::timeout(std::time::Duration::from_secs(30), client
-        .get(&url)
-        .header("Accept", "application/json")
-        .header("X-Subscription-Token", api_key)
-        .send())
-        .await
-        .map_err(|_| anyhow::anyhow!("Search request timed out"))??;
+    let resp = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        client
+            .get(&url)
+            .header("Accept", "application/json")
+            .header("X-Subscription-Token", api_key)
+            .send(),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("Search request timed out"))??;
 
     if !resp.status().is_success() {
         anyhow::bail!("Search API returned status {}", resp.status());

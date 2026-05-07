@@ -649,7 +649,8 @@ async fn e2e_full_tool_round_trip_with_registered_tool() {
     assert_eq!(id, "tool_1");
     assert!(!is_error, "tool should succeed");
     assert!(
-        text.as_deref().is_some_and(|t| t.starts_with("Echo: hello world")),
+        text.as_deref()
+            .is_some_and(|t| t.starts_with("Echo: hello world")),
         "tool result should start with echo output, got: {:?}",
         text
     );

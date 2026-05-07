@@ -24,19 +24,13 @@ pub enum SystemReminder {
         feedback: Option<String>,
     },
     /// A file was modified externally (by user, linter, or IDE).
-    FileModified {
-        path: String,
-    },
+    FileModified { path: String },
     /// Plan mode state change.
-    PlanModeChange {
-        active: bool,
-    },
+    PlanModeChange { active: bool },
     /// Session is being continued from a prior conversation.
     SessionContinuation,
     /// Compact file reference — file was read before compaction.
-    CompactFileReference {
-        path: String,
-    },
+    CompactFileReference { path: String },
     /// Custom reminder with arbitrary content.
     Custom(String),
 }
@@ -119,7 +113,12 @@ impl ReminderCollector {
         if self.pending.is_empty() {
             return None;
         }
-        let xml: String = self.pending.drain(..).map(|r| r.to_xml()).collect::<Vec<_>>().join("\n");
+        let xml: String = self
+            .pending
+            .drain(..)
+            .map(|r| r.to_xml())
+            .collect::<Vec<_>>()
+            .join("\n");
         Some(xml)
     }
 
@@ -172,7 +171,10 @@ mod tests {
 
     #[test]
     fn hook_success_formats() {
-        let r = SystemReminder::HookResult { success: true, feedback: None };
+        let r = SystemReminder::HookResult {
+            success: true,
+            feedback: None,
+        };
         assert!(r.to_xml().contains("hook success: Success"));
     }
 
@@ -187,7 +189,9 @@ mod tests {
 
     #[test]
     fn file_modified_formats() {
-        let r = SystemReminder::FileModified { path: "src/main.rs".into() };
+        let r = SystemReminder::FileModified {
+            path: "src/main.rs".into(),
+        };
         assert!(r.to_xml().contains("src/main.rs"));
     }
 
@@ -262,7 +266,9 @@ mod tests {
 
         let mut results = vec![ContentBlock::ToolResult {
             tool_use_id: "t1".into(),
-            content: vec![ToolResultContent::Text { text: "output".into() }],
+            content: vec![ToolResultContent::Text {
+                text: "output".into(),
+            }],
             is_error: false,
         }];
 
@@ -285,7 +291,9 @@ mod tests {
         let mut collector = ReminderCollector::default();
         let mut results = vec![ContentBlock::ToolResult {
             tool_use_id: "t1".into(),
-            content: vec![ToolResultContent::Text { text: "output".into() }],
+            content: vec![ToolResultContent::Text {
+                text: "output".into(),
+            }],
             is_error: false,
         }];
         collector.inject_into(&mut results);

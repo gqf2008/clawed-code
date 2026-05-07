@@ -196,9 +196,7 @@ struct InputHelper {
 
 impl InputHelper {
     fn new() -> Self {
-        Self {
-            skills: Vec::new(),
-        }
+        Self { skills: Vec::new() }
     }
 }
 

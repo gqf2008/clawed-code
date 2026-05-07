@@ -48,11 +48,11 @@ pub(crate) use prompt::{
     prepare_pr_prompt, prepare_summary_prompt, CommitPushPrPlan, PreparedPrompt,
 };
 pub(crate) use review::{handle_review, prepare_review_submission};
-pub(crate) use simplify::{handle_simplify, prepare_simplify_submission};
 pub(crate) use session::{
     handle_export, handle_history, handle_history_str, handle_search, handle_search_str,
     handle_undo,
 };
+pub(crate) use simplify::{handle_simplify, prepare_simplify_submission};
 pub(crate) use skill::{build_skill_user_message, find_skill, run_skill, switch_model_for_skill};
 pub(crate) use theme::{apply_theme, handle_theme_command, setting_to_name};
 

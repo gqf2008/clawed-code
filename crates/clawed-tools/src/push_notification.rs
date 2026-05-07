@@ -68,9 +68,7 @@ impl Tool for PushNotificationTool {
         // Print to stderr so CLI/TUI can pick it up as a notification
         eprintln!("\n\x1b[33m🔔 Notification: {message}\x1b[0m");
 
-        Ok(ToolResult::text(format!(
-            "Notification sent: {message}"
-        )))
+        Ok(ToolResult::text(format!("Notification sent: {message}")))
     }
 }
 

@@ -85,7 +85,9 @@ pub enum AgentEvent {
         limit: u32,
     },
     /// Conditional skills were activated based on file paths touched by tools.
-    SkillsActivated { names: Vec<String> },
+    SkillsActivated {
+        names: Vec<String>,
+    },
     Error(String),
 }
 

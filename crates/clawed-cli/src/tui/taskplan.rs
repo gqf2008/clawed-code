@@ -183,10 +183,7 @@ pub fn render(frame: &mut Frame, area: Rect, plan: &TaskPlan) {
         .filter(|t| t.status == TaskStatus::Running)
         .count();
     if running > 0 {
-        summary_spans.push(Span::styled(
-            format!(" · {running} running"),
-            dim,
-        ));
+        summary_spans.push(Span::styled(format!(" · {running} running"), dim));
     }
     if plan.active_shells > 0 {
         let s = if plan.active_shells == 1 { "" } else { "s" };
@@ -250,9 +247,9 @@ pub fn render(frame: &mut Frame, area: Rect, plan: &TaskPlan) {
         };
 
         let (icon, icon_style) = match task.status {
-            TaskStatus::Done => ("\u{2713}", done_style),     // ✓
-            TaskStatus::Failed => ("\u{2717}", fail_style),   // ✗
-            TaskStatus::Running => ("\u{25CF}", accent),      // ●
+            TaskStatus::Done => ("\u{2713}", done_style),   // ✓
+            TaskStatus::Failed => ("\u{2717}", fail_style), // ✗
+            TaskStatus::Running => ("\u{25CF}", accent),    // ●
         };
 
         let mut spans = vec![
@@ -280,10 +277,7 @@ pub fn render(frame: &mut Frame, area: Rect, plan: &TaskPlan) {
                 } else {
                     TREE_CONT
                 };
-                lines.push(Line::styled(
-                    format!("  {cont}  {activity}"),
-                    dim,
-                ));
+                lines.push(Line::styled(format!("  {cont}  {activity}"), dim));
             }
         }
     }
@@ -363,19 +357,23 @@ mod tests {
         plan.complete_task("t1", false);
         plan.terminate_task("t2");
         // Running: ● (U+25CF), Done: ✓ (U+2713), Failed: ✗ (U+2717)
-        let icons: Vec<&str> = plan.tasks.iter().map(|t| match t.status {
-            TaskStatus::Running => "\u{25CF}",
-            TaskStatus::Done => "\u{2713}",
-            TaskStatus::Failed => "\u{2717}",
-        }).collect();
+        let icons: Vec<&str> = plan
+            .tasks
+            .iter()
+            .map(|t| match t.status {
+                TaskStatus::Running => "\u{25CF}",
+                TaskStatus::Done => "\u{2713}",
+                TaskStatus::Failed => "\u{2717}",
+            })
+            .collect();
         assert_eq!(icons, vec!["\u{2713}", "\u{2717}"]); // ✓, ✗ (both completed)
     }
 
     #[test]
     fn verify_tree_chars() {
         assert_eq!(TREE_BRANCH, "\u{251C}\u{2500} "); // ├─
-        assert_eq!(TREE_LAST, "\u{2514}\u{2500} ");   // └─
-        assert_eq!(TREE_CONT, "\u{2502}  ");            // │
+        assert_eq!(TREE_LAST, "\u{2514}\u{2500} "); // └─
+        assert_eq!(TREE_CONT, "\u{2502}  "); // │
         assert_eq!(TREE_SPACE, "   ");
     }
 

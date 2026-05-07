@@ -89,8 +89,7 @@ const CRON_FILE_REL: &str = ".claude/scheduled_tasks.json";
 
 /// Global in-memory store for non-durable (session-only) tasks, keyed by directory.
 type MemoryMap = std::collections::HashMap<String, Vec<CronTask>>;
-static MEMORY_TASKS: std::sync::OnceLock<std::sync::Mutex<MemoryMap>> =
-    std::sync::OnceLock::new();
+static MEMORY_TASKS: std::sync::OnceLock<std::sync::Mutex<MemoryMap>> = std::sync::OnceLock::new();
 
 fn memory_tasks_map() -> &'static std::sync::Mutex<MemoryMap> {
     MEMORY_TASKS.get_or_init(|| std::sync::Mutex::new(MemoryMap::new()))
@@ -366,7 +365,7 @@ pub fn build_missed_task_notification(missed: &[&CronTask]) -> String {
         "The following one-shot scheduled task{} missed while Claude was not running. \
          {} already been removed from .claude/scheduled_tasks.json.\n\n\
          Do NOT execute {} yet. \
-         First use the AskUserQuestion tool to ask whether to run {} now. \
+         First use the AskUser tool to ask whether to run {} now. \
          Only execute if the user confirms.",
         if plural { "s were" } else { " was" },
         if plural { "They have" } else { "It has" },

@@ -280,8 +280,10 @@ impl SlashCommand {
             Self::Clear => CommandResult::ClearHistory,
             Self::Model(name) if name.is_empty() => {
                 let aliases = clawed_core::model::list_aliases();
-                let caps_sonnet = clawed_core::model::model_capabilities(clawed_core::model::defaults::SONNET);
-                let caps_opus = clawed_core::model::model_capabilities(clawed_core::model::defaults::OPUS);
+                let caps_sonnet =
+                    clawed_core::model::model_capabilities(clawed_core::model::defaults::SONNET);
+                let caps_opus =
+                    clawed_core::model::model_capabilities(clawed_core::model::defaults::OPUS);
                 let mut out = String::from("Usage: /model <name|alias>\n\nAliases:\n");
                 for (alias, resolved) in &aliases {
                     let display = clawed_core::model::display_name_any(resolved);
@@ -344,7 +346,9 @@ impl SlashCommand {
                 }
             }
             Self::Memory { sub } => CommandResult::Memory { sub: sub.clone() },
-            Self::Resume { query } => CommandResult::Resume { query: query.clone() },
+            Self::Resume { query } => CommandResult::Resume {
+                query: query.clone(),
+            },
             Self::Btw { text } => CommandResult::Btw { text: text.clone() },
             Self::Diff => CommandResult::Diff,
             Self::Status => CommandResult::Status,

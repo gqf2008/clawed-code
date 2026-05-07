@@ -1,44 +1,44 @@
 [
   {
-    "id": "explore-tui",
-    "content": "Explore TUI module structure and key files",
-    "status": "completed",
+    "id": "review-1",
+    "content": "运行 cargo test 和 cargo clippy 获取基线状态",
+    "status": "in_progress",
     "priority": "high"
   },
   {
-    "id": "review-messages",
-    "content": "Review messages.rs (modified, uncommitted)",
-    "status": "completed",
+    "id": "review-2",
+    "content": "审查核心架构模块 (clawed-core, clawed-bus, clawed-agent)",
+    "status": "pending",
     "priority": "high"
   },
   {
-    "id": "review-mod",
-    "content": "Review mod.rs (modified, uncommitted)",
-    "status": "completed",
+    "id": "review-3",
+    "content": "审查工具系统 (clawed-tools)",
+    "status": "pending",
     "priority": "high"
   },
   {
-    "id": "review-markdown",
-    "content": "Review markdown.rs and rendering logic",
-    "status": "completed",
+    "id": "review-4",
+    "content": "审查 TUI/CLI 层 (clawed-cli)",
+    "status": "pending",
     "priority": "high"
   },
   {
-    "id": "review-themes",
-    "content": "Review theme/styling code",
-    "status": "completed",
+    "id": "review-5",
+    "content": "审查 API/网络层 (clawed-api, clawed-rpc, clawed-mcp)",
+    "status": "pending",
     "priority": "medium"
   },
   {
-    "id": "review-input",
-    "content": "Review input handling and event loop",
-    "status": "completed",
+    "id": "review-6",
+    "content": "审查 Swarm/Bridge 层 (clawed-swarm, clawed-bridge)",
+    "status": "pending",
     "priority": "medium"
   },
   {
-    "id": "summary",
-    "content": "Compile findings and recommendations",
-    "status": "completed",
+    "id": "review-7",
+    "content": "汇总问题清单和修复建议",
+    "status": "pending",
     "priority": "high"
   }
 ]

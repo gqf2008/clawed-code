@@ -218,21 +218,20 @@ impl ApiClient {
                         .text()
                         .await
                         .unwrap_or_else(|_| "<failed to read body>".into());
-                    serde_json::from_str::<MessagesResponse>(&body_text)
-                        .map_err(|e| {
-                            tracing::error!(
-                                error = %e,
-                                body_preview = %body_text.chars().take(500).collect::<String>(),
-                                "Failed to parse API response as JSON"
-                            );
-                            // Treat parse failures as transient (502) so retry kicks in.
-                            ApiHttpError {
-                                status: 502,
-                                body: format!("Failed to parse response: {e}"),
-                                retry_after: None,
-                                rate_limit_info: None,
-                            }
-                        })
+                    serde_json::from_str::<MessagesResponse>(&body_text).map_err(|e| {
+                        tracing::error!(
+                            error = %e,
+                            body_preview = %body_text.chars().take(500).collect::<String>(),
+                            "Failed to parse API response as JSON"
+                        );
+                        // Treat parse failures as transient (502) so retry kicks in.
+                        ApiHttpError {
+                            status: 502,
+                            body: format!("Failed to parse response: {e}"),
+                            retry_after: None,
+                            rate_limit_info: None,
+                        }
+                    })
                 }
             },
             |attempt, status, delay| {
@@ -511,7 +510,10 @@ fn synthesize_stream_events(response: MessagesResponse) -> Vec<StreamEvent> {
                 });
                 events.push(StreamEvent::ContentBlockStop { index: idx });
             }
-            ResponseContentBlock::Thinking { thinking, signature } => {
+            ResponseContentBlock::Thinking {
+                thinking,
+                signature,
+            } => {
                 events.push(StreamEvent::ContentBlockStart {
                     index: idx,
                     content_block: ResponseContentBlock::Thinking {

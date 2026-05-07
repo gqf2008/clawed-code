@@ -13,9 +13,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
-use termimad::{
-    Alignment, CompoundStyle, LineStyle, MadSkin, StyledChar,
-};
+use termimad::{Alignment, CompoundStyle, LineStyle, MadSkin, StyledChar};
 
 /// Cached `MadSkin` — built once on first use.
 fn skin() -> &'static MadSkin {
@@ -32,7 +30,8 @@ fn make_skin() -> MadSkin {
     let none_attrs = termimad::crossterm::style::Attributes::none();
 
     // Inline code: blue on dark background
-    skin.inline_code = CompoundStyle::new(Some(blue_c), Some(termimad::rgb(30, 30, 40)), none_attrs);
+    skin.inline_code =
+        CompoundStyle::new(Some(blue_c), Some(termimad::rgb(30, 30, 40)), none_attrs);
 
     // Headers
     let mut h1_style = CompoundStyle::new(
@@ -69,10 +68,7 @@ fn make_skin() -> MadSkin {
     );
 
     // Bullets: -
-    skin.bullet = StyledChar::new(
-        CompoundStyle::new(Some(muted_c), None, none_attrs),
-        '-',
-    );
+    skin.bullet = StyledChar::new(CompoundStyle::new(Some(muted_c), None, none_attrs), '-');
 
     // Table borders in muted, rounded style with full top/bottom borders
     skin.table = LineStyle {
@@ -356,9 +352,7 @@ pub(crate) fn likely_markdown(text: &str) -> bool {
                         && bytes[i + 2] == b
                     {
                         let mut j = i + 3;
-                        while j < bytes.len()
-                            && (bytes[j] == b' ' || bytes[j] == b'\t')
-                        {
+                        while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
                             j += 1;
                         }
                         if j == bytes.len() || bytes[j] == b'\n' {
@@ -472,7 +466,10 @@ mod tests {
         let lines = render_markdown(md);
         assert!(!lines.is_empty());
         let code_line: String = lines[0].spans.iter().map(|s| &*s.content).collect();
-        assert!(code_line.contains("fn main"), "code block should contain the code");
+        assert!(
+            code_line.contains("fn main"),
+            "code block should contain the code"
+        );
     }
 
     #[test]
@@ -508,12 +505,12 @@ mod tests {
         let lines = render_markdown(md);
         // With a TTY width, termimad renders HR as a line of '─' chars.
         // Without a TTY (tests), it falls back to blank separator lines.
-        let has_visual_hr = lines.iter().any(|l| {
-            l.spans.iter().any(|s| s.content.contains('\u{2500}'))
-        });
-        let has_blank = lines.iter().any(|l| {
-            l.spans.is_empty() || (l.spans.len() == 1 && l.spans[0].content.is_empty())
-        });
+        let has_visual_hr = lines
+            .iter()
+            .any(|l| l.spans.iter().any(|s| s.content.contains('\u{2500}')));
+        let has_blank = lines
+            .iter()
+            .any(|l| l.spans.is_empty() || (l.spans.len() == 1 && l.spans[0].content.is_empty()));
         assert!(
             has_visual_hr || has_blank,
             "horizontal rule should create separator space"
@@ -592,7 +589,10 @@ mod tests {
     fn verify_heading_no_hash_prefix() {
         let lines = render_markdown("### 测试覆盖");
         let text: String = lines[0].spans.iter().map(|s| &*s.content).collect();
-        assert!(!text.contains('#'), "heading must not contain #, got: {text:?}");
+        assert!(
+            !text.contains('#'),
+            "heading must not contain #, got: {text:?}"
+        );
         assert!(text.contains("测试覆盖"), "heading text must be present");
         assert!(
             lines[0]
@@ -617,7 +617,10 @@ mod tests {
     fn verify_blockquote_uses_bar() {
         let lines = render_markdown("> quoted text");
         let text: String = lines[0].spans.iter().map(|s| &*s.content).collect();
-        assert!(text.contains('\u{258e}'), "blockquote must use ▎ bar, got: {text:?}");
+        assert!(
+            text.contains('\u{258e}'),
+            "blockquote must use ▎ bar, got: {text:?}"
+        );
         // termimad does not apply italic to blockquote content by default
     }
 
@@ -628,21 +631,30 @@ mod tests {
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| &*s.content))
             .collect();
-        assert!(!full.contains('\u{250C}'), "code block must NOT have ┌ border");
-        assert!(!full.contains('\u{2514}'), "code block must NOT have └ border");
-        assert!(!full.contains('\u{2502}'), "code block must NOT have │ prefix");
+        assert!(
+            !full.contains('\u{250C}'),
+            "code block must NOT have ┌ border"
+        );
+        assert!(
+            !full.contains('\u{2514}'),
+            "code block must NOT have └ border"
+        );
+        assert!(
+            !full.contains('\u{2502}'),
+            "code block must NOT have │ prefix"
+        );
         assert!(full.contains("fn main"), "code content must be present");
     }
 
     #[test]
     fn verify_horizontal_rule_format() {
         let lines = render_markdown("above\n\n---\n\nbelow");
-        let has_visual_hr = lines.iter().any(|l| {
-            l.spans.iter().any(|s| s.content.contains('\u{2500}'))
-        });
-        let has_blank = lines.iter().any(|l| {
-            l.spans.is_empty() || (l.spans.len() == 1 && l.spans[0].content.is_empty())
-        });
+        let has_visual_hr = lines
+            .iter()
+            .any(|l| l.spans.iter().any(|s| s.content.contains('\u{2500}')));
+        let has_blank = lines
+            .iter()
+            .any(|l| l.spans.is_empty() || (l.spans.len() == 1 && l.spans[0].content.is_empty()));
         assert!(
             has_visual_hr || has_blank,
             "horizontal rule must create separator space"
@@ -660,4 +672,4 @@ mod tests {
             "inline code must be blue"
         );
     }
-  }
+}

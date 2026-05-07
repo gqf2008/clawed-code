@@ -34,7 +34,11 @@ pub async fn consolidate_memories(
     // Group by memory type (None → "unknown")
     let mut by_type: HashMap<String, Vec<&MemoryHeader>> = HashMap::new();
     for h in &headers {
-        let key = h.memory_type.as_ref().map(|t| t.as_str()).unwrap_or("unknown");
+        let key = h
+            .memory_type
+            .as_ref()
+            .map(|t| t.as_str())
+            .unwrap_or("unknown");
         by_type.entry(key.to_string()).or_default().push(h);
     }
 
@@ -128,7 +132,11 @@ pub async fn synthesize_memories(
     let mut entries = Vec::new();
     for h in &headers {
         let (body, _) = memory::read_memory_body(&h.file_path);
-        let mem_type = h.memory_type.as_ref().map(|t| t.as_str()).unwrap_or("unknown");
+        let mem_type = h
+            .memory_type
+            .as_ref()
+            .map(|t| t.as_str())
+            .unwrap_or("unknown");
         entries.push((
             h.name.clone().unwrap_or_else(|| h.filename.clone()),
             mem_type.to_string(),
@@ -178,9 +186,7 @@ fn build_synthesis_prompt(entries: &[(String, String, String)]) -> String {
         ));
     }
 
-    prompt.push_str(
-        "\n\nRespond with ONLY the synthesis text. No markdown fences, no preamble.",
-    );
+    prompt.push_str("\n\nRespond with ONLY the synthesis text. No markdown fences, no preamble.");
 
     prompt
 }
@@ -255,11 +261,7 @@ mod tests {
 
     #[test]
     fn build_synthesis_prompt_includes_memories() {
-        let entries = vec![(
-            "Pref".into(),
-            "user".into(),
-            "User likes Rust".into(),
-        )];
+        let entries = vec![("Pref".into(), "user".into(), "User likes Rust".into())];
         let p = build_synthesis_prompt(&entries);
         assert!(p.contains("project intelligence assistant"));
         assert!(p.contains("User likes Rust"));

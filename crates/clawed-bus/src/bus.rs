@@ -33,7 +33,7 @@ use uuid::Uuid;
 use crate::events::ErrorCode;
 use crate::events::{
     AgentNotification, AgentRequest, ImageAttachment, PermissionRequest, PermissionResponse,
-    RiskLevel,
+    RiskLevel, UserQuestionRequest, UserQuestionResponse,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -305,6 +305,8 @@ impl EventBus {
         const REQUEST_QUEUE_CAP: usize = 1024;
         /// Maximum queued permission responses before backpressure.
         const PERM_RESP_QUEUE_CAP: usize = 256;
+        /// Maximum queued user question responses before backpressure.
+        const USER_Q_RESP_QUEUE_CAP: usize = 64;
         /// Minimum capacity for critical event channels (permission requests).
         const MIN_CRITICAL_CAP: usize = 256;
 
@@ -312,6 +314,8 @@ impl EventBus {
         let (request_tx, request_rx) = mpsc::channel(REQUEST_QUEUE_CAP);
         let (perm_req_tx, perm_req_rx) = broadcast::channel(capacity.max(MIN_CRITICAL_CAP));
         let (perm_resp_tx, perm_resp_rx) = mpsc::channel(PERM_RESP_QUEUE_CAP);
+        let (user_q_req_tx, user_q_req_rx) = broadcast::channel(capacity.max(MIN_CRITICAL_CAP));
+        let (user_q_resp_tx, user_q_resp_rx) = mpsc::channel(USER_Q_RESP_QUEUE_CAP);
         let (core_alive_tx, core_alive_rx) = watch::channel(true);
         let shared = Arc::new(BusShared::new(history_capacity));
 
@@ -322,6 +326,9 @@ impl EventBus {
             perm_req_tx: perm_req_tx.clone(),
             perm_resp_rx: Some(perm_resp_rx),
             _perm_resp_tx: perm_resp_tx.clone(),
+            user_q_req_tx: user_q_req_tx.clone(),
+            user_q_resp_rx: Some(user_q_resp_rx),
+            _user_q_resp_tx: user_q_resp_tx.clone(),
             core_alive_tx,
             shared: Arc::clone(&shared),
         };
@@ -333,6 +340,9 @@ impl EventBus {
             perm_req_rx,
             _perm_req_tx: perm_req_tx,
             perm_resp_tx: Some(perm_resp_tx),
+            user_q_req_rx,
+            _user_q_req_tx: user_q_req_tx,
+            user_q_resp_tx: Some(user_q_resp_tx),
             core_alive_rx,
             shared,
         };
@@ -358,6 +368,10 @@ pub struct BusHandle {
     /// Kept alive to prevent the mpsc channel from closing.
     /// Only the primary client gets a clone (secondary clients cannot respond).
     _perm_resp_tx: mpsc::Sender<PermissionResponse>,
+    user_q_req_tx: broadcast::Sender<UserQuestionRequest>,
+    user_q_resp_rx: Option<mpsc::Receiver<UserQuestionResponse>>,
+    /// Kept alive to prevent the mpsc channel from closing.
+    _user_q_resp_tx: mpsc::Sender<UserQuestionResponse>,
     /// Signals `false` on drop so clients detect core disconnection.
     core_alive_tx: watch::Sender<bool>,
     /// Shared diagnostics and history state.
@@ -481,6 +495,60 @@ impl BusHandle {
         }
     }
 
+    /// Send a user question to the UI and wait for a response.
+    ///
+    /// Returns `None` if the UI is disconnected or no client responds
+    /// within the timeout (default 5 minutes).
+    pub async fn request_user_question(&mut self, question: &str) -> Option<UserQuestionResponse> {
+        self.request_user_question_with_timeout(question, std::time::Duration::from_secs(300))
+            .await
+    }
+
+    /// Like [`request_user_question`](Self::request_user_question) but with a
+    /// custom timeout.
+    pub async fn request_user_question_with_timeout(
+        &mut self,
+        question: &str,
+        timeout: std::time::Duration,
+    ) -> Option<UserQuestionResponse> {
+        let user_q_resp_rx = match self.user_q_resp_rx.as_mut() {
+            Some(rx) => rx,
+            None => {
+                tracing::warn!("User question response channel was taken; cannot request_user_question via BusHandle");
+                return None;
+            }
+        };
+        let request_id = Uuid::new_v4().to_string();
+        let req = UserQuestionRequest {
+            request_id: request_id.clone(),
+            question: question.to_string(),
+        };
+
+        if self.user_q_req_tx.send(req).is_err() {
+            return None;
+        }
+
+        let wait = async {
+            while let Some(resp) = user_q_resp_rx.recv().await {
+                if resp.request_id == request_id {
+                    return Some(resp);
+                }
+                tracing::warn!(
+                    "Received user question response for unknown request: {}",
+                    resp.request_id
+                );
+            }
+            None
+        };
+
+        if let Ok(result) = tokio::time::timeout(timeout, wait).await {
+            result
+        } else {
+            tracing::warn!("User question request timed out after {:?}", timeout);
+            None
+        }
+    }
+
     /// Get the notification sender (for cloning to sub-agents).
     #[must_use]
     pub fn notify_sender(&self) -> broadcast::Sender<AgentNotification> {
@@ -506,6 +574,20 @@ impl BusHandle {
         self.perm_resp_rx.take()
     }
 
+    /// Clone the user question request sender.
+    #[must_use]
+    pub fn user_q_req_sender(&self) -> broadcast::Sender<UserQuestionRequest> {
+        self.user_q_req_tx.clone()
+    }
+
+    /// Take the user question response receiver out of this handle.
+    ///
+    /// After calling this, [`request_user_question`](Self::request_user_question)
+    /// will return `None` immediately.
+    pub fn take_user_q_resp_rx(&mut self) -> Option<mpsc::Receiver<UserQuestionResponse>> {
+        self.user_q_resp_rx.take()
+    }
+
     /// Create a new `ClientHandle` connected to this bus.
     ///
     /// Multiple clients can coexist — all receive notifications (broadcast),
@@ -522,6 +604,9 @@ impl BusHandle {
             perm_req_rx: self.perm_req_tx.subscribe(),
             _perm_req_tx: self.perm_req_tx.clone(),
             perm_resp_tx: None, // secondary clients cannot respond to permissions
+            user_q_req_rx: self.user_q_req_tx.subscribe(),
+            _user_q_req_tx: self.user_q_req_tx.clone(),
+            user_q_resp_tx: None, // secondary clients cannot respond to user questions
             core_alive_rx: self.core_alive_tx.subscribe(),
             shared: Arc::clone(&self.shared),
         }
@@ -581,6 +666,11 @@ pub struct ClientHandle {
     /// Permission response channel. Only the primary client can respond;
     /// secondary clients (via `new_client()`) have `None` to prevent spoofing.
     perm_resp_tx: Option<mpsc::Sender<PermissionResponse>>,
+    user_q_req_rx: broadcast::Receiver<UserQuestionRequest>,
+    /// Keep the sender alive so `user_q_req_rx` doesn't get `Closed`.
+    _user_q_req_tx: broadcast::Sender<UserQuestionRequest>,
+    /// User question response channel. Only the primary client can respond.
+    user_q_resp_tx: Option<mpsc::Sender<UserQuestionResponse>>,
     /// Watch receiver for core alive status. Returns None when core drops.
     core_alive_rx: watch::Receiver<bool>,
     /// Shared diagnostics and history state.
@@ -660,6 +750,46 @@ impl ClientHandle {
         }
     }
 
+    /// Receive the next user question request from the Agent Core.
+    ///
+    /// All clients receive user question requests (broadcast). Only the first
+    /// client to respond with a matching `request_id` wins.
+    /// Returns `None` when the core is disconnected.
+    pub async fn recv_user_question_request(&mut self) -> Option<UserQuestionRequest> {
+        loop {
+            tokio::select! {
+                result = self.user_q_req_rx.recv() => {
+                    match result {
+                        Ok(req) => return Some(req),
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!("Client lagged by {} user question requests, catching up", n);
+                            continue;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => return None,
+                    }
+                }
+                result = self.core_alive_rx.changed() => {
+                    if result.is_err() || !*self.core_alive_rx.borrow() {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Respond to a user question request.
+    ///
+    /// Only the primary client can respond; secondary clients return `Err`.
+    pub fn send_user_question_response(
+        &self,
+        response: UserQuestionResponse,
+    ) -> Result<(), SendError> {
+        match &self.user_q_resp_tx {
+            Some(tx) => tx.try_send(response).map_err(|_| SendError::DISCONNECTED),
+            None => Err(SendError::DISCONNECTED), // secondary client — not authorized
+        }
+    }
+
     /// Convenience: submit a user message.
     pub fn submit(&self, text: impl Into<String>) -> Result<(), SendError> {
         self.send_request(AgentRequest::Submit {
@@ -723,6 +853,12 @@ impl ClientHandle {
     #[must_use]
     pub fn subscribe_permission_requests(&self) -> broadcast::Receiver<PermissionRequest> {
         self._perm_req_tx.subscribe()
+    }
+
+    /// Create an additional user-question-request subscriber.
+    #[must_use]
+    pub fn subscribe_user_question_requests(&self) -> broadcast::Receiver<UserQuestionRequest> {
+        self._user_q_req_tx.subscribe()
     }
 
     /// Create a [`NotificationSubscription`] with RAII lifecycle and

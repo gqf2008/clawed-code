@@ -493,9 +493,9 @@ async fn run() -> anyhow::Result<()> {
     // ── Create Event Bus + AgentCoreAdapter ──────────────────────────────
     let (mut bus_handle, client_handle) = clawed_bus::bus::EventBus::new(256);
 
-    // When running in TUI mode, route permission prompts through the event bus
-    // so the ratatui UI handles them instead of raw terminal I/O (which would
-    // corrupt the alternate screen).
+    // When running in TUI mode, route permission prompts and user questions
+    // through the event bus so the ratatui UI handles them instead of raw
+    // terminal I/O (which would corrupt the alternate screen / deadlock).
     if use_tui {
         let perm_req_tx = bus_handle.perm_req_sender();
         if let Some(perm_resp_rx) = bus_handle.take_perm_resp_rx() {
@@ -510,6 +510,22 @@ async fn run() -> anyhow::Result<()> {
             tracing::error!(
                 "Failed to obtain permission response channel; \
                  TUI permission prompts will fall back to raw terminal I/O"
+            );
+        }
+
+        let user_q_req_tx = bus_handle.user_q_req_sender();
+        if let Some(user_q_resp_rx) = bus_handle.take_user_q_resp_rx() {
+            let user_prompter = std::sync::Arc::new(
+                clawed_agent::permissions::bus_user_prompter::BusUserPrompter::new(
+                    user_q_req_tx,
+                    user_q_resp_rx,
+                ),
+            );
+            engine.set_user_prompter(user_prompter);
+        } else {
+            tracing::error!(
+                "Failed to obtain user question response channel; \
+                 TUI AskUser will fall back to raw terminal I/O"
             );
         }
     }

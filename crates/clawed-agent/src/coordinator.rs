@@ -506,7 +506,7 @@ fn xml_escape(s: &str) -> String {
 
 /// Build the list of tool names available to workers (excludes coordinator-only tools).
 pub fn worker_tool_names(all_tools: &[&str]) -> Vec<String> {
-    let excluded = ["Agent", "SendMessage", "TaskStop", "AskUserQuestion"];
+    let excluded = ["Agent", "SendMessage", "TaskStop", "AskUser"];
     all_tools
         .iter()
         .filter(|t| !excluded.contains(t))
@@ -563,14 +563,7 @@ mod tests {
 
     #[test]
     fn test_worker_tool_names() {
-        let all = vec![
-            "Bash",
-            "Read",
-            "Edit",
-            "Agent",
-            "SendMessage",
-            "AskUserQuestion",
-        ];
+        let all = vec!["Bash", "Read", "Edit", "Agent", "SendMessage", "AskUser"];
         let worker = worker_tool_names(&all);
         assert_eq!(worker, vec!["Bash", "Read", "Edit"]);
     }

@@ -37,7 +37,10 @@ use std::{io, path::PathBuf};
 
 use clawed_agent::engine::QueryEngine;
 use clawed_bus::bus::ClientHandle;
-use clawed_bus::events::{AgentNotification, ErrorCode, ImageAttachment, PermissionRequest};
+use clawed_bus::events::{
+    AgentNotification, ErrorCode, ImageAttachment, PermissionRequest, UserQuestionRequest,
+    UserQuestionResponse,
+};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
     MouseEventKind,
@@ -66,9 +69,15 @@ type TuiTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io:
 /// unlike `Color::DarkGray` (ANSI 8) which maps to bright on many terminals.
 pub(super) const MUTED: Color = Color::Rgb(170, 170, 170);
 
-pub(crate) fn muted() -> Style { Style::default().fg(MUTED) }
-pub(crate) fn blank_line() -> Line<'static> { Line::from(String::new()) }
-pub(crate) fn line_text(line: &Line<'_>) -> String { line.spans.iter().map(|s| s.content.as_ref()).collect() }
+pub(crate) fn muted() -> Style {
+    Style::default().fg(MUTED)
+}
+pub(crate) fn blank_line() -> Line<'static> {
+    Line::from(String::new())
+}
+pub(crate) fn line_text(line: &Line<'_>) -> String {
+    line.spans.iter().map(|s| s.content.as_ref()).collect()
+}
 
 const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -219,12 +228,8 @@ pub(super) fn user_facing_tool_name(raw: &str) -> Cow<'static, str> {
         b"glob" | b"Glob" => Cow::Borrowed("Glob"),
         b"grep" | b"Grep" => Cow::Borrowed("Grep"),
         b"ls" | b"LS" | b"Ls" => Cow::Borrowed("LS"),
-        b"web_search" | b"WebSearch" | b"websearch" | b"Web_Search" => {
-            Cow::Borrowed("Web Search")
-        }
-        b"web_fetch" | b"WebFetch" | b"webfetch" | b"Web_Fetch" => {
-            Cow::Borrowed("Web Fetch")
-        }
+        b"web_search" | b"WebSearch" | b"websearch" | b"Web_Search" => Cow::Borrowed("Web Search"),
+        b"web_fetch" | b"WebFetch" | b"webfetch" | b"Web_Fetch" => Cow::Borrowed("Web Fetch"),
         b"task" | b"Task" | b"task_create" | b"TaskCreate" => Cow::Borrowed("Task"),
         b"agent" | b"Agent" => Cow::Borrowed("Agent"),
         s if s.starts_with(b"mcp__") => {
@@ -259,8 +264,14 @@ fn extract_tool_input_display(tool_name: &str, input: &serde_json::Value) -> Opt
         "task_create" => get_str("subject"),
         "notebookedit" | "notebook_edit" => {
             let path = input.get("notebook_path").and_then(|v| v.as_str())?;
-            let cell = input.get("cell_number").and_then(|v| v.as_u64()).unwrap_or(0);
-            let mode = input.get("edit_mode").and_then(|v| v.as_str()).unwrap_or("replace");
+            let cell = input
+                .get("cell_number")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let mode = input
+                .get("edit_mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("replace");
             Some(format!("{} cell [{}] {}", path, cell, mode))
         }
         _ if lower.starts_with("mcp__") => {
@@ -270,7 +281,9 @@ fn extract_tool_input_display(tool_name: &str, input: &serde_json::Value) -> Opt
                     if k == "server" || k == "uri" || k == "query" {
                         v.as_str().map(String::from)
                     } else {
-                        v.as_str().filter(|s| !s.is_empty() && *k != "format").map(String::from)
+                        v.as_str()
+                            .filter(|s| !s.is_empty() && *k != "format")
+                            .map(String::from)
                     }
                 })
             })
@@ -690,6 +703,11 @@ enum PendingWorkflow {
     },
 }
 
+/// A pending user question from the AskUser tool, waiting for the user to type a response.
+struct PendingUserQuestion {
+    pub request: clawed_bus::events::UserQuestionRequest,
+}
+
 struct App {
     messages: Vec<Message>,
     scroll_offset: usize,
@@ -702,6 +720,8 @@ struct App {
     task_plan: taskplan::TaskPlan,
     task_list: tasklist::TaskListState,
     permission: Option<PendingPermission>,
+    /// Pending user question from the AskUser tool (bus-based TUI mode).
+    user_question: Option<PendingUserQuestion>,
     overlay: Option<Overlay>,
     /// Inline message search state (Ctrl+F).
     search_state: Option<SearchState>,
@@ -806,7 +826,6 @@ struct ViewedTeammate {
     color: Color,
 }
 
-
 impl App {
     fn new(model: String) -> Self {
         let ide_kind = detect_ide();
@@ -823,6 +842,7 @@ impl App {
             task_plan: taskplan::TaskPlan::new(),
             task_list: tasklist::TaskListState::new(),
             permission: None,
+            user_question: None,
             overlay: None,
             search_state: None,
             bottom_bar_hidden: false,
@@ -880,8 +900,7 @@ impl App {
     }
 
     #[allow(dead_code)]
-    fn view_teammate(&mut self, #[allow(dead_code)]
-    agent_id: String, name: String) {
+    fn view_teammate(&mut self, #[allow(dead_code)] agent_id: String, name: String) {
         let color = self
             .status
             .active_agents
@@ -920,7 +939,9 @@ impl App {
     }
 
     fn cycle_teammate_selection(&mut self, delta: isize) {
-        let Some(ref mut sel) = self.teammate_selection else { return };
+        let Some(ref mut sel) = self.teammate_selection else {
+            return;
+        };
         let count = self.status.active_agents.len();
         if count == 0 {
             self.exit_teammate_selection();
@@ -932,7 +953,9 @@ impl App {
     }
 
     fn confirm_teammate_selection(&mut self) {
-        let Some(sel) = self.teammate_selection else { return };
+        let Some(sel) = self.teammate_selection else {
+            return;
+        };
         self.exit_teammate_selection();
         let sorted = status::sorted_agent_entries(&self.status.active_agents);
         if let Some((agent_id, info)) = sorted.get(sel) {
@@ -1114,11 +1137,7 @@ impl App {
         }
         let q_lower = search.query.to_lowercase();
         for (line_idx, line) in self.cached_visible_lines.iter().enumerate() {
-            let text: String = line
-                .spans
-                .iter()
-                .map(|s| s.content.as_ref())
-                .collect();
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
             if text.to_lowercase().contains(&q_lower) {
                 search.matches.push((line_idx, 0));
             }
@@ -1465,7 +1484,8 @@ impl App {
                 }
                 // Start BashModeProgress panel for shell commands.
                 if is_shell_tool(&tool_name) {
-                    self.bash_mode.start(tool_name.clone(), input_str.unwrap_or_default());
+                    self.bash_mode
+                        .start(tool_name.clone(), input_str.unwrap_or_default());
                 }
             }
             AgentNotification::ToolUseComplete {
@@ -1569,7 +1589,12 @@ impl App {
                         self.push_message(MessageContent::System(msg));
                     }
                     self.mark_done();
-                } else if self.status.generating_since.map(|s| s.elapsed().as_secs() > 5).unwrap_or(false) {
+                } else if self
+                    .status
+                    .generating_since
+                    .map(|s| s.elapsed().as_secs() > 5)
+                    .unwrap_or(false)
+                {
                     // Safety net: TurnStart may be delayed or lost (e.g. forwarder
                     // lag, adapter still processing old stream). If we've been
                     // waiting >5s, force mark_done to prevent stuck Thinking.
@@ -1640,7 +1665,11 @@ impl App {
                 self.task_plan.complete_task(&agent_id, is_error);
                 self.status.active_agents.remove(&agent_id);
                 self.agent_progress.remove(&agent_id);
-                let icon = if is_error { verbs::ERROR_MARKER } else { "\u{2713}" };
+                let icon = if is_error {
+                    verbs::ERROR_MARKER
+                } else {
+                    "\u{2713}"
+                };
                 self.push_message(MessageContent::System(format!(
                     "{icon} Agent finished: {result}"
                 )));
@@ -1656,7 +1685,8 @@ impl App {
             }
             AgentNotification::SessionEnd { reason } => {
                 self.push_message(MessageContent::System(format!(
-                    "{info} Session ended: {reason}", info = verbs::INFO_MARKER
+                    "{info} Session ended: {reason}",
+                    info = verbs::INFO_MARKER
                 )));
             }
             AgentNotification::CompactStart => {
@@ -1697,13 +1727,15 @@ impl App {
             } => {
                 self.model = model;
                 self.push_message(MessageContent::System(format!(
-                    "{info} Switched to {display_name}", info = verbs::INFO_MARKER
+                    "{info} Switched to {display_name}",
+                    info = verbs::INFO_MARKER
                 )));
             }
             AgentNotification::SkillsActivated { names } => {
                 let list = names.join(", ");
                 self.push_message(MessageContent::System(format!(
-                    "{info} Skills: {list}", info = verbs::INFO_MARKER
+                    "{info} Skills: {list}",
+                    info = verbs::INFO_MARKER
                 )));
             }
             AgentNotification::SessionStatus {
@@ -1731,7 +1763,8 @@ impl App {
             }
             AgentNotification::McpServerDisconnected { name } => {
                 self.push_message(MessageContent::System(format!(
-                    "{error} MCP disconnected: {name}", error = verbs::ERROR_MARKER
+                    "{error} MCP disconnected: {name}",
+                    error = verbs::ERROR_MARKER
                 )));
             }
             AgentNotification::McpServerError { name, error } => {
@@ -1886,7 +1919,11 @@ impl App {
                 text_preview,
                 is_error,
             } => {
-                let icon = if is_error { verbs::ERROR_MARKER } else { "\u{2713}" };
+                let icon = if is_error {
+                    verbs::ERROR_MARKER
+                } else {
+                    "\u{2713}"
+                };
                 self.push_message(MessageContent::System(format!(
                     "  ↳ [{team_name}/{agent_id}] {icon} {text_preview}",
                 )));
@@ -2254,10 +2291,17 @@ fn render(frame: &mut Frame, app: &mut App) {
         app.queued_inputs.len().min(5) as u16
     };
 
-    let search_rows =
-        if has_permission { 0 } else { u16::from(app.search_state.is_some()) };
+    let search_rows = if has_permission {
+        0
+    } else {
+        u16::from(app.search_state.is_some())
+    };
 
-    let tip_rows = if has_permission { 0 } else { u16::from(app.status.has_tip()) };
+    let tip_rows = if has_permission {
+        0
+    } else {
+        u16::from(app.status.has_tip())
+    };
 
     let suggestion_rows = if app.suggestions.is_empty() || has_permission {
         0
@@ -2266,15 +2310,15 @@ fn render(frame: &mut Frame, app: &mut App) {
     };
 
     let constraints = [
-        Constraint::Min(1),                        // messages
-        Constraint::Length(task_list_rows),        // task list (0 if empty/collapsed)
-        Constraint::Length(task_plan_rows),        // task plan (0 if empty)
-        Constraint::Length(bash_mode_rows),        // BashModeProgress panel (0 if inactive)
-        Constraint::Length(1 + tip_rows),          // info line + optional tip
-        Constraint::Length(queue_rows),            // queue items (0 or n)
-        Constraint::Length(suggestion_rows),       // context suggestion overlay
-        Constraint::Length(search_rows),           // search box (0 or 1)
-        Constraint::Length(footer_rows),           // input/permission footer
+        Constraint::Min(1),                  // messages
+        Constraint::Length(task_list_rows),  // task list (0 if empty/collapsed)
+        Constraint::Length(task_plan_rows),  // task plan (0 if empty)
+        Constraint::Length(bash_mode_rows),  // BashModeProgress panel (0 if inactive)
+        Constraint::Length(1 + tip_rows),    // info line + optional tip
+        Constraint::Length(queue_rows),      // queue items (0 or n)
+        Constraint::Length(suggestion_rows), // context suggestion overlay
+        Constraint::Length(search_rows),     // search box (0 or 1)
+        Constraint::Length(footer_rows),     // input/permission footer
     ];
 
     let chunks = Layout::vertical(constraints).split(area);
@@ -2290,11 +2334,9 @@ fn render(frame: &mut Frame, app: &mut App) {
 
     // Teammate view header: fixed 1 row above messages when viewing a teammate.
     let teammate_header_rows = u16::from(app.viewed_teammate.is_some());
-    let msg_chunks = Layout::vertical([
-        Constraint::Length(teammate_header_rows),
-        Constraint::Min(1),
-    ])
-    .split(msg_area);
+    let msg_chunks =
+        Layout::vertical([Constraint::Length(teammate_header_rows), Constraint::Min(1)])
+            .split(msg_area);
     if teammate_header_rows > 0 {
         render_teammate_view_header(frame, msg_chunks[0], app);
     }
@@ -2382,9 +2424,7 @@ fn render(frame: &mut Frame, app: &mut App) {
 }
 
 fn poll_interval(app: &App) -> Duration {
-    if app.spinner_active()
-        || app.status.active_shells > 0
-        || !app.status.active_agents.is_empty()
+    if app.spinner_active() || app.status.active_shells > 0 || !app.status.active_agents.is_empty()
     {
         ACTIVE_POLL_INTERVAL
     } else {
@@ -2414,7 +2454,12 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
     // --- Sticky header: show the current user prompt when scrolled up ---
     let sticky_rows = compute_sticky_rows(app, viewport_height);
     let msg_area = if sticky_rows > 0 {
-        Rect::new(area.x, area.y + sticky_rows, area.width, area.height - sticky_rows)
+        Rect::new(
+            area.x,
+            area.y + sticky_rows,
+            area.width,
+            area.height - sticky_rows,
+        )
     } else {
         area
     };
@@ -2522,12 +2567,7 @@ fn render_agent_progress(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let height = lines.len().min(area.height as usize) as u16;
-    let progress_area = Rect::new(
-        area.x,
-        area.y + area.height - height,
-        area.width,
-        height,
-    );
+    let progress_area = Rect::new(area.x, area.y + area.height - height, area.width, height);
     frame.render_widget(Clear, progress_area);
     frame.render_widget(Paragraph::new(lines), progress_area);
 }
@@ -2553,9 +2593,9 @@ fn compute_sticky_rows(app: &mut App, viewport_height: usize) -> u16 {
     let start = approx_idx.min(app.messages.len().saturating_sub(1));
 
     // Find the most recent user message at or before the viewport top.
-    app.sticky_anchor = (0..=start).rev().find(|&i| {
-        matches!(app.messages[i].content, MessageContent::UserInput(_))
-    });
+    app.sticky_anchor = (0..=start)
+        .rev()
+        .find(|&i| matches!(app.messages[i].content, MessageContent::UserInput(_)));
 
     u16::from(app.sticky_anchor.is_some())
 }
@@ -2588,7 +2628,9 @@ fn render_sticky_header(frame: &mut Frame, area: Rect, msg: &Message) {
         truncated.push(ch);
     }
 
-    let style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+    let style = Style::default()
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD);
     frame.render_widget(Paragraph::new(Line::styled(truncated, style)), area);
 }
 
@@ -2719,11 +2761,7 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
         .add_modifier(Modifier::BOLD);
 
     // --- Dynamic status spans (spinner, elapsed, tools, shells, agents) — leftmost ---
-    let status_spans = status::build_spans(
-        &app.status,
-        area.width,
-        app.teammate_selection,
-    );
+    let status_spans = status::build_spans(&app.status, area.width, app.teammate_selection);
     let status_w: usize = status_spans.iter().map(|s| s.content.width()).sum();
 
     let mut spans: Vec<Span> = Vec::new();
@@ -2863,10 +2901,7 @@ fn render_separator(frame: &mut Frame, area: Rect, scroll_offset: usize, app: &A
     frame.render_widget(Paragraph::new(Line::from(spans)), main_area);
 
     if let (Some(tip), Some(tip_area)) = (app.status.current_tip(), tip_area) {
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(tip, dim))),
-            tip_area,
-        );
+        frame.render_widget(Paragraph::new(Line::from(Span::styled(tip, dim))), tip_area);
     }
 }
 
@@ -3232,15 +3267,24 @@ fn render_welcome_lines(width: u16, model: &str, permission_mode: &str) -> Vec<L
         welcome.push(Line::styled(center(&model_line, w), muted));
     }
     if !perm_line.is_empty() {
-        welcome.push(Line::styled(center(&perm_line, w), Style::default().fg(Color::Yellow)));
+        welcome.push(Line::styled(
+            center(&perm_line, w),
+            Style::default().fg(Color::Yellow),
+        ));
     }
     welcome.push(Line::from(""));
     welcome.push(Line::styled(
-        center("Tab: complete  ↑↓: history  Ctrl+C: abort  /help: commands", w),
+        center(
+            "Tab: complete  ↑↓: history  Ctrl+C: abort  /help: commands",
+            w,
+        ),
         muted,
     ));
     welcome.push(Line::styled(
-        center("Tip: Use /compact to free context  •  Ctrl+V to paste images", w),
+        center(
+            "Tip: Use /compact to free context  •  Ctrl+V to paste images",
+            w,
+        ),
         muted,
     ));
     welcome
@@ -3251,7 +3295,11 @@ fn render_welcome_lines(width: u16, model: &str, permission_mode: &str) -> Vec<L
 async fn restore_skill_state_if_done(app: &mut App, engine: &Arc<QueryEngine>) {
     if !app.is_generating {
         if let Some(restore) = app.pending_skill_restore.take() {
-            tracing::info!("[skill] restore after '{}', is_generating={}", restore.skill_name, app.is_generating);
+            tracing::info!(
+                "[skill] restore after '{}', is_generating={}",
+                restore.skill_name,
+                app.is_generating
+            );
             if let Some(orig) = restore.original_model {
                 engine.state().write().await.model = orig;
             }
@@ -3262,11 +3310,7 @@ async fn restore_skill_state_if_done(app: &mut App, engine: &Arc<QueryEngine>) {
 
 /// Abort the current session: signal the engine, clean up UI state, and push
 /// an "Interrupted" message. Shared by Esc, Ctrl+C, and the Esc-fallback path.
-async fn abort_session(
-    client: &ClientHandle,
-    app: &mut App,
-    engine: &Arc<QueryEngine>,
-) {
+async fn abort_session(client: &ClientHandle, app: &mut App, engine: &Arc<QueryEngine>) {
     // Signal the engine directly so the abort flag is set immediately,
     // even though the bus adapter may be blocked inside stream_events().
     engine.abort();
@@ -3286,7 +3330,9 @@ async fn do_resume_session(engine: &Arc<QueryEngine>, app: &mut App, id: &str) {
     match engine.restore_session(id).await {
         Ok(title) => {
             replay_session_messages(engine, app).await;
-            app.push_message(MessageContent::System(format!("✓ Resumed session: {title}")));
+            app.push_message(MessageContent::System(format!(
+                "✓ Resumed session: {title}"
+            )));
         }
         Err(error) => {
             app.push_message(MessageContent::System(format!("Failed to resume: {error}")));
@@ -3368,6 +3414,23 @@ pub async fn run_tui(
             match perm_sub.recv().await {
                 Ok(req) => {
                     if perm_tx.send(req).await.is_err() {
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+
+    // Spawn user question request forwarder
+    let mut user_q_sub = client.subscribe_user_question_requests();
+    let (user_q_tx, mut user_q_rx) = mpsc::channel::<UserQuestionRequest>(16);
+    let user_q_forwarder = tokio::spawn(async move {
+        loop {
+            match user_q_sub.recv().await {
+                Ok(req) => {
+                    if user_q_tx.send(req).await.is_err() {
                         break;
                     }
                 }
@@ -3506,9 +3569,7 @@ pub async fn run_tui(
         // ratatui's diff buffer. Force a full clear + redraw every few seconds
         // to self-heal. Skip when idle (no generation, no active tools) since
         // corruption is far less likely then.
-        if app.last_periodic_clear.elapsed() >= PERIODIC_CLEAR_INTERVAL
-            && app.spinner_active()
-        {
+        if app.last_periodic_clear.elapsed() >= PERIODIC_CLEAR_INTERVAL && app.spinner_active() {
             terminal.clear()?;
             app.last_periodic_clear = Instant::now();
             app.request_redraw();
@@ -3689,10 +3750,11 @@ pub async fn run_tui(
                         }
                         (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
                             // Toggle collapse on the last thinking message.
-                            if let Some(msg) =
-                                app.messages.iter_mut().rev().find(|m| {
-                                    matches!(m.content, MessageContent::ThinkingText(_))
-                                })
+                            if let Some(msg) = app
+                                .messages
+                                .iter_mut()
+                                .rev()
+                                .find(|m| matches!(m.content, MessageContent::ThinkingText(_)))
                             {
                                 msg.toggle_collapsed();
                                 app.invalidate_visible_lines();
@@ -3800,8 +3862,7 @@ pub async fn run_tui(
                             }
                             (KeyCode::Up, _) => {
                                 if !search.matches.is_empty() {
-                                    search.current_match =
-                                        search.current_match.saturating_sub(1);
+                                    search.current_match = search.current_match.saturating_sub(1);
                                     let (line_idx, _) = search.matches[search.current_match];
                                     app.scroll_to_match(line_idx);
                                 }
@@ -3947,10 +4008,45 @@ pub async fn run_tui(
                         }
                     }
 
+                    // Intercept Esc to cancel a pending user question
+                    if app.user_question.is_some()
+                        && key.code == KeyCode::Esc
+                        && key.modifiers == KeyModifiers::NONE
+                    {
+                        if let Some(q) = app.user_question.take() {
+                            let resp = UserQuestionResponse {
+                                request_id: q.request.request_id,
+                                answer: String::new(),
+                                cancelled: true,
+                            };
+                            app.push_message(MessageContent::System("Cancelled".to_string()));
+                            let _ = client.send_user_question_response(resp);
+                        }
+                        app.request_redraw();
+                        continue;
+                    }
+
                     let action = app.input.handle_key(key);
                     match action {
                         input::InputAction::Submit => {
                             let text = app.input.take_text();
+
+                            // Route to user question response if a question is pending
+                            if let Some(q) = app.user_question.take() {
+                                let resp = UserQuestionResponse {
+                                    request_id: q.request.request_id,
+                                    answer: text.clone(),
+                                    cancelled: false,
+                                };
+                                app.push_message(MessageContent::System(format!(
+                                    "Answer: {}",
+                                    text
+                                )));
+                                let _ = client.send_user_question_response(resp);
+                                app.request_redraw();
+                                continue;
+                            }
+
                             if !text.is_empty() || !app.pending_images.is_empty() {
                                 // While LLM is generating, queue plain text inputs.
                                 // Slash commands are always handled immediately.
@@ -4008,26 +4104,24 @@ pub async fn run_tui(
                         input::InputAction::None => {}
                     }
                 }
-                Event::Mouse(mouse) => {
-                    match mouse.kind {
-                        MouseEventKind::ScrollUp => {
-                            app.scroll_offset = app.scroll_offset.saturating_add(3);
-                            app.auto_scroll = false;
-                            app.request_redraw();
-                        }
-                        MouseEventKind::ScrollDown => {
-                            if app.scroll_offset > 0 {
-                                app.scroll_offset = app.scroll_offset.saturating_sub(3);
-                                if app.scroll_offset == 0 {
-                                    app.auto_scroll = true;
-                                    app.new_messages_count = 0;
-                                }
-                            }
-                            app.request_redraw();
-                        }
-                        _ => {}
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollUp => {
+                        app.scroll_offset = app.scroll_offset.saturating_add(3);
+                        app.auto_scroll = false;
+                        app.request_redraw();
                     }
-                }
+                    MouseEventKind::ScrollDown => {
+                        if app.scroll_offset > 0 {
+                            app.scroll_offset = app.scroll_offset.saturating_sub(3);
+                            if app.scroll_offset == 0 {
+                                app.auto_scroll = true;
+                                app.new_messages_count = 0;
+                            }
+                        }
+                        app.request_redraw();
+                    }
+                    _ => {}
+                },
                 Event::Resize(_, _) => {
                     // Full clear ensures no ghost cells after resize changes layout geometry.
                     app.needs_full_clear = true;
@@ -4051,6 +4145,15 @@ pub async fn run_tui(
             )));
             app.permission = Some(PendingPermission::new(req));
         }
+
+        // Check for incoming user question requests
+        while let Ok(req) = user_q_rx.try_recv() {
+            app.push_message(MessageContent::System(format!(
+                "\u{2753} Question: {}",
+                req.question,
+            )));
+            app.user_question = Some(PendingUserQuestion { request: req });
+        }
     }
 
     // Save session before exiting
@@ -4068,6 +4171,7 @@ pub async fn run_tui(
     // Abort the forwarder tasks
     forwarder.abort();
     perm_forwarder.abort();
+    user_q_forwarder.abort();
 
     Ok(())
 }
@@ -4156,7 +4260,10 @@ async fn handle_overlay_selection(
             let _ = client.send_request(clawed_bus::events::AgentRequest::SetModel {
                 model: value.to_string(),
             });
-            app.push_message(MessageContent::System(format!("✓ Model → {}", ctx.display_name)));
+            app.push_message(MessageContent::System(format!(
+                "✓ Model → {}",
+                ctx.display_name
+            )));
         }
         "Theme" => match crate::repl_commands::apply_theme(value) {
             Ok(message) | Err(message) => {
@@ -4193,7 +4300,10 @@ async fn handle_footer_picker_selection(
             let _ = client.send_request(clawed_bus::events::AgentRequest::SetModel {
                 model: value.to_string(),
             });
-            app.push_message(MessageContent::System(format!("✓ Model → {}", ctx.display_name)));
+            app.push_message(MessageContent::System(format!(
+                "✓ Model → {}",
+                ctx.display_name
+            )));
         }
         FooterPickerKind::Theme => match crate::repl_commands::apply_theme(value) {
             Ok(message) | Err(message) => {
@@ -4555,9 +4665,7 @@ async fn handle_async_command(
         }
         CommandResult::Btw { text } => {
             if text.is_empty() {
-                app.push_message(MessageContent::System(
-                    "Usage: /btw <text>".to_string(),
-                ));
+                app.push_message(MessageContent::System("Usage: /btw <text>".to_string()));
             } else {
                 engine.inject_context(&text).await;
                 app.push_message(MessageContent::System(format!("[btw] {text}")));
@@ -4938,10 +5046,7 @@ async fn handle_async_command(
             let cwd = std::env::current_dir().unwrap_or_default();
             let info = crate::repl_commands::handle_reload_context_str(engine, &cwd).await;
             let skills = clawed_core::skills::get_skills(&cwd);
-            let skill_names: Vec<String> = skills
-                .iter()
-                .map(|s| format!("/{}", s.name))
-                .collect();
+            let skill_names: Vec<String> = skills.iter().map(|s| format!("/{}", s.name)).collect();
             app.input.set_skill_names(skill_names);
             app.overlay = Some(overlay::build_info_overlay("Reload Context", &info));
         }
@@ -5022,7 +5127,8 @@ async fn handle_async_command(
 
                     // Temporarily switch model if skill specifies one
                     let original_model = if let Some(ref skill_model) = skill.model {
-                        let (orig, msg) = crate::repl_commands::switch_model_for_skill(engine, skill_model).await;
+                        let (orig, msg) =
+                            crate::repl_commands::switch_model_for_skill(engine, skill_model).await;
                         if let Some(msg) = msg {
                             app.push_message(MessageContent::System(msg));
                         }
@@ -5349,12 +5455,19 @@ fn render_teammate_view_header(frame: &mut Frame, area: Rect, app: &App) {
         return;
     };
     let dim = Style::default().fg(MUTED);
-    let name_style = Style::default().fg(viewed.color).add_modifier(Modifier::BOLD);
+    let name_style = Style::default()
+        .fg(viewed.color)
+        .add_modifier(Modifier::BOLD);
     let spans = vec![
         Span::styled("Viewing ", dim),
         Span::styled(format!("@{}", viewed.name), name_style),
         Span::styled("  ·  ", dim),
-        Span::styled("esc", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "esc",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" return", dim),
     ];
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -8380,9 +8493,8 @@ mod tests {
 
     fn buffer_to_ansi(buf: &ratatui::buffer::Buffer) -> String {
         use ratatui::style::Modifier;
-        let mut output = String::with_capacity(
-            buf.area.width as usize * buf.area.height as usize * 12,
-        );
+        let mut output =
+            String::with_capacity(buf.area.width as usize * buf.area.height as usize * 12);
         for y in 0..buf.area.height {
             for x in 0..buf.area.width {
                 let cell = buf.get(x, y);
@@ -8452,8 +8564,7 @@ mod tests {
             "Explain Rust ownership".to_string(),
         ));
         app.push_message(MessageContent::AssistantText(
-            "Rust ownership is a set of rules that govern how memory is managed."
-                .to_string(),
+            "Rust ownership is a set of rules that govern how memory is managed.".to_string(),
         ));
         snap("02_with_messages", dir, &mut app);
 
@@ -8462,9 +8573,7 @@ mod tests {
         app.term_width = 80;
         app.term_height = 24;
         app.needs_redraw = true;
-        app.push_message(MessageContent::UserInput(
-            "Write hello world".to_string(),
-        ));
+        app.push_message(MessageContent::UserInput("Write hello world".to_string()));
         app.push_message(MessageContent::AssistantText(String::new()));
         app.mark_generating();
         snap("03_generating", dir, &mut app);
@@ -8514,16 +8623,44 @@ mod tests {
             let mut t = Terminal::new(backend).unwrap();
             t.draw(|f| crate::tui::render(f, app)).unwrap();
             let buf = t.backend().buffer();
-            let mut h = String::from("<pre style='background:#1a1a2e;color:#ddd;font:13px monospace;padding:10px'>\n");
+            let mut h = String::from(
+                "<pre style='background:#1a1a2e;color:#ddd;font:13px monospace;padding:10px'>\n",
+            );
             for y in 0..buf.area().height {
                 for x in 0..buf.area().width {
                     if let Some(c) = buf.cell((x, y)) {
-                        let ch = match c.symbol() { " "=>" ", "&"=>"&amp;", "<"=>"&lt;", ">"=>"&gt;", s=>s };
-                        let bg = c.style().bg.map_or(String::new(), |c| format!("background:{:?};",c).replace("Rgb(","rgb(").replace(")",";"));
-                        let fg = c.style().fg.map_or(String::new(), |c| format!("color:{:?};",c).replace("Rgb(","rgb(").replace(")",";"));
-                        let b = if c.style().add_modifier.contains(Modifier::BOLD) { "font-weight:bold;" } else { "" };
-                        let i = if c.style().add_modifier.contains(Modifier::ITALIC) { "font-style:italic;" } else { "" };
-                        let s = if c.style().add_modifier.contains(Modifier::CROSSED_OUT) { "text-decoration:line-through;" } else { "" };
+                        let ch = match c.symbol() {
+                            " " => " ",
+                            "&" => "&amp;",
+                            "<" => "&lt;",
+                            ">" => "&gt;",
+                            s => s,
+                        };
+                        let bg = c.style().bg.map_or(String::new(), |c| {
+                            format!("background:{:?};", c)
+                                .replace("Rgb(", "rgb(")
+                                .replace(")", ";")
+                        });
+                        let fg = c.style().fg.map_or(String::new(), |c| {
+                            format!("color:{:?};", c)
+                                .replace("Rgb(", "rgb(")
+                                .replace(")", ";")
+                        });
+                        let b = if c.style().add_modifier.contains(Modifier::BOLD) {
+                            "font-weight:bold;"
+                        } else {
+                            ""
+                        };
+                        let i = if c.style().add_modifier.contains(Modifier::ITALIC) {
+                            "font-style:italic;"
+                        } else {
+                            ""
+                        };
+                        let s = if c.style().add_modifier.contains(Modifier::CROSSED_OUT) {
+                            "text-decoration:line-through;"
+                        } else {
+                            ""
+                        };
                         h.push_str(&format!("<span style='{bg}{fg}{b}{i}{s}'>{ch}</span>"));
                     }
                 }
@@ -8542,7 +8679,8 @@ mod tests {
         }
 
         fresh!("01_welcome", |app| {});
-        fresh!("02_markdown", |app| { app.push_message(MessageContent::AssistantText(
+        fresh!("02_markdown", |app| {
+            app.push_message(MessageContent::AssistantText(
             "### Project Progress\n\n- TUI core refactoring done\n- Permission dialog fixed\n\n> Code review is part of writing code.\n\n---\n\n| Module | Status |\n|---|---|\n| config | Done |\n| overlay | Pending |".into()));
         });
         fresh!("03_diff", |app| {
@@ -8562,18 +8700,34 @@ mod tests {
             app.task_plan.complete_task("t2", false);
         });
         fresh!("05_agents", |app| {
-            app.status.active_agents.insert("a1".into(), status::AgentInfo {
-                name: "reviewer".into(), started: std::time::Instant::now(),
-                state: status::AgentState::Active, activity: Some("Read(src/lib.rs)".into()),
-                tool_count: 3, token_estimate: 4500, idle_since: None, color: Color::Magenta,
-            });
-            app.status.active_agents.insert("a2".into(), status::AgentInfo {
-                name: "test-runner".into(), started: std::time::Instant::now(),
-                state: status::AgentState::Idle, activity: None,
-                tool_count: 1, token_estimate: 800, idle_since: Some(std::time::Instant::now()),
-                color: Color::Cyan,
-            });
-            app.status.is_generating = true; app.status.spinner_frame = 3;
+            app.status.active_agents.insert(
+                "a1".into(),
+                status::AgentInfo {
+                    name: "reviewer".into(),
+                    started: std::time::Instant::now(),
+                    state: status::AgentState::Active,
+                    activity: Some("Read(src/lib.rs)".into()),
+                    tool_count: 3,
+                    token_estimate: 4500,
+                    idle_since: None,
+                    color: Color::Magenta,
+                },
+            );
+            app.status.active_agents.insert(
+                "a2".into(),
+                status::AgentInfo {
+                    name: "test-runner".into(),
+                    started: std::time::Instant::now(),
+                    state: status::AgentState::Idle,
+                    activity: None,
+                    tool_count: 1,
+                    token_estimate: 800,
+                    idle_since: Some(std::time::Instant::now()),
+                    color: Color::Cyan,
+                },
+            );
+            app.status.is_generating = true;
+            app.status.spinner_frame = 3;
         });
 
         eprintln!("Delivery screenshots: {}/", dir);

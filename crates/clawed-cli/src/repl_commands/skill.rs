@@ -25,7 +25,11 @@ pub(crate) fn build_skill_content(skill: &SkillEntry, skill_args: &str) -> Optio
     }
     // Prepend base directory (matches TS getPromptForCommand behavior)
     if let Some(ref root) = skill.skill_root {
-        content = format!("Base directory for this skill: {}\n\n{}", root.display(), content);
+        content = format!(
+            "Base directory for this skill: {}\n\n{}",
+            root.display(),
+            content
+        );
     }
     Some(content)
 }

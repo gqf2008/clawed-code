@@ -194,10 +194,7 @@ pub enum AgentNotification {
     },
 
     /// A swarm agent transitioned to idle after completing work.
-    SwarmAgentIdle {
-        team_name: String,
-        agent_id: String,
-    },
+    SwarmAgentIdle { team_name: String, agent_id: String },
 
     // ── Extended lifecycle ──
     /// A sub-agent was explicitly terminated (abort, TaskStop, user cancel).
@@ -216,7 +213,7 @@ pub enum AgentNotification {
 
     // ── Skills ──
     /// Conditional skills were activated based on file paths touched by tools.
-    SkillsActivated { names: Vec<String>, },
+    SkillsActivated { names: Vec<String> },
 
     // ── Remote / Bridge ──
     /// Bridge gateway status update (platforms, sessions, adapters).
@@ -364,6 +361,23 @@ pub struct PermissionResponse {
     /// Optional user-provided reason for the decision (feedback text).
     #[serde(default)]
     pub reason: Option<String>,
+}
+
+// ── User question types ──────────────────────────────────────────────────────
+
+/// Request from Agent Core → UI asking the user a free-text question.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserQuestionRequest {
+    pub request_id: String,
+    pub question: String,
+}
+
+/// Response from UI → Agent Core with the user's answer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserQuestionResponse {
+    pub request_id: String,
+    pub answer: String,
+    pub cancelled: bool,
 }
 
 // ── Supporting types ─────────────────────────────────────────────────────────

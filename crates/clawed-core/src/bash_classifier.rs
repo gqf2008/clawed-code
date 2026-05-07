@@ -899,7 +899,10 @@ mod tests {
         assert_eq!(classify("rm -rf /*").risk, RiskLevel::Destructive);
         assert_eq!(classify("rm -rf ~").risk, RiskLevel::Destructive);
         assert_eq!(classify("mkfs.ext4 /dev/sda1").risk, RiskLevel::Destructive);
-        assert_eq!(classify("dd if=/dev/zero of=/dev/sda").risk, RiskLevel::Destructive);
+        assert_eq!(
+            classify("dd if=/dev/zero of=/dev/sda").risk,
+            RiskLevel::Destructive
+        );
         assert_eq!(classify("chmod -R 777 /").risk, RiskLevel::Destructive);
     }
 

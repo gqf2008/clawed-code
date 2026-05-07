@@ -773,7 +773,11 @@ async fn test_deny_overrides_allow_pattern() {
     ];
     let checker = PermissionChecker::new(PermissionMode::Default, rules);
     let r = checker
-        .check(&shell_tool(), &json!({"command": "git push origin main"}), None)
+        .check(
+            &shell_tool(),
+            &json!({"command": "git push origin main"}),
+            None,
+        )
         .await;
     assert_eq!(r.behavior, PermissionBehavior::Deny);
     // git status should still be allowed (no deny rule matches)
@@ -837,11 +841,8 @@ async fn test_dont_ask_denies_shell_without_rule() {
 
 #[tokio::test]
 async fn test_denied_tools_blocks_explicit() {
-    let checker = PermissionChecker::with_denied_tools(
-        PermissionMode::Default,
-        vec![],
-        vec!["Bash".into()],
-    );
+    let checker =
+        PermissionChecker::with_denied_tools(PermissionMode::Default, vec![], vec!["Bash".into()]);
     let r = checker.check(&shell_tool(), &json!({}), None).await;
     assert_eq!(r.behavior, PermissionBehavior::Deny);
     assert!(r.reason.as_deref().unwrap_or("").contains("denied_tools"));
@@ -849,11 +850,8 @@ async fn test_denied_tools_blocks_explicit() {
 
 #[tokio::test]
 async fn test_denied_tools_wildcard_blocks_all() {
-    let checker = PermissionChecker::with_denied_tools(
-        PermissionMode::Default,
-        vec![],
-        vec!["*".into()],
-    );
+    let checker =
+        PermissionChecker::with_denied_tools(PermissionMode::Default, vec![], vec!["*".into()]);
     let r = checker.check(&write_tool(), &json!({}), None).await;
     assert_eq!(r.behavior, PermissionBehavior::Deny);
 }
@@ -880,11 +878,8 @@ async fn test_denied_tools_overrides_allow_rule() {
         pattern: None,
         behavior: PermissionBehavior::Allow,
     }];
-    let checker = PermissionChecker::with_denied_tools(
-        PermissionMode::Default,
-        rules,
-        vec!["Bash".into()],
-    );
+    let checker =
+        PermissionChecker::with_denied_tools(PermissionMode::Default, rules, vec!["Bash".into()]);
     let r = checker.check(&shell_tool(), &json!({}), None).await;
     assert_eq!(r.behavior, PermissionBehavior::Deny);
 }

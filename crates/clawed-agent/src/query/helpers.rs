@@ -282,7 +282,10 @@ pub(super) fn block_to_api(block: &ContentBlock, has_thinking: bool) -> ApiConte
             is_error: *is_error,
             cache_control: None,
         },
-        ContentBlock::Thinking { thinking, signature } => {
+        ContentBlock::Thinking {
+            thinking,
+            signature,
+        } => {
             if has_thinking && signature.as_deref().is_some_and(|s| !s.is_empty()) {
                 ApiContentBlock::Thinking {
                     thinking: thinking.clone(),
@@ -290,7 +293,10 @@ pub(super) fn block_to_api(block: &ContentBlock, has_thinking: bool) -> ApiConte
                 }
             } else if has_thinking {
                 // Drop thinking blocks without valid signature — API requires it
-                ApiContentBlock::Text { text: String::new(), cache_control: None }
+                ApiContentBlock::Text {
+                    text: String::new(),
+                    cache_control: None,
+                }
             } else {
                 ApiContentBlock::Text {
                     text: format!("<thinking>{}</thinking>", thinking),

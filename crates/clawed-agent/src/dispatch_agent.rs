@@ -201,7 +201,6 @@ struct ResolvedAgentConfig {
     initial_prompt: Option<String>,
 }
 
-
 /// Resolve a model alias ("haiku", "sonnet", "opus") to a concrete model name.
 /// If `alias` is None or "inherit", returns the `parent_model` unchanged.
 pub fn resolve_agent_model(alias: Option<&str>, parent_model: &str) -> String {
@@ -341,7 +340,9 @@ impl Tool for DispatchAgentTool {
 
         // Try custom agent definitions first (project-level shadow user-level)
         let custom_agents = clawed_core::agents::get_agents(&context.cwd);
-        let custom_agent = custom_agents.iter().find(|a| a.agent_type == agent_type_str);
+        let custom_agent = custom_agents
+            .iter()
+            .find(|a| a.agent_type == agent_type_str);
 
         let cfg = match custom_agent {
             Some(def) => {
@@ -351,11 +352,19 @@ impl Tool for DispatchAgentTool {
                     def.system_prompt.clone()
                 };
                 let mt = def.max_turns.unwrap_or(self.config.max_turns);
-                let model = if def.inherits_model() { None } else { def.model.clone() };
+                let model = if def.inherits_model() {
+                    None
+                } else {
+                    def.model.clone()
+                };
                 // Agent is read-only only when all its allowed tools are themselves read-only.
-                let ro = !def.allowed_tools.is_empty() && def.allowed_tools.iter().all(|name| {
-                    self.registry.get(name).map(|t| t.is_read_only()).unwrap_or(false)
-                });
+                let ro = !def.allowed_tools.is_empty()
+                    && def.allowed_tools.iter().all(|name| {
+                        self.registry
+                            .get(name)
+                            .map(|t| t.is_read_only())
+                            .unwrap_or(false)
+                    });
                 ResolvedAgentConfig {
                     system_prompt: sys,
                     max_turns: mt,
@@ -393,9 +402,10 @@ impl Tool for DispatchAgentTool {
             .map(String::from)
             .unwrap_or(cfg.system_prompt);
 
-        let run_in_background =
-            input["run_in_background"].as_bool().unwrap_or(cfg.background_default)
-                || self.agent_tracker.is_some();
+        let run_in_background = input["run_in_background"]
+            .as_bool()
+            .unwrap_or(cfg.background_default)
+            || self.agent_tracker.is_some();
 
         let agent_name = input["name"].as_str().map(String::from);
         let agent_description = input["description"].as_str().map(String::from);
@@ -413,12 +423,7 @@ impl Tool for DispatchAgentTool {
             .iter()
             .filter(|t| t.is_enabled())
             // Sub-agents cannot use interactive tools or spawn nested agents
-            .filter(|t| {
-                !matches!(
-                    t.name(),
-                    "AskUserQuestion" | "Agent" | "SendMessage" | "TaskStop"
-                )
-            })
+            .filter(|t| !matches!(t.name(), "AskUser" | "Agent" | "SendMessage" | "TaskStop"))
             // Agent-type / definition based filtering
             .filter(|t| {
                 // 1. Definition disallowed_tools (lowest priority exclusion)
@@ -461,9 +466,7 @@ impl Tool for DispatchAgentTool {
         let agent_model = input["model"]
             .as_str()
             .map(|m| resolve_agent_model(Some(m), &self.config.model))
-            .unwrap_or_else(|| {
-                resolve_agent_model(cfg.model_alias.as_deref(), &self.config.model)
-            });
+            .unwrap_or_else(|| resolve_agent_model(cfg.model_alias.as_deref(), &self.config.model));
 
         {
             let mut s = state.write().await;

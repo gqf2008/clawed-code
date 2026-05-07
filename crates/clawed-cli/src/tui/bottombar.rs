@@ -61,7 +61,9 @@ pub fn render(frame: &mut Frame, area: Rect, is_generating: bool, permission_mod
     }
 
     let dim = Style::default().fg(MUTED);
-    let key_style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+    let key_style = Style::default()
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD);
 
     let mut left_spans: Vec<Span> = Vec::new();
 
@@ -124,10 +126,10 @@ fn permission_mode_color(mode: &str) -> Color {
 fn permission_mode_symbol(mode: &str) -> &'static str {
     match mode {
         "bypass" => "\u{25B8}",      // ▸
-        "auto" => "\u{25B8}",       // ▸
+        "auto" => "\u{25B8}",        // ▸
         "acceptEdits" => "\u{270E}", // ✎
-        "plan" => "\u{25B6}",       // ▶
-        "dontAsk" => "\u{26A0}",    // ⚠
+        "plan" => "\u{25B6}",        // ▶
+        "dontAsk" => "\u{26A0}",     // ⚠
         _ => "",
     }
 }

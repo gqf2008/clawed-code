@@ -431,5 +431,4 @@ mod tests {
     fn test_truncate_preview_whitespace_trim() {
         assert_eq!(truncate_preview("  hello  ", 10), "hello");
     }
-
 }

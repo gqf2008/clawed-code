@@ -504,7 +504,11 @@ pub fn prune_memories(dir: &Path, config: &PruneConfig) -> std::io::Result<(usiz
     // ── 2. Quota pruning ─────────────────────────────────────────────
     let mut total_bytes: usize = survivors
         .iter()
-        .filter_map(|h| std::fs::metadata(&h.file_path).ok().map(|m| m.len() as usize))
+        .filter_map(|h| {
+            std::fs::metadata(&h.file_path)
+                .ok()
+                .map(|m| m.len() as usize)
+        })
         .sum();
 
     while survivors.len() > config.max_total_files || total_bytes > config.max_total_bytes {
@@ -1260,11 +1264,7 @@ mod tests {
     fn prune_by_age_deletes_old_files() {
         let tmp = tempfile::tempdir().unwrap();
         let old = tmp.path().join("old.md");
-        std::fs::write(
-            &old,
-            "---\ntype: user\n---\nVery old memory",
-        )
-        .unwrap();
+        std::fs::write(&old, "---\ntype: user\n---\nVery old memory").unwrap();
         // Manually set mtime to 100 days ago
         let old_time = SystemTime::now() - Duration::from_secs(100 * 86400);
         let _ = filetime::set_file_mtime(&old, filetime::FileTime::from_system_time(old_time));
@@ -1314,8 +1314,16 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let a = tmp.path().join("a.md");
         let b = tmp.path().join("b.md");
-        std::fs::write(&a, "---\ntype: user\n---\nUser prefers Rust for all projects").unwrap();
-        std::fs::write(&b, "---\ntype: user\n---\nUser prefers Rust for all coding work").unwrap();
+        std::fs::write(
+            &a,
+            "---\ntype: user\n---\nUser prefers Rust for all projects",
+        )
+        .unwrap();
+        std::fs::write(
+            &b,
+            "---\ntype: user\n---\nUser prefers Rust for all coding work",
+        )
+        .unwrap();
 
         let config = PruneConfig {
             max_age_days: None,
@@ -1397,8 +1405,16 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let a = tmp.path().join("a.md");
         let b = tmp.path().join("b.md");
-        std::fs::write(&a, "---\ntype: user\n---\nUser prefers Rust for all projects").unwrap();
-        std::fs::write(&b, "---\ntype: user\n---\nUser prefers Rust for all coding work").unwrap();
+        std::fs::write(
+            &a,
+            "---\ntype: user\n---\nUser prefers Rust for all projects",
+        )
+        .unwrap();
+        std::fs::write(
+            &b,
+            "---\ntype: user\n---\nUser prefers Rust for all coding work",
+        )
+        .unwrap();
 
         let headers = vec![
             MemoryHeader {

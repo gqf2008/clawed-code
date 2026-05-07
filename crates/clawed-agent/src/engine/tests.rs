@@ -342,11 +342,7 @@ fn test_builder_context_window_default_model() {
 
     // Default model is sonnet → 200K context window
     let cw = engine.context_window();
-    assert!(
-        cw >= 200_000,
-        "expected ≥200K context, got {}",
-        cw
-    );
+    assert!(cw >= 200_000, "expected ≥200K context, got {}", cw);
 }
 
 #[test]

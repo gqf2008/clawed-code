@@ -122,32 +122,27 @@ impl HookRegistry {
                 continue;
             }
             if !evaluate_condition(rule.condition.as_ref(), &ctx) {
-                debug!(
-                    "Hook {:?} skipped: condition not satisfied",
-                    event.as_str()
-                );
+                debug!("Hook {:?} skipped: condition not satisfied", event.as_str());
                 continue;
             }
             for cmd_def in &rule.hooks {
                 let decision = match cmd_def.hook_type.as_str() {
-                    "command" => {
-                        match run_shell_hook(cmd_def, &ctx, &self.cwd).await {
-                            Ok((exit_code, stdout)) => {
-                                debug!(
-                                    "Hook {:?} cmd='{}' exit={} stdout_len={}",
-                                    event.as_str(),
-                                    cmd_def.command,
-                                    exit_code,
-                                    stdout.len()
-                                );
-                                interpret_output(event, exit_code, stdout)
-                            }
-                            Err(e) => {
-                                warn!("Hook execution error ({}): {}", cmd_def.command, e);
-                                continue;
-                            }
+                    "command" => match run_shell_hook(cmd_def, &ctx, &self.cwd).await {
+                        Ok((exit_code, stdout)) => {
+                            debug!(
+                                "Hook {:?} cmd='{}' exit={} stdout_len={}",
+                                event.as_str(),
+                                cmd_def.command,
+                                exit_code,
+                                stdout.len()
+                            );
+                            interpret_output(event, exit_code, stdout)
                         }
-                    }
+                        Err(e) => {
+                            warn!("Hook execution error ({}): {}", cmd_def.command, e);
+                            continue;
+                        }
+                    },
                     "prompt" => {
                         if cmd_def.command.is_empty() {
                             continue;

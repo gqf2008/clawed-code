@@ -2,6 +2,7 @@
 
 pub mod auto_classifier;
 pub mod bus_prompter;
+pub mod bus_user_prompter;
 pub mod helpers;
 #[cfg(test)]
 mod tests;
@@ -61,6 +62,18 @@ impl PermissionPrompter for TerminalPrompter {
     }
 }
 
+// ── Pluggable user prompting (AskUser tool) ──────────────────────────────────
+
+/// Trait for asking the user a free-text question and waiting for a response.
+///
+/// The default is raw terminal I/O via [`AskUserTool`](clawed_tools::ask_user::AskUserTool).
+/// The TUI replaces this with a [`BusUserPrompter`] that routes the question
+/// through the event bus so the ratatui UI can handle it.
+#[async_trait::async_trait]
+pub trait UserPrompter: Send + Sync {
+    async fn ask_user(&self, question: &str) -> anyhow::Result<String>;
+}
+
 /// Checks tool permissions against configured rules, mode, and session state.
 ///
 /// Combines static rules (from settings files), the active permission mode,
@@ -87,7 +100,11 @@ impl PermissionChecker {
     }
 
     /// Create with explicit denied_tools list (from settings.json).
-    pub fn with_denied_tools(mode: PermissionMode, rules: Vec<PermissionRule>, denied_tools: Vec<String>) -> Self {
+    pub fn with_denied_tools(
+        mode: PermissionMode,
+        rules: Vec<PermissionRule>,
+        denied_tools: Vec<String>,
+    ) -> Self {
         // In AcceptEdits mode, strip dangerous permission rules that would
         // bypass security (e.g., python:*, eval:*, sudo:*)
         let effective_rules = if mode == PermissionMode::AcceptEdits {
@@ -151,9 +168,11 @@ impl PermissionChecker {
         }
 
         // Check denied_tools list (from settings.json) — hard deny, cannot be overridden
-        if self.denied_tools.iter().any(|d| {
-            d == tool.name() || d == "*" || d == &format!("category:{}", tool.category())
-        }) {
+        if self
+            .denied_tools
+            .iter()
+            .any(|d| d == tool.name() || d == "*" || d == &format!("category:{}", tool.category()))
+        {
             return PermissionResult::deny(format!(
                 "'{}' denied by settings.denied_tools",
                 tool.name()
@@ -577,9 +596,7 @@ fn is_safe_git_command(cmd: &str) -> bool {
     // git push to well-known hosts
     if cmd.starts_with("git push") {
         // Allow push if the remote URL is a well-known host (extracted from args)
-        if cmd.contains("github.com")
-            || cmd.contains("gitlab.com")
-            || cmd.contains("bitbucket.org")
+        if cmd.contains("github.com") || cmd.contains("gitlab.com") || cmd.contains("bitbucket.org")
         {
             return true;
         }
@@ -609,17 +626,17 @@ fn is_safe_download(cmd: &str) -> bool {
     if !lower.contains("-o ") && !lower.contains("--output ") {
         return false;
     }
-    let has_project_or_temp_path = lower.contains("./") || lower.contains("/tmp/")
-        || lower.contains("/var/tmp/") || lower.contains("target/")
+    let has_project_or_temp_path = lower.contains("./")
+        || lower.contains("/tmp/")
+        || lower.contains("/var/tmp/")
+        || lower.contains("target/")
         || lower.contains("node_modules/");
     if !has_project_or_temp_path {
         return false;
     }
 
     // Reject suspicious pipe-to-shell patterns
-    !matches_any(&lower,
-        &["| sh", "| bash", "| python", "| node", "| ruby"],
-    )
+    !matches_any(&lower, &["| sh", "| bash", "| python", "| node", "| ruby"])
 }
 
 fn matches_any(haystack: &str, needles: &[&str]) -> bool {
@@ -693,21 +710,17 @@ fn recent_history_approves(
         return false;
     };
 
-    history
-        .iter()
-        .rev()
-        .take(5)
-        .any(|(name, input)| {
-            if name != "Bash" {
-                return false;
-            }
-            let Some(prev_cmd) = input.get("command").and_then(|v| v.as_str()) else {
-                return false;
-            };
-            prev_cmd
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .eq_ignore_ascii_case(current_base)
-        })
+    history.iter().rev().take(5).any(|(name, input)| {
+        if name != "Bash" {
+            return false;
+        }
+        let Some(prev_cmd) = input.get("command").and_then(|v| v.as_str()) else {
+            return false;
+        };
+        prev_cmd
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .eq_ignore_ascii_case(current_base)
+    })
 }

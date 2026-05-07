@@ -117,12 +117,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &BashModeState) {
     lines.push(Line::styled(border.clone(), dim));
 
     // Command line: "▸ bash (cargo test)"
-    let elapsed = state
-        .started
-        .map(|s| s.elapsed().as_secs())
-        .unwrap_or(0);
+    let elapsed = state.started.map(|s| s.elapsed().as_secs()).unwrap_or(0);
     let elapsed_str = super::overlay::format_elapsed(elapsed);
-    let cmd = state.command.as_ref().expect("render returns early when command is None");
+    let cmd = state
+        .command
+        .as_ref()
+        .expect("render returns early when command is None");
     lines.push(Line::from(vec![
         Span::styled("\u{25B8} ", dim),
         Span::styled("bash ", cmd_style),

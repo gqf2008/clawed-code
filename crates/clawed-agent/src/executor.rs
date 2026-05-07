@@ -41,6 +41,10 @@ pub struct ToolExecutor {
     /// Pluggable permission prompter. Defaults to [`TerminalPrompter`] (REPL).
     /// Replaced with a bus-based prompter when running inside the ratatui TUI.
     prompter: std::sync::OnceLock<Arc<dyn PermissionPrompter>>,
+    /// Pluggable user prompter for the AskUser tool. When set, AskUser is
+    /// routed through this prompter instead of raw terminal I/O (which would
+    /// deadlock in TUI raw mode).
+    user_prompter: std::sync::OnceLock<Arc<dyn crate::permissions::UserPrompter>>,
     /// Optional sender for streaming tool output lines (id, name, line).
     /// Uses RwLock for interior mutability since executor is behind Arc.
     output_tx: std::sync::RwLock<Option<Arc<OutputLineSender>>>,
@@ -55,6 +59,7 @@ impl ToolExecutor {
             session_id: String::new(),
             session_dir: None,
             prompter: std::sync::OnceLock::new(),
+            user_prompter: std::sync::OnceLock::new(),
             output_tx: std::sync::RwLock::new(None),
         }
     }
@@ -71,6 +76,7 @@ impl ToolExecutor {
             session_id: String::new(),
             session_dir: None,
             prompter: std::sync::OnceLock::new(),
+            user_prompter: std::sync::OnceLock::new(),
             output_tx: std::sync::RwLock::new(None),
         }
     }
@@ -97,6 +103,14 @@ impl ToolExecutor {
     pub fn set_prompter(&self, prompter: Arc<dyn PermissionPrompter>) {
         if self.prompter.set(prompter).is_err() {
             warn!("set_prompter called more than once; ignoring");
+        }
+    }
+
+    /// Install a bus-based user prompter so the AskUser tool routes through
+    /// the event bus instead of raw terminal I/O.
+    pub fn set_user_prompter(&self, prompter: Arc<dyn crate::permissions::UserPrompter>) {
+        if self.user_prompter.set(prompter).is_err() {
+            warn!("set_user_prompter called more than once; ignoring");
         }
     }
 
@@ -201,12 +215,13 @@ impl ToolExecutor {
             }
         }
 
-        if let ContentBlock::ToolResult { is_error: false, .. } = &result {
+        if let ContentBlock::ToolResult {
+            is_error: false, ..
+        } = &result
+        {
             if let Some(event) = tool_lifecycle_event(tool_name) {
                 if self.hooks.has_hooks(event) {
-                    let ctx =
-                        self.hooks
-                            .tool_ctx(event, tool_name, None, None, None);
+                    let ctx = self.hooks.tool_ctx(event, tool_name, None, None, None);
                     let _ = self.hooks.run(event, ctx).await;
                 }
             }
@@ -288,56 +303,59 @@ impl ToolExecutor {
                 }
 
                 if !hook_approved {
-
-                // Always use the canonical tool name for prompts and session cache so that
-                // alias-resolved tools (e.g. "FileWriteTool" → "Write") are keyed consistently.
-                let canonical = tool.name();
-                // Build a short human-readable description for the permission prompt.
-                // The full input JSON can be huge (e.g. file contents), so extract only
-                // a brief summary to avoid overflowing the TUI layout.
-                let desc = build_perm_description(canonical, &input);
-                let suggestions = perm.suggestions.clone();
-                let perm_timeout = std::time::Duration::from_secs(300); // 5 min default
-                let response = match tokio::time::timeout(
-                    perm_timeout,
-                    self.prompter()
-                        .ask_permission(canonical, &desc, &suggestions, &input),
-                )
-                .await
-                {
-                    Ok(r) => r,
-                    Err(_) => {
-                        warn!(
-                            "Permission prompt timed out after {}s for tool '{}'",
-                            perm_timeout.as_secs(),
-                            canonical
-                        );
-                        PermissionResponse::deny()
-                    }
-                };
-                if !response.allowed {
-                    // Fire PermissionDenied hook
-                    if self.hooks.has_hooks(HookEvent::PermissionDenied) {
-                        let ctx = self.hooks.permission_ctx(
-                            HookEvent::PermissionDenied,
-                            tool_name,
-                            &input,
-                            "denied_by_user",
-                        );
-                        let _ = self.hooks.run(HookEvent::PermissionDenied, ctx).await;
-                    }
-                    return ContentBlock::ToolResult {
-                        tool_use_id: tool_use_id.to_string(),
-                        content: vec![ToolResultContent::Text {
-                            text: "User denied permission".into(),
-                        }],
-                        is_error: true,
+                    // Always use the canonical tool name for prompts and session cache so that
+                    // alias-resolved tools (e.g. "FileWriteTool" → "Write") are keyed consistently.
+                    let canonical = tool.name();
+                    // Build a short human-readable description for the permission prompt.
+                    // The full input JSON can be huge (e.g. file contents), so extract only
+                    // a brief summary to avoid overflowing the TUI layout.
+                    let desc = build_perm_description(canonical, &input);
+                    let suggestions = perm.suggestions.clone();
+                    let perm_timeout = std::time::Duration::from_secs(300); // 5 min default
+                    let response = match tokio::time::timeout(
+                        perm_timeout,
+                        self.prompter()
+                            .ask_permission(canonical, &desc, &suggestions, &input),
+                    )
+                    .await
+                    {
+                        Ok(r) => r,
+                        Err(_) => {
+                            warn!(
+                                "Permission prompt timed out after {}s for tool '{}'",
+                                perm_timeout.as_secs(),
+                                canonical
+                            );
+                            PermissionResponse::deny()
+                        }
                     };
-                }
-                // Apply the response using canonical name so session_allowed is keyed the same
-                // way check() looks it up (via tool.name()).
-                self.permission_checker
-                    .apply_response(canonical, &response, &perm, &context.cwd);
+                    if !response.allowed {
+                        // Fire PermissionDenied hook
+                        if self.hooks.has_hooks(HookEvent::PermissionDenied) {
+                            let ctx = self.hooks.permission_ctx(
+                                HookEvent::PermissionDenied,
+                                tool_name,
+                                &input,
+                                "denied_by_user",
+                            );
+                            let _ = self.hooks.run(HookEvent::PermissionDenied, ctx).await;
+                        }
+                        return ContentBlock::ToolResult {
+                            tool_use_id: tool_use_id.to_string(),
+                            content: vec![ToolResultContent::Text {
+                                text: "User denied permission".into(),
+                            }],
+                            is_error: true,
+                        };
+                    }
+                    // Apply the response using canonical name so session_allowed is keyed the same
+                    // way check() looks it up (via tool.name()).
+                    self.permission_checker.apply_response(
+                        canonical,
+                        &response,
+                        &perm,
+                        &context.cwd,
+                    );
                 } // !hook_approved
             }
             PermissionBehavior::Allow => {}
@@ -364,6 +382,35 @@ impl ToolExecutor {
             }));
         }
 
+        if tool_name == "AskUser" {
+            if let Some(prompter) = self.user_prompter.get() {
+                let question = input
+                    .get("question")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                match prompter.ask_user(question).await {
+                    Ok(response) => {
+                        audit.finish(true, None);
+                        return ContentBlock::ToolResult {
+                            tool_use_id: tool_use_id.to_string(),
+                            content: vec![ToolResultContent::Text { text: response }],
+                            is_error: false,
+                        };
+                    }
+                    Err(e) => {
+                        audit.finish(false, Some(&e.to_string()));
+                        return ContentBlock::ToolResult {
+                            tool_use_id: tool_use_id.to_string(),
+                            content: vec![ToolResultContent::Text {
+                                text: e.to_string(),
+                            }],
+                            is_error: true,
+                        };
+                    }
+                }
+            }
+        }
+
         match tool.call(input.clone(), &ctx).await {
             Ok(result) => {
                 audit.finish(true, None);
@@ -385,7 +432,9 @@ impl ToolExecutor {
                                         format!("{tool_use_id}_{idx}")
                                     };
                                     match crate::tool_result_storage::persist_tool_result(
-                                        &text, &storage_id, dir,
+                                        &text,
+                                        &storage_id,
+                                        dir,
                                     ) {
                                         Ok(reference) => {
                                             return ToolResultContent::Text { text: reference };
@@ -561,7 +610,10 @@ fn build_perm_description(tool_name: &str, input: &Value) -> String {
         "Bash" | "PowerShell" => {
             if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
                 let clean = sanitize_inline_summary(cmd);
-                return format!("{tool_name}: {}", clawed_core::text_util::truncate_chars(&clean, 119, "…"));
+                return format!(
+                    "{tool_name}: {}",
+                    clawed_core::text_util::truncate_chars(&clean, 119, "…")
+                );
             }
         }
         "Read" => {

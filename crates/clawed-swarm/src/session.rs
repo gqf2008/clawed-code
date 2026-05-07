@@ -457,13 +457,17 @@ mod tests {
     fn trim_history_preserves_inherited_context() {
         let mut session = make_session(Some("parent context here".into()));
         // First message is inherited context
-        assert!(matches!(&session.history[0], Message::User(u) if matches!(&u.content[0], ContentBlock::Text { text } if text.contains(INHERITED_CONTEXT_PREFIX))));
+        assert!(
+            matches!(&session.history[0], Message::User(u) if matches!(&u.content[0], ContentBlock::Text { text } if text.contains(INHERITED_CONTEXT_PREFIX)))
+        );
         for i in 0..250 {
             session.history.push(user_msg(&format!("msg {i}")));
         }
         session.trim_history();
         // Inherited context message still at index 0
-        assert!(matches!(&session.history[0], Message::User(u) if matches!(&u.content[0], ContentBlock::Text { text } if text.contains(INHERITED_CONTEXT_PREFIX))));
+        assert!(
+            matches!(&session.history[0], Message::User(u) if matches!(&u.content[0], ContentBlock::Text { text } if text.contains(INHERITED_CONTEXT_PREFIX)))
+        );
         assert_eq!(session.history.len(), MAX_HISTORY_MESSAGES);
     }
 }

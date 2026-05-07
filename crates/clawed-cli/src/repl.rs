@@ -235,7 +235,8 @@ pub async fn run(
                                         }
                                     }
                                 } else {
-                                    let ctx = clawed_core::model::resolve_model_with_context(&input);
+                                    let ctx =
+                                        clawed_core::model::resolve_model_with_context(&input);
                                     let state = engine.state();
                                     let mut s = state.write().await;
                                     s.model = ctx.model.clone();
@@ -322,7 +323,9 @@ pub async fn run(
                                     } else {
                                         println!("Saved sessions:");
                                         for (i, session) in sessions.iter().take(20).enumerate() {
-                                            let age = clawed_core::session::format_age(&session.updated_at);
+                                            let age = clawed_core::session::format_age(
+                                                &session.updated_at,
+                                            );
                                             println!(
                                                 "  {}. {:.8}  {} ({} turns, {} msgs, {})",
                                                 i + 1,
@@ -336,12 +339,22 @@ pub async fn run(
                                         if sessions.len() > 20 {
                                             println!("  … and {} more. Use /resume <id> for older sessions.", sessions.len() - 20);
                                         }
-                                        println!("\nType /resume <id-prefix> to restore a session.");
+                                        println!(
+                                            "\nType /resume <id-prefix> to restore a session."
+                                        );
                                     }
                                 } else {
                                     match engine.restore_session(query).await {
-                                        Ok(title) => println!("{}✓ Resumed session: {}\x1b[0m", theme::c_ok(), title),
-                                        Err(e) => println!("{}Failed to resume: {}\x1b[0m", theme::c_err(), e),
+                                        Ok(title) => println!(
+                                            "{}✓ Resumed session: {}\x1b[0m",
+                                            theme::c_ok(),
+                                            title
+                                        ),
+                                        Err(e) => println!(
+                                            "{}Failed to resume: {}\x1b[0m",
+                                            theme::c_err(),
+                                            e
+                                        ),
                                     }
                                 }
                             }
@@ -1049,7 +1062,8 @@ pub async fn run(
                                 println!("  Status: Not available in REPL mode (TUI only)");
                             }
                             CommandResult::Teleport => {
-                                let remote_env = std::env::var("CLAUDE_CODE_REMOTE").unwrap_or_else(|_| "not set".to_string());
+                                let remote_env = std::env::var("CLAUDE_CODE_REMOTE")
+                                    .unwrap_or_else(|_| "not set".to_string());
                                 println!("Teleport / CCR status:");
                                 println!("  CLAUDE_CODE_REMOTE: {remote_env}");
                                 println!("  Status: Not connected");

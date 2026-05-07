@@ -103,7 +103,8 @@ mod tests {
 
     #[test]
     fn test_strip_system_reminders_leading() {
-        let text = "<system-reminder>\nToken usage: 50000/200000\n</system-reminder>\nActual response";
+        let text =
+            "<system-reminder>\nToken usage: 50000/200000\n</system-reminder>\nActual response";
         assert_eq!(strip_system_reminders(text), "Actual response");
     }
 
@@ -115,7 +116,8 @@ mod tests {
 
     #[test]
     fn test_strip_system_reminders_multiple() {
-        let text = "<system-reminder>a</system-reminder>keep1<system-reminder>b</system-reminder>keep2";
+        let text =
+            "<system-reminder>a</system-reminder>keep1<system-reminder>b</system-reminder>keep2";
         assert_eq!(strip_system_reminders(text), "keep1keep2");
     }
 
@@ -126,6 +128,9 @@ mod tests {
 
     #[test]
     fn test_strip_system_reminders_only_tags() {
-        assert_eq!(strip_system_reminders("<system-reminder>all tags</system-reminder>"), "");
+        assert_eq!(
+            strip_system_reminders("<system-reminder>all tags</system-reminder>"),
+            ""
+        );
     }
 }

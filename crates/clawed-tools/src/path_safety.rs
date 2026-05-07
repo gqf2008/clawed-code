@@ -35,8 +35,7 @@ pub fn check_path_safety(path: &Path) -> Option<String> {
         || path_lower.contains('%')
         || path_lower.contains("~")
         || path_lower.contains('\\')
-            && (path_lower.starts_with("//")
-                || path_lower.starts_with("\\\\"))
+            && (path_lower.starts_with("//") || path_lower.starts_with("\\\\"))
     {
         // Allow if it's just a Windows drive letter prefix
         if !(path_lower.len() > 2
@@ -60,10 +59,9 @@ pub fn check_path_safety(path: &Path) -> Option<String> {
                 let seg_lower = segment.to_lowercase();
                 if DANGEROUS_DIRECTORIES.contains(&seg_lower.as_str()) {
                     // Exception: .claude/worktrees/ is allowed
-                    if seg_lower == ".claude"
-                        && is_claude_worktrees_path(path) {
-                            continue;
-                        }
+                    if seg_lower == ".claude" && is_claude_worktrees_path(path) {
+                        continue;
+                    }
                     return Some(format!(
                         "Protected directory: {}/ — editing contents requires explicit approval",
                         segment
@@ -139,10 +137,7 @@ fn check_claude_config_path(path: &Path) -> Option<String> {
                     );
                 }
                 // .claude/commands/, .claude/agents/, .claude/skills/
-                if *next == "commands"
-                    || *next == "agents"
-                    || *next == "skills"
-                {
+                if *next == "commands" || *next == "agents" || *next == "skills" {
                     return Some(format!(
                         "Protected: .claude/{} — editing requires explicit approval",
                         next
@@ -179,9 +174,11 @@ pub fn check_dangerous_removal_path(path: &Path) -> Option<String> {
         "/usr", "/etc", "/var", "/sys", "/proc", "/boot", "/dev", "/tmp", "/opt",
     ];
     for parent in &dangerous_parents {
-        if lower.starts_with(parent) && lower.trim_start_matches(parent).matches('/').count() <= 1
-        {
-            return Some(format!("Cannot remove system directory contents: {}", path_str));
+        if lower.starts_with(parent) && lower.trim_start_matches(parent).matches('/').count() <= 1 {
+            return Some(format!(
+                "Cannot remove system directory contents: {}",
+                path_str
+            ));
         }
     }
 

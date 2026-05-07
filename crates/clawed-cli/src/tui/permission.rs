@@ -291,10 +291,7 @@ fn build_detail_lines(perm: &PendingPermission) -> Vec<Line<'static>> {
     // Header
     lines.push(Line::from(vec![
         Span::raw("  "),
-        Span::styled(
-            "Input:",
-            muted().add_modifier(Modifier::BOLD),
-        ),
+        Span::styled("Input:", muted().add_modifier(Modifier::BOLD)),
     ]));
 
     let json_str = match serde_json::to_string_pretty(&perm.request.input) {

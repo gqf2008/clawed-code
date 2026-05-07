@@ -363,7 +363,11 @@ impl QueryEngine {
 
     /// Fire an Elicitation hook before showing a prompt to the user.
     /// Returns the hook decision (hooks can block or append context).
-    pub async fn fire_elicitation_hook(&self, message: &str, schema: &serde_json::Value) -> HookDecision {
+    pub async fn fire_elicitation_hook(
+        &self,
+        message: &str,
+        schema: &serde_json::Value,
+    ) -> HookDecision {
         if !self.hooks.has_hooks(HookEvent::Elicitation) {
             return HookDecision::Continue;
         }
@@ -378,7 +382,11 @@ impl QueryEngine {
     }
 
     /// Fire an ElicitationResult hook after the user responds.
-    pub async fn fire_elicitation_result_hook(&self, action: &str, content: Option<&serde_json::Value>) {
+    pub async fn fire_elicitation_result_hook(
+        &self,
+        action: &str,
+        content: Option<&serde_json::Value>,
+    ) {
         if !self.hooks.has_hooks(HookEvent::ElicitationResult) {
             return;
         }
@@ -435,6 +443,13 @@ impl QueryEngine {
         self.executor.set_prompter(prompter);
     }
 
+    /// Install a bus-based user prompter so the AskUser tool routes through
+    /// the event bus instead of raw terminal I/O. Call this before running
+    /// any queries when running in TUI or RPC mode.
+    pub fn set_user_prompter(&self, prompter: Arc<dyn crate::permissions::UserPrompter>) {
+        self.executor.set_user_prompter(prompter);
+    }
+
     /// Run SessionStart hooks — call once at startup.
     /// Also fires Setup hook on first use of this project.
     pub async fn run_session_start(&self) -> Option<String> {
@@ -455,7 +470,11 @@ impl QueryEngine {
         let mut appended = None;
         if self.hooks.has_hooks(HookEvent::SessionStart) {
             let ctx = self.hooks.prompt_ctx(HookEvent::SessionStart, None);
-            if let HookDecision::AppendContext { text } = self.hooks.run(HookEvent::SessionStart, ctx).await { appended = Some(text) }
+            if let HookDecision::AppendContext { text } =
+                self.hooks.run(HookEvent::SessionStart, ctx).await
+            {
+                appended = Some(text);
+            }
         }
         // Fire InstructionsLoaded after session start — system prompt is now assembled.
         if self.hooks.has_hooks(HookEvent::InstructionsLoaded) {

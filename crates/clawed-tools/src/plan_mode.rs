@@ -18,7 +18,7 @@ pub const PLAN_MODE_ALLOWED_TOOLS: &[&str] = &[
     "WebFetch",
     "WebSearch",
     "TodoWrite",
-    "AskUserQuestion",
+    "AskUser",
     "EnterPlanMode",
     "ExitPlanMode",
 ];

@@ -35,7 +35,10 @@ pub async fn build_session_context(cwd: &Path) -> Option<String> {
 }
 
 fn local_date_string() -> Option<String> {
-    Some(format!("Today's date is {}.", chrono::Local::now().format("%Y/%m/%d")))
+    Some(format!(
+        "Today's date is {}.",
+        chrono::Local::now().format("%Y/%m/%d")
+    ))
 }
 
 /// Collect a git status snapshot: branch, main branch, status, recent commits.
@@ -53,9 +56,11 @@ async fn git_status_snapshot(cwd: &Path) -> Option<String> {
 
     // symbolic-ref returns e.g. "refs/remotes/origin/main" — extract branch name.
     // Falls back to checking common names if no origin HEAD ref exists.
-    let main_branch = main_ref
-        .ok()
-        .and_then(|s| s.trim().strip_prefix("refs/remotes/origin/").map(String::from));
+    let main_branch = main_ref.ok().and_then(|s| {
+        s.trim()
+            .strip_prefix("refs/remotes/origin/")
+            .map(String::from)
+    });
 
     let branch = branch.ok()?;
     let status = status.unwrap_or_default();
@@ -99,7 +104,14 @@ async fn git_status_snapshot(cwd: &Path) -> Option<String> {
         }
     }
 
-    lines.push(format!("Status:\n{}", if truncated_status.is_empty() { "(clean)".to_string() } else { truncated_status }));
+    lines.push(format!(
+        "Status:\n{}",
+        if truncated_status.is_empty() {
+            "(clean)".to_string()
+        } else {
+            truncated_status
+        }
+    ));
     lines.push(format!("Recent commits:\n{}", log));
 
     Some(lines.join("\n\n"))

@@ -201,7 +201,9 @@ mod tests {
         let json = serde_json::to_value(&block).unwrap();
         assert_eq!(json["type"], "thinking");
         let back: ContentBlock = serde_json::from_value(json).unwrap();
-        assert!(matches!(back, ContentBlock::Thinking { thinking, .. } if thinking.contains("think")));
+        assert!(
+            matches!(back, ContentBlock::Thinking { thinking, .. } if thinking.contains("think"))
+        );
     }
 
     #[test]

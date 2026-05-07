@@ -25,12 +25,12 @@ pub fn evaluate_condition(condition: Option<&HookCondition>, ctx: &HookContext) 
     match cond {
         HookCondition::Contains { text } => context_contains(ctx, text),
         HookCondition::Regex { pattern } => context_matches_regex(ctx, pattern),
-        HookCondition::All { conditions } => conditions
-            .iter()
-            .all(|c| evaluate_condition(Some(c), ctx)),
-        HookCondition::Any { conditions } => conditions
-            .iter()
-            .any(|c| evaluate_condition(Some(c), ctx)),
+        HookCondition::All { conditions } => {
+            conditions.iter().all(|c| evaluate_condition(Some(c), ctx))
+        }
+        HookCondition::Any { conditions } => {
+            conditions.iter().any(|c| evaluate_condition(Some(c), ctx))
+        }
         HookCondition::Semantic { description } => semantic_fast_path(ctx, description),
     }
 }

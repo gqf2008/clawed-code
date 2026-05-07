@@ -416,9 +416,7 @@ pub async fn partial_compact_conversation(
     let mut result = Vec::with_capacity(1 + tail.len());
     result.push(Message::User(clawed_core::message::UserMessage {
         uuid: uuid::Uuid::new_v4().to_string(),
-        content: vec![clawed_core::message::ContentBlock::Text {
-            text: summary_msg,
-        }],
+        content: vec![clawed_core::message::ContentBlock::Text { text: summary_msg }],
     }));
     result.extend_from_slice(tail);
 
