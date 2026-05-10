@@ -404,4 +404,74 @@ mod tests {
         assert_eq!(removed, 0);
         assert_eq!(msgs.len(), 2);
     }
+
+    #[test]
+    fn test_snip_then_sanitize_drops_orphan_tool_refs() {
+        // Regression for OpenAI-compat 400 `tool_call_id is not found`:
+        // snip_old_messages can split a tool round-trip across the boundary
+        // it removes, leaving a ToolResult whose ToolUse was dropped (or vice
+        // versa). sanitize_messages must clean those orphans up.
+        let mut msgs = vec![
+            Message::User(UserMessage {
+                uuid: "u-start".into(),
+                content: vec![ContentBlock::Text {
+                    text: "do it".into(),
+                }],
+            }),
+            make_tool_use_msg("t1", "Read"),
+            make_tool_result_msg("t1", "file 1"),
+            make_tool_use_msg("t2", "Read"),
+            make_tool_result_msg("t2", "file 2"),
+            Message::Assistant(AssistantMessage {
+                uuid: "a-final".into(),
+                content: vec![ContentBlock::Text {
+                    text: "all done".into(),
+                }],
+                stop_reason: None,
+                usage: None,
+            }),
+        ];
+
+        let collect_ids = |msgs: &[Message]| {
+            let mut uses = std::collections::HashSet::new();
+            let mut results = std::collections::HashSet::new();
+            for msg in msgs {
+                let blocks = match msg {
+                    Message::User(u) => &u.content,
+                    Message::Assistant(a) => &a.content,
+                    Message::System(_) => continue,
+                };
+                for b in blocks {
+                    match b {
+                        ContentBlock::ToolUse { id, .. } => {
+                            uses.insert(id.clone());
+                        }
+                        ContentBlock::ToolResult { tool_use_id, .. } => {
+                            results.insert(tool_use_id.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            (uses, results)
+        };
+
+        let removed = snip_old_messages(&mut msgs, 1);
+        assert_eq!(removed, 4);
+
+        let (uses, results) = collect_ids(&msgs);
+        assert_ne!(
+            uses, results,
+            "snip alone is expected to leave at least one orphan; if this fails the test setup needs adjustment"
+        );
+
+        let (sanitized, _) =
+            clawed_core::message_sanitize::sanitize_messages(std::mem::take(&mut msgs));
+
+        let (uses, results) = collect_ids(&sanitized);
+        assert_eq!(
+            uses, results,
+            "after sanitize, every tool_use must have a matching tool_result"
+        );
+    }
 }

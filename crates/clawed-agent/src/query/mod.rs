@@ -310,6 +310,15 @@ pub fn query_stream_with_injection(
                             );
                             // Second pass: snip oldest message pairs, keep last 5
                             let snipped = crate::compact::snip_old_messages(&mut messages, 5);
+                            // Snipping splits user/assistant pairs without regard to tool_use ↔ tool_result
+                            // coupling, so a ToolUse can be dropped while its ToolResult survives (or vice
+                            // versa). The orphan trips OpenAI-compat providers ("tool_call_id is not found").
+                            if snipped > 0 {
+                                let (clean, _) = clawed_core::message_sanitize::sanitize_messages(
+                                    std::mem::take(&mut messages),
+                                );
+                                messages = clean;
+                            }
                             if truncated + snipped > 0 {
                                 yield AgentEvent::TextDelta(format!(
                                     "\x1b[33m[Trimmed {} tool result(s), snipped {} message(s)]\x1b[0m\n",
