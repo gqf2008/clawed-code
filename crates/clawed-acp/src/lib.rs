@@ -33,3 +33,4 @@ pub mod types;
 
 pub use agent::AcpAgent;
 pub use server::AcpServer;
+pub use transport::AcpTransportConfig;

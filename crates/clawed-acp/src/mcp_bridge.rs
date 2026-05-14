@@ -45,12 +45,8 @@ use clawed_mcp::McpManager;
 /// Represents an active MCP-over-ACP connection.
 #[derive(Clone)]
 struct McpAcpConnection {
-    /// Unique connection ID.
-    connection_id: String,
     /// The ACP component ID that owns this MCP server.
     acp_id: String,
-    /// Server name.
-    server_name: String,
 }
 
 /// The MCP-over-ACP bridge, managing connections between ACP and MCP.
@@ -77,12 +73,9 @@ impl McpAcpBridge {
     pub async fn handle_connect(&self, acp_id: &str) -> Result<String> {
         let connection_id =
             format!("mcp_acp_{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
-        let server_name = format!("acp_server_{}", &acp_id[..acp_id.len().min(8)]);
 
         let connection = McpAcpConnection {
-            connection_id: connection_id.clone(),
             acp_id: acp_id.to_string(),
-            server_name,
         };
 
         let mut conns = self.connections.write().await;
