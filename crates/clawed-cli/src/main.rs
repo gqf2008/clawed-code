@@ -61,6 +61,11 @@ struct Cli {
     #[arg(long)]
     system_prompt: Option<String>,
 
+    /// Run in ACP (Agent Client Protocol) mode.
+    /// Starts an ACP-compatible server for editor integration
+    #[arg(long, hide = true)]
+    acp: bool,
+
     /// Working directory for the session.
     /// Tools resolve paths relative to this directory.
     /// Defaults to current working directory
@@ -571,8 +576,10 @@ async fn run() -> anyhow::Result<()> {
         }
     }
 
-    // ── Handle --resume / --session-id ──────────────────────────────────────
-    if let Some(ref sid) = cli.session_id {
+    // ── Handle --resume / --session-id (skip in ACP mode) ─────────────────
+    if cli.acp {
+        // ACP mode manages its own sessions, skip resume
+    } else if let Some(ref sid) = cli.session_id {
         match engine.restore_session(sid).await {
             Ok(title) => eprintln!("\x1b[32m✓ Resumed session: {}\x1b[0m", title),
             Err(e) => eprintln!("\x1b[31mFailed to restore session {}: {}\x1b[0m", sid, e),
@@ -674,6 +681,23 @@ async fn run() -> anyhow::Result<()> {
         } else {
             eprintln!("No input provided. Use `claude \"prompt\"` or pipe via stdin.");
         }
+    } else if cli.acp {
+        // ACP mode: Agent Client Protocol server (editor integration)
+        // Create a separate MCP manager with configs from disk
+        let acp_mcp = Arc::new(clawed_mcp::registry::McpManager::new());
+        for path in clawed_mcp::registry::discover_mcp_configs(&cwd) {
+            if let Ok(configs) = clawed_mcp::registry::load_mcp_configs(&path) {
+                acp_mcp.load_configs(configs).await;
+            }
+        }
+        let _ = acp_mcp.start_all().await;
+        let server = clawed_acp::AcpServer::new(
+            engine,
+            acp_mcp,
+            clawed_acp::AcpTransportConfig::default(),
+        )
+        .version(env!("CARGO_PKG_VERSION"));
+        server.run_stdio().await?;
     } else if use_tui {
         // TUI mode: full-screen partitioned terminal UI
         let ask_permission = cli.permission_mode.is_none() && settings.permission_mode.is_none();

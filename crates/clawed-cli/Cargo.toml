@@ -14,6 +14,7 @@ clawed-tools = { path = "../clawed-tools" }
 clawed-agent = { path = "../clawed-agent" }
 clawed-bus = { path = "../clawed-bus" }
 clawed-mcp = { path = "../clawed-mcp" }
+clawed-acp = { path = "../clawed-acp" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
