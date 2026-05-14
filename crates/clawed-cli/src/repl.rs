@@ -557,21 +557,21 @@ pub async fn run(
                                         "on" | "true" | "enable" => {
                                             engine.set_thinking(Some(
                                                 clawed_api::types::ThinkingConfig {
-                                                    thinking_type: "enabled".into(),
-                                                    budget_tokens: Some(10_000),
+                                                    thinking_type: "adaptive".into(),
+                                                    budget_tokens: None,
                                                 },
                                             ));
-                                            println!("{}✓ Extended thinking enabled (budget: 10000)\x1b[0m", theme::c_ok());
+                                            println!("{}✓ Extended thinking enabled (adaptive)\x1b[0m", theme::c_ok());
                                         }
                                         other => {
                                             if let Ok(budget) = other.parse::<u32>() {
                                                 engine.set_thinking(Some(
                                                     clawed_api::types::ThinkingConfig {
-                                                        thinking_type: "enabled".into(),
+                                                        thinking_type: "adaptive".into(),
                                                         budget_tokens: Some(budget),
                                                     },
                                                 ));
-                                                println!("{}✓ Extended thinking enabled (budget: {})\x1b[0m", theme::c_ok(), budget);
+                                                println!("{}✓ Extended thinking enabled (adaptive, budget: {})\x1b[0m", theme::c_ok(), budget);
                                             } else {
                                                 println!("Usage: /think [on|off|<budget>]");
                                             }

@@ -107,7 +107,6 @@ impl ApiClient {
                 .map_err(|_| anyhow::anyhow!("Invalid API key format"))?,
         );
         headers.insert("anthropic-version", HeaderValue::from_static(API_VERSION));
-        // Enable prompt caching and extended thinking
         headers.insert(
             "anthropic-beta",
             HeaderValue::from_static("prompt-caching-2024-07-31,thinking-2024-12-04"),

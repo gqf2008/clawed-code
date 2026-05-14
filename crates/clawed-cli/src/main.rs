@@ -468,8 +468,8 @@ async fn run() -> anyhow::Result<()> {
         .provider(&cli.provider)
         .thinking(if cli.thinking {
             Some(clawed_api::types::ThinkingConfig {
-                thinking_type: "enabled".into(),
-                budget_tokens: Some(cli.thinking_budget),
+                thinking_type: "adaptive".into(),
+                budget_tokens: None,
             })
         } else {
             None
