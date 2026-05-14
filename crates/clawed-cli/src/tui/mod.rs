@@ -2858,17 +2858,35 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
         let h = h.unwrap_or(1) as usize;
         if acc + h > first_visible_line {
             msg_start = i;
-            // Ensure msg_start decays to message boundary for system msg groups
             line_offset = (first_visible_line - acc) as u16;
             break;
         }
         acc += h;
-        // For system message blocks, skip ahead to the end of the block
-        if i + 1 < app.messages.len() && matches!(app.messages[i].content, MessageContent::System(_))
-            && matches!(app.messages[i + 1].content, MessageContent::System(_))
-        {
-            // Continue accumulating — system messages are already collapsed
+    }
+
+    // Adjust msg_start to the start of a system message block so that
+    // append_message_lines doesn't begin mid-group (which would lose the
+    // folding header and potentially skip messages).
+    if msg_start > 0 && msg_start < app.messages.len()
+        && matches!(app.messages[msg_start].content, MessageContent::System(_))
+    {
+        let mut block_start = msg_start;
+        while block_start > 0 && matches!(app.messages[block_start - 1].content, MessageContent::System(_)) {
+            block_start -= 1;
         }
+        // Recompute line_offset for the adjusted msg_start
+        let mut block_acc = 0usize;
+        for (i, h) in app.message_line_counts.iter().enumerate().take(msg_start) {
+            block_acc += h.unwrap_or(1) as usize;
+        }
+        // Re-accumulate for the block start
+        let mut adj_acc = 0usize;
+        for (i, h) in app.message_line_counts.iter().enumerate().take(block_start) {
+            adj_acc += h.unwrap_or(1) as usize;
+        }
+        let first_vis = first_visible_line.saturating_sub(adj_acc);
+        line_offset = first_vis as u16;
+        msg_start = block_start;
     }
 
     // Render only the visible range
@@ -2896,6 +2914,30 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
         // The exact count is corrected after Paragraph::line_count below
         let est = lines.len().saturating_sub(rendered).max(1);
         rendered += est;
+    }
+
+    // Apply search highlighting to the local lines (if search is active)
+    if let Some(ref search) = app.search_state {
+        if !search.matches.is_empty() && !lines.is_empty() {
+            // Build text lookup for the local lines to find matches
+            let local_text: Vec<String> = lines.iter().map(|l| {
+                l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()
+            }).collect();
+            let q_lower = search.query.to_lowercase();
+            for (line_idx, _) in &search.matches {
+                // Find this line in the local lines by comparing text content
+                if let Some(ref c) = app.cached_visible_lines.get(*line_idx) {
+                    let cached_text: String = c.spans.iter().map(|s| s.content.as_ref()).collect();
+                    if let Some(local_idx) = local_text.iter().position(|t| t == &cached_text) {
+                        if let Some(line) = lines.get_mut(local_idx) {
+                            for span in line.spans.iter_mut() {
+                                span.style = span.style.add_modifier(Modifier::REVERSED);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Wrap and render
@@ -2984,10 +3026,10 @@ fn compute_sticky_rows(app: &mut App, viewport_height: usize) -> u16 {
         return 0;
     }
 
-    let total_visual = app
-        .cached_visible_line_count
-        .map(|(_, c)| c)
-        .unwrap_or(app.cached_visible_lines.len());
+    let total_visual: usize = app.message_line_counts.iter()
+        .map(|c| c.unwrap_or(1) as usize)
+        .sum::<usize>()
+        .max(app.cached_visible_lines.len());
     let viewport_top = total_visual.saturating_sub(viewport_height + app.scroll_offset);
 
     // Approximate which message is at the viewport top.
