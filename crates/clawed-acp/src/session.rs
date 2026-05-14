@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{json, Value};
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -24,6 +24,10 @@ pub struct AcpSession {
     pub cwd: String,
     /// Whether the session is active.
     pub active: bool,
+    /// Session config options.
+    pub config: HashMap<String, String>,
+    /// Session mode.
+    pub mode: Option<String>,
 }
 
 /// Manages all ACP sessions.
@@ -58,6 +62,8 @@ impl SessionManager {
             engine,
             cwd,
             active: true,
+            config: HashMap::new(),
+            mode: None,
         };
 
         let mut sessions = self.sessions.write().await;
@@ -103,6 +109,29 @@ impl SessionManager {
     }
 
     /// Check if a session is active.
+    pub async fn set_config(&self, sid: &str, key: &str, val: &str) -> Result<()> {
+        let sessions = self.sessions.read().await;
+        let session = sessions.get(sid).ok_or(anyhow::anyhow!("not found"))?;
+        let mut s = session.write().await;
+        s.config.insert(key.into(), val.into());
+        Ok(())
+    }
+
+    pub async fn get_config_json(&self, sid: &str) -> Value {
+        let sessions = self.sessions.read().await;
+        let session = match sessions.get(sid) { Some(s) => s, _ => return json!({"configOptions":[]}) };
+        let s = session.read().await;
+        let opts: Vec<Value> = s.config.iter().map(|(k,v)| json!({"configId":k,"type":"select","currentValue":v,"options":[{"name":v,"value":v}]})).collect();
+        json!({"configOptions": opts})
+    }
+
+    pub async fn set_mode(&self, sid: &str, mid: &str) -> Result<()> {
+        let sessions = self.sessions.read().await;
+        let session = sessions.get(sid).ok_or(anyhow::anyhow!("not found"))?;
+        session.write().await.mode = Some(mid.into());
+        Ok(())
+    }
+
     pub async fn is_active(&self, session_id: &str) -> bool {
         let sessions = self.sessions.read().await;
         if let Some(s) = sessions.get(session_id) { s.read().await.active } else { false }

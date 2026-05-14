@@ -21,6 +21,7 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 futures = { workspace = true }
 async-trait = { workspace = true }
+tokio-tungstenite = "0.24"
 
 [lints]
 workspace = true
