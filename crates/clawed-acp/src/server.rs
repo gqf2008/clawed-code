@@ -204,14 +204,14 @@ impl AcpServer {
         let cmd = p.get("command").and_then(|v| v.as_str()).ok_or(anyhow::anyhow!("Missing command"))?;
         let tid = format!("term_{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
         match std::process::Command::new(cmd).spawn() {
-            Ok(child) => { TERMINALS.lock().unwrap().insert(tid.clone(), child); Ok(json!({"terminalId": tid})) }
+            Ok(child) => { TERMINALS.lock().unwrap_or_else(|e| e.into_inner()).insert(tid.clone(), child); Ok(json!({"terminalId": tid})) }
             Err(e) => Err(anyhow::anyhow!("{e}")),
         }
     }
 
     fn handle_terminal_kill(params: Option<&Value>) {
         if let Some(tid) = params.and_then(|p| p.get("terminalId").and_then(|v| v.as_str())) {
-            if let Some(mut child) = TERMINALS.lock().unwrap().remove(tid) { let _ = child.kill(); let _ = child.wait(); }
+            if let Some(mut child) = TERMINALS.lock().unwrap_or_else(|e| e.into_inner()).remove(tid) { let _ = child.kill(); let _ = child.wait(); }
         }
     }
 
@@ -219,7 +219,7 @@ impl AcpServer {
         let tid = params.and_then(|p| p.get("terminalId").and_then(|v| v.as_str())).map(|s| s.to_string());
         let mut buf = String::new();
         if let Some(ref tid) = tid {
-            let mut terms = TERMINALS.lock().unwrap();
+            let mut terms = TERMINALS.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(child) = terms.get_mut(tid) {
                 use std::io::Read;
                 if let Some(out) = child.stdout.as_mut() { let _ = out.read_to_string(&mut buf); }
@@ -232,7 +232,7 @@ impl AcpServer {
         let tid = params.and_then(|p| p.get("terminalId").and_then(|v| v.as_str())).map(|s| s.to_string());
         match tid {
             Some(tid) => {
-                let mut terms = TERMINALS.lock().unwrap();
+                let mut terms = TERMINALS.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(child) = terms.get_mut(&tid) {
                     Ok(json!({"exitCode": child.wait().ok().and_then(|s| s.code())}))
                 } else {

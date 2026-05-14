@@ -7,6 +7,7 @@
 use serde_json::{json, Value};
 
 /// ACP agent info metadata.
+#[must_use]
 pub fn agent_info(version: Option<&str>) -> Value {
     json!({
         "name": "clawed",
@@ -16,7 +17,7 @@ pub fn agent_info(version: Option<&str>) -> Value {
 }
 
 /// ACP agent capabilities advertised during initialization.
-pub fn agent_capabilities() -> Value {
+#[must_use] pub fn agent_capabilities() -> Value {
     json!({
         "loadSession": false,
         "promptCapabilities": {
@@ -33,7 +34,7 @@ pub fn agent_capabilities() -> Value {
 }
 
 /// ACP initialize response body.
-pub fn initialize_response(version: Option<&str>) -> Value {
+#[must_use] pub fn initialize_response(version: Option<&str>) -> Value {
     json!({
         "protocolVersion": 1,
         "agentCapabilities": agent_capabilities(),
@@ -43,7 +44,7 @@ pub fn initialize_response(version: Option<&str>) -> Value {
 }
 
 /// A JSON-RPC 2.0 success response.
-pub fn rpc_result(id: &Value, result: Value) -> Value {
+#[must_use] pub fn rpc_result(id: &Value, result: Value) -> Value {
     json!({
         "jsonrpc": "2.0",
         "id": id,
@@ -52,7 +53,7 @@ pub fn rpc_result(id: &Value, result: Value) -> Value {
 }
 
 /// A JSON-RPC 2.0 error response.
-pub fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
+#[must_use] pub fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
     json!({
         "jsonrpc": "2.0",
         "id": id,
@@ -64,7 +65,7 @@ pub fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
 }
 
 /// Extract plain text from an ACP content block array.
-pub fn extract_text_from_content(blocks: &[Value]) -> Option<String> {
+#[must_use] pub fn extract_text_from_content(blocks: &[Value]) -> Option<String> {
     let mut text = String::new();
     for block in blocks {
         match block.get("type").and_then(|v| v.as_str()) {
