@@ -1211,7 +1211,6 @@ impl App {
         }
 
         let total = total as u64;
-        let n = self.message_line_counts.len();
 
         // Use existing cached heights as raw distribution basis.
         // When all entries are None (first frame), use uniform 1.
@@ -2876,7 +2875,7 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
         }
         // Recompute line_offset: subtract heights of messages before block_start
         let mut adj_acc = 0usize;
-        for (i, h) in app.message_line_counts.iter().enumerate().take(block_start) {
+        for (_, h) in app.message_line_counts.iter().enumerate().take(block_start) {
             adj_acc += h.unwrap_or(1) as usize;
         }
         let first_vis = first_visible_line.saturating_sub(adj_acc);

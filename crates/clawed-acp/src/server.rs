@@ -6,11 +6,11 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex as StdMutex;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::info;
 
 use clawed_agent::engine::QueryEngine;
 use clawed_mcp::McpManager;
@@ -82,7 +82,7 @@ impl AcpServer {
             version: self.version.clone(),
         });
         loop {
-            let (stream, peer) = listener.accept().await?;
+            let (stream, _peer) = listener.accept().await?;
             let ws_stream = tokio_tungstenite::accept_async(stream).await?;
             let (mut write, mut read) = ws_stream.split();
             let server = Arc::clone(&self_arc);
