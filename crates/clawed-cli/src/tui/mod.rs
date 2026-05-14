@@ -2874,12 +2874,7 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
         while block_start > 0 && matches!(app.messages[block_start - 1].content, MessageContent::System(_)) {
             block_start -= 1;
         }
-        // Recompute line_offset for the adjusted msg_start
-        let mut block_acc = 0usize;
-        for (i, h) in app.message_line_counts.iter().enumerate().take(msg_start) {
-            block_acc += h.unwrap_or(1) as usize;
-        }
-        // Re-accumulate for the block start
+        // Recompute line_offset: subtract heights of messages before block_start
         let mut adj_acc = 0usize;
         for (i, h) in app.message_line_counts.iter().enumerate().take(block_start) {
             adj_acc += h.unwrap_or(1) as usize;
@@ -2916,23 +2911,24 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
         rendered += est;
     }
 
-    // Apply search highlighting to the local lines (if search is active)
+    // Apply search highlighting via line offset mapping
     if let Some(ref search) = app.search_state {
-        if !search.matches.is_empty() && !lines.is_empty() {
-            // Build text lookup for the local lines to find matches
-            let local_text: Vec<String> = lines.iter().map(|l| {
-                l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()
-            }).collect();
-            let q_lower = search.query.to_lowercase();
+        if !search.matches.is_empty() && !lines.is_empty() && !app.cached_visible_lines.is_empty() {
+            // Find the offset of the first local line within cached_visible_lines
+            // by matching the first few lines' text content. This is O(1) when the
+            // first lines are distinct, and still correct (just slower) when not.
+            let local_first: Vec<String> = lines.iter().take(5).map(crate::tui::line_text).collect();
+            let offset = app.cached_visible_lines.windows(local_first.len())
+                .position(|w| {
+                    w.iter().zip(&local_first).all(|(l, t)| &crate::tui::line_text(l) == t)
+                })
+                .unwrap_or(0);
+
             for (line_idx, _) in &search.matches {
-                // Find this line in the local lines by comparing text content
-                if let Some(ref c) = app.cached_visible_lines.get(*line_idx) {
-                    let cached_text: String = c.spans.iter().map(|s| s.content.as_ref()).collect();
-                    if let Some(local_idx) = local_text.iter().position(|t| t == &cached_text) {
-                        if let Some(line) = lines.get_mut(local_idx) {
-                            for span in line.spans.iter_mut() {
-                                span.style = span.style.add_modifier(Modifier::REVERSED);
-                            }
+                if *line_idx >= offset && *line_idx < offset + lines.len() {
+                    if let Some(line) = lines.get_mut(*line_idx - offset) {
+                        for span in line.spans.iter_mut() {
+                            span.style = span.style.add_modifier(Modifier::REVERSED);
                         }
                     }
                 }
