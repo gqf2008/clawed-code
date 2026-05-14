@@ -1989,6 +1989,300 @@ impl App {
                 }
                 return;
             }
+            Some(crate::commands::SlashCommand::Hooks) => {
+                let loaded = clawed_core::config::Settings::load_merged(&cwd);
+                let hooks = &loaded.settings.hooks;
+                let mut out = String::from("Configured Hooks:\n");
+
+                macro_rules! tui_count_event {
+                    ($name:expr, $field:expr) => {{
+                        let n = $field.len();
+                        if n > 0 {
+                            out.push_str(&format!("  {}: {} rule(s)\n", $name, n));
+                        }
+                    }};
+                }
+
+                tui_count_event!("PreToolUse", hooks.pre_tool_use);
+                tui_count_event!("PostToolUse", hooks.post_tool_use);
+                tui_count_event!("PostToolUseFailure", hooks.post_tool_use_failure);
+                tui_count_event!("Stop", hooks.stop);
+                tui_count_event!("UserPromptSubmit", hooks.user_prompt_submit);
+                tui_count_event!("SessionStart", hooks.session_start);
+                tui_count_event!("PreCompact", hooks.pre_compact);
+                tui_count_event!("Notification", hooks.notification);
+                tui_count_event!("PermissionRequest", hooks.permission_request);
+                tui_count_event!("FileChanged", hooks.file_changed);
+                tui_count_event!("ConfigChange", hooks.config_change);
+                tui_count_event!("TaskCreated", hooks.task_created);
+                tui_count_event!("TaskCompleted", hooks.task_completed);
+                tui_count_event!("StopFailure", hooks.stop_failure);
+                tui_count_event!("SessionEnd", hooks.session_end);
+                tui_count_event!("Setup", hooks.setup);
+                tui_count_event!("PostCompact", hooks.post_compact);
+                tui_count_event!("SubagentStart", hooks.subagent_start);
+                tui_count_event!("SubagentStop", hooks.subagent_stop);
+                tui_count_event!("PostSampling", hooks.post_sampling);
+                tui_count_event!("PermissionDenied", hooks.permission_denied);
+                tui_count_event!("InstructionsLoaded", hooks.instructions_loaded);
+                tui_count_event!("CwdChanged", hooks.cwd_changed);
+                tui_count_event!("TeammateIdle", hooks.teammate_idle);
+                tui_count_event!("Elicitation", hooks.elicitation);
+                tui_count_event!("ElicitationResult", hooks.elicitation_result);
+                tui_count_event!("WorktreeCreate", hooks.worktree_create);
+                tui_count_event!("WorktreeRemove", hooks.worktree_remove);
+
+                if out == "Configured Hooks:\n" {
+                    out = "No hooks configured.".to_string();
+                }
+                self.overlay = Some(overlay::build_info_overlay("Hooks", &out));
+                self.request_redraw();
+                return;
+            }
+            Some(crate::commands::SlashCommand::Color { .. }) => {
+                self.push_message(MessageContent::System(
+                    "Use /color in REPL mode (prompt color). In TUI mode, use /theme.".to_string(),
+                ));
+                return;
+            }
+            Some(crate::commands::SlashCommand::Tasks { sub }) => {
+                let task_dir = dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(".claude")
+                    .join("tasks");
+                if sub.starts_with("show") {
+                    let id = sub.trim_start_matches("show").trim();
+                    let path = task_dir.join(format!("{id}.json"));
+                    match std::fs::read_to_string(&path) {
+                        Ok(content) => {
+                            self.overlay =
+                                Some(overlay::build_info_overlay(&format!("Task {id}"), &content));
+                            self.request_redraw();
+                        }
+                        Err(_) => {
+                            self.push_message(MessageContent::System(
+                                format!("Task '{id}' not found."),
+                            ));
+                        }
+                    }
+                } else {
+                    match std::fs::read_dir(&task_dir) {
+                        Ok(entries) => {
+                            let mut tasks: Vec<_> = entries
+                                .flatten()
+                                .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                                .collect();
+                            tasks.sort_by_key(|e| e.file_name());
+                            if tasks.is_empty() {
+                                self.push_message(MessageContent::System(
+                                    "No background tasks.".to_string(),
+                                ));
+                            } else {
+                                let mut list =
+                                    format!("Background Tasks ({} total):\n", tasks.len());
+                                for entry in &tasks {
+                                    let name = entry.file_name();
+                                    let name_str = name.to_string_lossy();
+                                    let id = name_str.trim_end_matches(".json");
+                                    list.push_str(&format!("  {id}\n"));
+                                }
+                                self.overlay = Some(overlay::build_info_overlay("Tasks", &list));
+                                self.request_redraw();
+                            }
+                        }
+                        Err(_) => {
+                            self.push_message(MessageContent::System(
+                                "No background tasks.".to_string(),
+                            ));
+                        }
+                    }
+                }
+                return;
+            }
+            Some(crate::commands::SlashCommand::SecurityReview) => {
+                // Defer to pending_command for engine access
+                let result = crate::commands::CommandResult::SecurityReview;
+                self.pending_command = Some(result);
+                return;
+            }
+            Some(crate::commands::SlashCommand::Advisor { sub }) => {
+                if sub.is_empty() {
+                    let model = self.model.clone();
+                    let msg = format!("Advisor: not set\nUse /advisor <model> to enable (e.g. /advisor opus)\nMain model: {model}");
+                    self.push_message(MessageContent::System(msg));
+                } else if sub.eq_ignore_ascii_case("off") || sub.eq_ignore_ascii_case("unset") {
+                    self.push_message(MessageContent::System("Advisor disabled.".to_string()));
+                } else {
+                    let resolved = clawed_core::model::resolve_model_string(&sub);
+                    if resolved.is_empty() {
+                        self.push_message(MessageContent::System(
+                            format!("Unknown model: '{sub}'"),
+                        ));
+                    } else {
+                        let display = clawed_core::model::display_name_any(&resolved);
+                        self.push_message(MessageContent::System(
+                            format!("Advisor set to: {display} ({resolved})"),
+                        ));
+                    }
+                }
+                return;
+            }
+            Some(crate::commands::SlashCommand::Sandbox { sub }) => {
+                let msg = if sub.starts_with("exclude") {
+                    let pattern = sub.trim_start_matches("exclude").trim();
+                    if pattern.is_empty() {
+                        "Usage: /sandbox exclude <pattern>".to_string()
+                    } else {
+                        format!("Excluded pattern: {pattern}")
+                    }
+                } else {
+                    "Sandbox: not available (requires Docker or sandboxing environment)".to_string()
+                };
+                self.push_message(MessageContent::System(msg));
+                return;
+            }
+            Some(crate::commands::SlashCommand::Ide { sub }) => {
+                if sub.eq_ignore_ascii_case("open") {
+                    let result = std::process::Command::new("code").arg(".").output();
+                    match result {
+                        Ok(_) => self.push_message(MessageContent::System(
+                            "VS Code launched.".to_string(),
+                        )),
+                        Err(_) => self.push_message(MessageContent::System(
+                            "VS Code not found in PATH.\nOpen your IDE manually.".to_string(),
+                        )),
+                    }
+                } else {
+                    self.push_message(MessageContent::System(
+                        "IDE Integration: not connected\nUse /ide open to launch VS Code.".to_string(),
+                    ));
+                }
+                return;
+            }
+            Some(crate::commands::SlashCommand::Keybindings) => {
+                let keybindings_dir = dirs::home_dir()
+                    .map(|h| h.join(".claude"))
+                    .unwrap_or_default();
+                let path = keybindings_dir.join("keybindings.json");
+                if !path.exists() {
+                    let template = r#"{
+  // Claude Code Keyboard Shortcuts
+  "version": "1.0",
+  "bindings": []
+}
+"#;
+                    if std::fs::create_dir_all(&keybindings_dir).is_err() {
+                        self.push_message(MessageContent::System(
+                            "Could not create ~/.claude/ directory.".to_string(),
+                        ));
+                    } else if std::fs::write(&path, template).is_ok() {
+                        self.push_message(MessageContent::System(
+                            format!("Created keybindings config at:\n{}", path.display()),
+                        ));
+                    } else {
+                        self.push_message(MessageContent::System(
+                            "Failed to create keybindings file.".to_string(),
+                        ));
+                    }
+                } else {
+                    self.push_message(MessageContent::System(
+                        format!("Keybindings config at:\n{}", path.display()),
+                    ));
+                }
+                return;
+            }
+            Some(crate::commands::SlashCommand::Session) => {
+                let is_remote = std::env::var("CLAUDE_CODE_REMOTE").is_ok();
+                let m = if is_remote {
+                    "Remote Session: connected"
+                } else {
+                    "Remote Session: local mode\nStart with --remote for remote mode."
+                };
+                self.push_message(MessageContent::System(m.to_string()));
+                return;
+            }
+            Some(crate::commands::SlashCommand::Statusline { .. }) => {
+                // Defer to pending_command for engine access
+                let result = crate::commands::CommandResult::Statusline { prompt: String::new() };
+                self.pending_command = Some(result);
+                return;
+            }
+            Some(crate::commands::SlashCommand::TerminalSetup) => {
+                let term = std::env::var("TERM_PROGRAM")
+                    .or_else(|_| std::env::var("TERM"))
+                    .unwrap_or_else(|_| "unknown".to_string());
+                let native_terms = ["ghostty", "kitty", "iterm2", "wezterm", "warp"];
+                let msg = if native_terms.iter().any(|t| term.to_lowercase().contains(t)) {
+                    format!("Terminal: {term}\nYour terminal natively supports multi-line input.\nNo additional setup needed. Use Shift+Enter or Alt+Enter for newlines.")
+                } else {
+                    format!("Terminal: {term}\nTo enable multi-line input:\n  • Use \\ (backslash) at end of line to continue on next line\n  • Or configure a keybinding for sending Ctrl+J / Shift+Enter")
+                };
+                self.push_message(MessageContent::System(msg));
+                return;
+            }
+            Some(crate::commands::SlashCommand::Desktop) => {
+                let url = "claude://handoff";
+                match opener::open(url) {
+                    Ok(_) => self.push_message(MessageContent::System(
+                        "Claude Desktop: opened.".to_string(),
+                    )),
+                    Err(e) => self.push_message(MessageContent::System(
+                        format!("Claude Desktop: failed to open ({e})"),
+                    )),
+                }
+                return;
+            }
+            Some(crate::commands::SlashCommand::Mobile) => {
+                self.push_message(MessageContent::System(
+                    "Claude Mobile App:\n  iOS: https://apps.apple.com/app/claude-by-anthropic/id6473753684\n  Android: https://play.google.com/store/apps/details?id=com.anthropic.claude".to_string(),
+                ));
+                return;
+            }
+            Some(crate::commands::SlashCommand::Install { args }) => {
+                let force = if args.contains("--force") { " (force)" } else { "" };
+                self.push_message(MessageContent::System(
+                    format!("Claude Code v{}{force}\nBinary: {}",
+                        env!("CARGO_PKG_VERSION"),
+                        std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "unknown".to_string())),
+                ));
+                return;
+            }
+            Some(crate::commands::SlashCommand::Upgrade) => {
+                let url = "https://claude.ai/upgrade/max";
+                match opener::open(url) {
+                    Ok(_) => self.push_message(MessageContent::System(
+                        "Upgrade page opened in browser.".to_string(),
+                    )),
+                    Err(e) => self.push_message(MessageContent::System(
+                        format!("Could not open browser: {e}\nVisit: {url}"),
+                    )),
+                }
+                return;
+            }
+            Some(crate::commands::SlashCommand::PrivacySettings) => {
+                let url = "https://claude.ai/settings/data-privacy-controls";
+                match opener::open(url) {
+                    Ok(_) => self.push_message(MessageContent::System(
+                        "Privacy settings opened in browser.".to_string(),
+                    )),
+                    Err(e) => self.push_message(MessageContent::System(
+                        format!("Could not open browser: {e}\nVisit: {url}"),
+                    )),
+                }
+                return;
+            }
+            Some(crate::commands::SlashCommand::Onboarding) => {
+                self.push_message(MessageContent::System(
+                    "Welcome to Clawed Code!\nType /help for available commands.\nQuick start: /init, /model, /doctor".to_string(),
+                ));
+                return;
+            }
+            Some(crate::commands::SlashCommand::Passes) => {
+                self.push_message(MessageContent::System(
+                    "Referral Passes:\n  https://claude.ai/passes\n  Share this link to give friends a free week of Claude Code.".to_string(),
+                ));
+                return;
+            }
             Some(crate::commands::SlashCommand::Model(name)) if name.is_empty() => {
                 self.set_footer_picker(build_model_picker(&self.model));
                 return;
@@ -2209,7 +2503,25 @@ impl App {
             | crate::commands::CommandResult::Branch { .. }
             | crate::commands::CommandResult::Search { .. }
             | crate::commands::CommandResult::History { .. }
-            | crate::commands::CommandResult::Resume { .. } => {
+            | crate::commands::CommandResult::Resume { .. }
+            | crate::commands::CommandResult::Hooks
+            | crate::commands::CommandResult::Tasks { .. }
+            | crate::commands::CommandResult::Color { .. }
+            | crate::commands::CommandResult::SecurityReview
+            | crate::commands::CommandResult::Advisor { .. }
+            | crate::commands::CommandResult::Sandbox { .. }
+            | crate::commands::CommandResult::Ide { .. }
+            | crate::commands::CommandResult::Keybindings
+            | crate::commands::CommandResult::Session
+            | crate::commands::CommandResult::Statusline { .. }
+            | crate::commands::CommandResult::TerminalSetup
+            | crate::commands::CommandResult::Desktop
+            | crate::commands::CommandResult::Mobile
+            | crate::commands::CommandResult::Install { .. }
+            | crate::commands::CommandResult::Upgrade
+            | crate::commands::CommandResult::PrivacySettings
+            | crate::commands::CommandResult::Onboarding
+            | crate::commands::CommandResult::Passes => {
                 self.pending_command = Some(result);
             }
         }
@@ -5152,6 +5464,43 @@ async fn handle_async_command(
                 }
             }
         }
+        CommandResult::SecurityReview => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let diff = tokio::task::spawn_blocking(move || {
+                std::process::Command::new("git")
+                    .args(["diff", "HEAD"])
+                    .current_dir(&cwd)
+                    .output()
+                    .ok()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                    .unwrap_or_default()
+            }).await.unwrap_or_default();
+            let diff_short = if diff.len() > 12000 {
+                format!("{}…\n[truncated, {} bytes total]", &diff[..12000], diff.len())
+            } else if diff.is_empty() {
+                "No changes found (working tree matches HEAD).".to_string()
+            } else {
+                diff
+            };
+            let review_prompt = format!(
+                "You are a senior security engineer conducting a focused security review of the changes on this branch.\n\n```\n{}\n```\n\nFocus on high-confidence vulnerabilities. Skip: DoS, secrets-on-disk, rate-limiting, dependency confusion.\nReport format: markdown with file, line, severity (CRITICAL/HIGH/MEDIUM/LOW), category, and fix recommendation.",
+                diff_short
+            );
+            let _ = client.submit(&review_prompt);
+            app.mark_generating();
+        }
+        CommandResult::Statusline { prompt } => {
+            let p = if prompt.is_empty() {
+                "Configure my statusLine from my shell PS1 configuration"
+            } else {
+                &prompt
+            };
+            let agent_prompt = format!(
+                "You are a statusline-setup agent. Read shell config (~/.bashrc, ~/.zshrc, etc.) and configure Claude Code status display. User request: {p}"
+            );
+            let _ = client.submit(&agent_prompt);
+            app.mark_generating();
+        }
         CommandResult::Vim { toggle } => {
             let enabled = match toggle.to_lowercase().as_str() {
                 "" | "on" | "true" | "1" => true,
@@ -5183,7 +5532,23 @@ async fn handle_async_command(
         | CommandResult::Stickers
         | CommandResult::Exit
         | CommandResult::Bridge
-        | CommandResult::Teleport => {
+        | CommandResult::Teleport
+        | CommandResult::Hooks
+        | CommandResult::Tasks { .. }
+        | CommandResult::Color { .. }
+        | CommandResult::Advisor { .. }
+        | CommandResult::Sandbox { .. }
+        | CommandResult::Ide { .. }
+        | CommandResult::Keybindings
+        | CommandResult::Session
+        | CommandResult::TerminalSetup
+        | CommandResult::Desktop
+        | CommandResult::Mobile
+        | CommandResult::Install { .. }
+        | CommandResult::Upgrade
+        | CommandResult::PrivacySettings
+        | CommandResult::Onboarding
+        | CommandResult::Passes => {
             // Should not reach here — these are handled in handle_slash_command
         }
     }

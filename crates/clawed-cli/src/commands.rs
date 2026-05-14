@@ -158,6 +158,40 @@ pub enum SlashCommand {
     },
     /// Show detailed session statistics.
     Stats,
+    /// Show loaded hook configurations (/hooks).
+    Hooks,
+    /// Show and manage background tasks (/tasks).
+    Tasks {
+        sub: String,
+    },
+    /// Set prompt bar color (/color <name>).
+    Color {
+        name: String,
+    },
+    /// Security review of pending changes (/security-review).
+    SecurityReview,
+    /// Advisor model management (/advisor [model|off]).
+    Advisor {
+        sub: String,
+    },
+    /// Sandbox configuration (/sandbox).
+    Sandbox {
+        sub: String,
+    },
+    /// IDE integration status and management (/ide).
+    Ide {
+        sub: String,
+    },
+    /// Open keybindings config file (/keybindings).
+    Keybindings,
+    /// Remote session info (/session).
+    Session,
+    /// Configure status line (/statusline [prompt]).
+    Statusline {
+        prompt: String,
+    },
+    /// Terminal setup (/terminal-setup).
+    TerminalSetup,
     /// Chrome extension integration.
     Chrome {
         sub: String,
@@ -166,6 +200,22 @@ pub enum SlashCommand {
     Bridge,
     /// Teleport / CCR remote status (/teleport).
     Teleport,
+    /// Continue session in Claude Desktop (/desktop, /app).
+    Desktop,
+    /// Show mobile app QR/download info (/mobile, /ios, /android).
+    Mobile,
+    /// Install/upgrade Claude Code (/install).
+    Install {
+        args: String,
+    },
+    /// Upgrade subscription plan (/upgrade).
+    Upgrade,
+    /// View privacy settings (/privacy-settings).
+    PrivacySettings,
+    /// Onboarding wizard (/onboarding).
+    Onboarding,
+    /// Share referral passes (/passes).
+    Passes,
     Exit,
     Unknown(String),
 }
@@ -247,13 +297,31 @@ impl SlashCommand {
             "image" | "img" | "attach" => Self::Image { path: args },
             "stickers" => Self::Stickers,
             "effort" => Self::Effort { level: args },
+            "color" => Self::Color { name: args },
             "tag" => Self::Tag { name: args },
+            "hooks" => Self::Hooks,
+            "tasks" => Self::Tasks { sub: args },
+            "security-review" | "security" => Self::SecurityReview,
+            "advisor" | "adviser" => Self::Advisor { sub: args },
+            "sandbox" => Self::Sandbox { sub: args },
+            "ide" => Self::Ide { sub: args },
+            "keybindings" | "keys" => Self::Keybindings,
+            "session" | "remote" => Self::Session,
+            "statusline" => Self::Statusline { prompt: args },
+            "terminal-setup" | "terminalsetup" => Self::TerminalSetup,
             "release-notes" | "changelog" => Self::ReleaseNotes,
             "feedback" => Self::Feedback { text: args },
             "stats" | "usage" => Self::Stats,
             "chrome" => Self::Chrome { sub: args },
             "bridge" => Self::Bridge,
             "teleport" => Self::Teleport,
+            "desktop" | "app" => Self::Desktop,
+            "mobile" | "ios" | "android" => Self::Mobile,
+            "install" => Self::Install { args },
+            "upgrade" => Self::Upgrade,
+            "privacy-settings" | "privacy" => Self::PrivacySettings,
+            "onboarding" => Self::Onboarding,
+            "passes" => Self::Passes,
             "exit" | "quit" => Self::Exit,
             name => {
                 // Check if it matches a loaded skill
@@ -440,6 +508,24 @@ impl SlashCommand {
                 }
             }
             Self::Stats => CommandResult::Stats,
+            Self::Color { name } => CommandResult::Color { name: name.clone() },
+            Self::Hooks => CommandResult::Hooks,
+            Self::Tasks { sub } => CommandResult::Tasks { sub: sub.clone() },
+            Self::SecurityReview => CommandResult::SecurityReview,
+            Self::Advisor { sub } => CommandResult::Advisor { sub: sub.clone() },
+            Self::Sandbox { sub } => CommandResult::Sandbox { sub: sub.clone() },
+            Self::Ide { sub } => CommandResult::Ide { sub: sub.clone() },
+            Self::Keybindings => CommandResult::Keybindings,
+            Self::Session => CommandResult::Session,
+            Self::Statusline { prompt } => CommandResult::Statusline { prompt: prompt.clone() },
+            Self::TerminalSetup => CommandResult::TerminalSetup,
+            Self::Desktop => CommandResult::Desktop,
+            Self::Mobile => CommandResult::Mobile,
+            Self::Install { args } => CommandResult::Install { args: args.clone() },
+            Self::Upgrade => CommandResult::Upgrade,
+            Self::PrivacySettings => CommandResult::PrivacySettings,
+            Self::Onboarding => CommandResult::Onboarding,
+            Self::Passes => CommandResult::Passes,
             Self::Chrome { sub } => CommandResult::Chrome { sub: sub.clone() },
             Self::Bridge => CommandResult::Bridge,
             Self::Teleport => CommandResult::Teleport,
@@ -581,6 +667,16 @@ pub enum CommandResult {
         name: String,
         prompt: String,
     },
+    /// Show loaded hook configurations (/hooks).
+    Hooks,
+    /// Show and manage background tasks (/tasks).
+    Tasks {
+        sub: String,
+    },
+    /// Set prompt bar color (/color <name>).
+    Color {
+        name: String,
+    },
     /// Chrome extension integration (/chrome [install|uninstall|status]).
     Chrome {
         sub: String,
@@ -661,6 +757,46 @@ pub enum CommandResult {
     },
     /// Show detailed session statistics (/stats).
     Stats,
+    /// Security review of pending changes (/security-review).
+    SecurityReview,
+    /// Advisor model management (/advisor [model|off]).
+    Advisor {
+        sub: String,
+    },
+    /// Sandbox configuration (/sandbox).
+    Sandbox {
+        sub: String,
+    },
+    /// IDE integration status (/ide).
+    Ide {
+        sub: String,
+    },
+    /// Open keybindings config file (/keybindings).
+    Keybindings,
+    /// Remote session info (/session).
+    Session,
+    /// Configure status line (/statusline [prompt]).
+    Statusline {
+        prompt: String,
+    },
+    /// Terminal setup (/terminal-setup).
+    TerminalSetup,
+    /// Continue session in Claude Desktop (/desktop).
+    Desktop,
+    /// Show mobile app download info (/mobile).
+    Mobile,
+    /// Install/upgrade Claude Code (/install).
+    Install {
+        args: String,
+    },
+    /// Upgrade subscription (/upgrade).
+    Upgrade,
+    /// View privacy settings (/privacy-settings).
+    PrivacySettings,
+    /// Onboarding wizard (/onboarding).
+    Onboarding,
+    /// Share referral passes (/passes).
+    Passes,
     Exit,
 }
 
@@ -704,6 +840,8 @@ const HELP_TEXT_BASE: &str = "\
   /retry             Retry the last failed prompt (alias: /redo)
   /cost [today|week|month]  Show token usage and costs
   /exit              Exit the CLI
+  /desktop           Continue in Claude Desktop app
+  /mobile            Show mobile app download info
 
 \x1b[1mGit & Code\x1b[0m
   /diff              Show git diff (staged + unstaged)
@@ -723,6 +861,8 @@ const HELP_TEXT_BASE: &str = "\
   /fast [off]        Toggle fast/cheap model (haiku)
   /think [on|off|N]  Toggle extended thinking (N = token budget)
   /effort [level]    Set effort (low|medium|high|max|auto)
+  /color [name]      Set prompt bar color (red, green, blue, etc.)
+  /advisor [model]   Enable/disable secondary advisor model
   /vim [on|off]      Toggle vim editing mode
   /theme [name]      Switch terminal theme (dark, light, dark-ansi, etc.)
   /break-cache       Force next request to skip prompt cache
@@ -730,14 +870,17 @@ const HELP_TEXT_BASE: &str = "\
   /logout            Clear saved API key
   /config            Show current configuration
   /permissions       Show permission mode and rules (default|bypass|acceptEdits|plan)
+  /hooks             Show loaded hook configurations
   /context           Show loaded context (CLAUDE.md, memory, model)
   /reload-context    Reload CLAUDE.md, memory, and settings
+  /sandbox           Configure sandbox mode
   /mcp               Show discovered MCP servers
   /plugin            List loaded plugins (alias: /plugins)
 
 \x1b[1mRemote\x1b[0m
   /bridge            Show bridge gateway status (Lark/Telegram/Slack)
   /teleport          Show CCR remote session status
+  /session           Show remote session info and QR code
 
 \x1b[1mSession & Memory\x1b[0m
   /resume            Resume a saved session (interactive picker)
@@ -758,12 +901,23 @@ const HELP_TEXT_BASE: &str = "\
 \x1b[1mSystem\x1b[0m
   /doctor            Check environment health
   /skills            List available skills
+  /tasks             List and manage background tasks
+  /security-review   Run a security review on pending changes
+  /ide               IDE integration status
+  /keybindings       Open keybindings configuration file
+  /statusline        Configure shell prompt status line
+  /terminal-setup    Set up multi-line input keybinding
   /agents            Manage agent definitions (list|status|info|create|delete)
   /add-dir <path>    Add context directory at runtime
   /files [pattern]   List files in current directory
   /image <path>      Attach an image to the next message (PNG/JPEG/GIF/WebP)
   /env               Show environment information
   /version           Show version info
+  /install           Show installation info
+  /upgrade           Open upgrade page
+  /privacy-settings  View privacy settings
+  /onboarding        Show onboarding guide
+  /passes            Share referral passes
   /release-notes     Show version and release notes
   /stickers          Order Clawed Code stickers!
   /feedback <text>   Submit feedback about Clawed Code

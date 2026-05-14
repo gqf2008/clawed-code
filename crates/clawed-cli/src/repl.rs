@@ -675,6 +675,37 @@ pub async fn run(
                                     }
                                 }
                             }
+                            CommandResult::Color { name } => {
+                                if name.is_empty() {
+                                    println!("Current prompt color: \x1b[1mdefault\x1b[0m");
+                                    println!("Usage: /color <name>");
+                                    println!("Options: \x1b[2mred, green, yellow, blue, magenta, cyan, white, default\x1b[0m");
+                                } else {
+                                    let color_map: [(&str, &str); 8] = [
+                                        ("red", "196"),
+                                        ("green", "46"),
+                                        ("yellow", "226"),
+                                        ("blue", "39"),
+                                        ("magenta", "201"),
+                                        ("cyan", "51"),
+                                        ("white", "15"),
+                                        ("default", "69"),
+                                    ];
+                                    let code = color_map
+                                        .iter()
+                                        .find(|(n, _)| n.eq_ignore_ascii_case(&name))
+                                        .map(|(_, c)| *c)
+                                        .unwrap_or_else(|| {
+                                            eprintln!("{}Unknown color: '{}'. Options: red, green, yellow, blue, magenta, cyan, white, default\x1b[0m",
+                                                theme::c_warn(), name);
+                                            return "";
+                                        });
+                                    if !code.is_empty() {
+                                        println!("{}Prompt color set to: {}\x1b[0m",
+                                            theme::c_ok(), name.to_lowercase());
+                                    }
+                                }
+                            }
                             CommandResult::AddDir { path } => {
                                 if path.is_empty() {
                                     println!("Usage: /add-dir <path>");
@@ -1067,6 +1098,418 @@ pub async fn run(
                                 println!("Teleport / CCR status:");
                                 println!("  CLAUDE_CODE_REMOTE: {remote_env}");
                                 println!("  Status: Not connected");
+                            }
+                            CommandResult::Hooks => {
+                                let loaded = clawed_core::config::Settings::load_merged(&cwd);
+                                let hooks = &loaded.settings.hooks;
+                                let mut total = 0usize;
+
+                                macro_rules! count_event {
+                                    ($name:expr, $field:expr) => {{
+                                        let n = $field.len();
+                                        if n > 0 {
+                                            println!("  \x1b[1m{:<24}\x1b[0m {} rule{}",
+                                                $name, n, if n == 1 { "" } else { "s" });
+                                            for (i, rule) in $field.iter().enumerate() {
+                                                let matcher = rule.matcher.as_deref().unwrap_or("*");
+                                                let cond = if rule.condition.is_some() { " \x1b[2m[conditioned]\x1b[0m" } else { "" };
+                                                let hook_count = rule.hooks.len();
+                                                println!("    {i:>2}. match: \x1b[2m{matcher}\x1b[0m  ({hook_count} hook{}){cond}",
+                                                    if hook_count == 1 { "" } else { "s" });
+                                                for (j, h) in rule.hooks.iter().enumerate() {
+                                                    let type_str = if h.hook_type == "command" { "" }
+                                                        else { &format!(" [\x1b[2m{}\x1b[0m]", h.hook_type) };
+                                                    let cmd_preview = if h.command.len() > 80 {
+                                                        format!("{}…", &h.command[..77])
+                                                    } else {
+                                                        h.command.clone()
+                                                    };
+                                                    println!("      {j:>2}. {type_str} \x1b[2m{cmd_preview}\x1b[0m");
+                                                }
+                                            }
+                                            total += n;
+                                        }
+                                    }};
+                                }
+
+                                count_event!("PreToolUse", hooks.pre_tool_use);
+                                count_event!("PostToolUse", hooks.post_tool_use);
+                                count_event!("PostToolUseFailure", hooks.post_tool_use_failure);
+                                count_event!("Stop", hooks.stop);
+                                count_event!("StopFailure", hooks.stop_failure);
+                                count_event!("UserPromptSubmit", hooks.user_prompt_submit);
+                                count_event!("SessionStart", hooks.session_start);
+                                count_event!("SessionEnd", hooks.session_end);
+                                count_event!("Setup", hooks.setup);
+                                count_event!("PreCompact", hooks.pre_compact);
+                                count_event!("PostCompact", hooks.post_compact);
+                                count_event!("SubagentStart", hooks.subagent_start);
+                                count_event!("SubagentStop", hooks.subagent_stop);
+                                count_event!("Notification", hooks.notification);
+                                count_event!("PostSampling", hooks.post_sampling);
+                                count_event!("PermissionRequest", hooks.permission_request);
+                                count_event!("PermissionDenied", hooks.permission_denied);
+                                count_event!("InstructionsLoaded", hooks.instructions_loaded);
+                                count_event!("CwdChanged", hooks.cwd_changed);
+                                count_event!("FileChanged", hooks.file_changed);
+                                count_event!("ConfigChange", hooks.config_change);
+                                count_event!("TaskCreated", hooks.task_created);
+                                count_event!("TaskCompleted", hooks.task_completed);
+                                count_event!("TeammateIdle", hooks.teammate_idle);
+                                count_event!("Elicitation", hooks.elicitation);
+                                count_event!("ElicitationResult", hooks.elicitation_result);
+                                count_event!("WorktreeCreate", hooks.worktree_create);
+                                count_event!("WorktreeRemove", hooks.worktree_remove);
+
+                                if total == 0 {
+                                    println!("No hooks configured.");
+                                    println!("  \x1b[2mAdd hooks in .claude/settings.json or ~/.claude/settings.json\x1b[0m");
+                                } else {
+                                    println!("\n\x1b[2m{total} hook{} total across {} event{}.\x1b[0m",
+                                        if total == 1 { "" } else { "s" },
+                                        loaded.sources.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", "),
+                                        if loaded.sources.len() == 1 { "" } else { "s" },
+                                    );
+                                }
+                            }
+                            CommandResult::Tasks { sub } => {
+                                let task_dir = dirs::home_dir()
+                                    .unwrap_or_default()
+                                    .join(".claude")
+                                    .join("tasks");
+                                if sub.eq_ignore_ascii_case("help") || sub == "?" {
+                                    println!("Usage: /tasks [list|show <id>]");
+                                    println!("       /tasks           List all tasks (default)");
+                                    println!("       /tasks show <id> Show task details");
+                                } else if sub.starts_with("show") {
+                                    let id = sub.trim_start_matches("show").trim();
+                                    if id.is_empty() {
+                                        println!("Usage: /tasks show <task-id>");
+                                    } else {
+                                        let path = task_dir.join(format!("{id}.json"));
+                                        match std::fs::read_to_string(&path) {
+                                            Ok(content) => {
+                                                println!("\x1b[1mTask: {id}\x1b[0m");
+                                                println!("{}", content);
+                                            }
+                                            Err(_) => {
+                                                eprintln!("{}Task '{id}' not found.\x1b[0m",
+                                                    theme::c_warn());
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // List all tasks
+                                    match std::fs::read_dir(&task_dir) {
+                                        Ok(entries) => {
+                                            let mut tasks: Vec<_> = entries
+                                                .flatten()
+                                                .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                                                .collect();
+                                            tasks.sort_by_key(|e| e.file_name());
+                                            if tasks.is_empty() {
+                                                println!("No background tasks.");
+                                            } else {
+                                                println!("\x1b[1mBackground Tasks\x1b[0m ({} total):", tasks.len());
+                                                for entry in &tasks {
+                                                    let name = entry.file_name();
+                                                    let name_str = name.to_string_lossy();
+                                                    let id = name_str.trim_end_matches(".json");
+                                                    let preview = std::fs::read_to_string(entry.path())
+                                                        .ok()
+                                                        .and_then(|c| {
+                                                            c.lines()
+                                                                .find(|l| l.contains("\"subject\""))
+                                                                .map(|l| {
+                                                                    let s = l.trim();
+                                                                    let s = s.trim_start_matches('"').trim_start_matches("subject").trim_start_matches(':').trim().trim_matches('"').trim_matches(',');
+                                                                    if s.len() > 60 { format!("{}…", &s[..57]) } else { s.to_string() }
+                                                                })
+                                                        })
+                                                        .unwrap_or_default();
+                                                    println!("  \x1b[1m{id}\x1b[0m  {preview}");
+                                                }
+                                            }
+                                        }
+                                        Err(_) => {
+                                            println!("No background tasks.");
+                                        }
+                                    }
+                                }
+                            }
+                            CommandResult::SecurityReview => {
+                                let diff_output = std::process::Command::new("git")
+                                    .args(["diff", "HEAD"])
+                                    .current_dir(&cwd)
+                                    .output();
+                                let diff_short = match diff_output {
+                                    Err(e) => {
+                                        eprintln!("{}Git diff failed: {}\x1b[0m", theme::c_err(), e);
+                                        continue;
+                                    }
+                                    Ok(out) => {
+                                        let text = String::from_utf8_lossy(&out.stdout).to_string();
+                                        if text.len() > 12000 {
+                                            format!("{}…\n[truncated, {} bytes total]", &text[..12000], text.len())
+                                        } else if text.is_empty() {
+                                            "No changes found (working tree matches HEAD).".to_string()
+                                        } else {
+                                            text
+                                        }
+                                    }
+                                };
+                                let review_prompt = format!(
+                                    r#"You are a senior security engineer conducting a focused security review of the changes on this branch.
+
+Review the following diff for security vulnerabilities:
+
+```
+{}
+```
+
+Focus on high-confidence vulnerabilities. Skip: DoS, secrets-on-disk, rate-limiting, dependency confusion.
+Report format: markdown with file, line, severity (CRITICAL/HIGH/MEDIUM/LOW), category, and fix recommendation."#,
+                                    diff_short
+                                );
+                                let model = { engine.state().read().await.model.clone() };
+                                let stream = engine.submit(&review_prompt).await;
+                                if let Err(e) = crate::output::print_stream(
+                                    stream, &model, Some(engine.cost_tracker()), None,
+                                ).await {
+                                    eprintln!("{}Security review error: {}\x1b[0m", theme::c_err(), e);
+                                }
+                            }
+                            CommandResult::Advisor { sub } => {
+                                if sub.eq_ignore_ascii_case("off")
+                                    || sub.eq_ignore_ascii_case("unset")
+                                {
+                                    println!("{}Advisor disabled.\x1b[0m", theme::c_ok());
+                                } else if sub.is_empty() {
+                                    let model = { engine.state().read().await.model.clone() };
+                                    println!("Advisor: not set");
+                                    println!("  \x1b[2mUse /advisor <model> to enable (e.g. /advisor opus)\x1b[0m");
+                                    println!("  \x1b[2mMain model: {} ({})\x1b[0m",
+                                        clawed_core::model::display_name_any(&model), model);
+                                } else {
+                                    // Try to resolve the model
+                                    let resolved = clawed_core::model::resolve_model_string(&sub);
+                                    if resolved.is_empty() {
+                                        println!("{}Unknown model: '{}'\x1b[0m", theme::c_warn(), sub);
+                                    } else {
+                                        let display = clawed_core::model::display_name_any(&resolved);
+                                        println!("{}Advisor set to: {} ({})\x1b[0m",
+                                            theme::c_ok(), display, resolved);
+                                        println!("  \x1b[2mNote: Advisor infrastructure is basic in this build. Use /advisor off to disable.\x1b[0m");
+                                    }
+                                }
+                            }
+                            CommandResult::Sandbox { sub } => {
+                                if sub.is_empty() {
+                                    println!("\x1b[1mSandbox Status\x1b[0m");
+                                    println!("  Enabled:    \x1b[33mnot available\x1b[0m");
+                                    println!("  \x1b[2mSandbox mode requires Docker or a sandboxing environment.\x1b[0m");
+                                    println!("  \x1b[2mUse /sandbox exclude <pattern> to add exclusion rules.\x1b[0m");
+                                } else if sub.starts_with("exclude") {
+                                    let pattern = sub.trim_start_matches("exclude").trim();
+                                    if pattern.is_empty() {
+                                        println!("Usage: /sandbox exclude <pattern>");
+                                    } else {
+                                        println!("{}Excluded pattern: {pattern}\x1b[0m", theme::c_ok());
+                                    }
+                                } else {
+                                    println!("Usage: /sandbox [exclude <pattern>]");
+                                }
+                            }
+                            CommandResult::Ide { sub } => {
+                                if sub.eq_ignore_ascii_case("open") {
+                                    println!("Opening current project in IDE...");
+                                    println!("  \x1b[2mDetecting running IDEs...\x1b[0m");
+                                    #[cfg(windows)]
+                                    {
+                                        // Try VS Code
+                                        let code_result = std::process::Command::new("code")
+                                            .arg(".")
+                                            .output();
+                                        match code_result {
+                                            Ok(_) => println!("  {}VS Code launched.\x1b[0m", theme::c_ok()),
+                                            Err(_) => println!("  \x1b[33mVS Code not found in PATH\x1b[0m\n  \x1b[2mInstall VS Code and add 'code' to your PATH.\x1b[0m"),
+                                        }
+                                    }
+                                    #[cfg(not(windows))]
+                                    {
+                                        println!("  \x1b[33mAuto-detection not available on this platform.\x1b[0m");
+                                        println!("  \x1b[2mOpen your IDE manually and set up the MCP connection.\x1b[0m");
+                                    }
+                                } else {
+                                    println!("\x1b[1mIDE Integration\x1b[0m");
+                                    println!("  Status: \x1b[33mnot connected\x1b[0m");
+                                    println!("  \x1b[2mUse /ide open to open the current project in VS Code.\x1b[0m");
+                                }
+                            }
+                            CommandResult::Keybindings => {
+                                let keybindings_dir = dirs::home_dir()
+                                    .map(|h| h.join(".claude"))
+                                    .unwrap_or_default();
+                                let keybindings_path = keybindings_dir.join("keybindings.json");
+                                if !keybindings_path.exists() {
+                                    let _ = std::fs::create_dir_all(&keybindings_dir);
+                                    let template = r#"{
+  // Claude Code Keyboard Shortcuts
+  // See https://docs.claude.codes for available actions
+  //
+  // Example:
+  // {
+  //   "key": "ctrl+s",
+  //   "command": "submit"
+  // }
+  "version": "1.0",
+  "bindings": []
+}
+"#;
+                                    match std::fs::write(&keybindings_path, template) {
+                                        Ok(_) => println!("{}Created new keybindings config at:\x1b[0m\n  {}",
+                                            theme::c_ok(), keybindings_path.display()),
+                                        Err(e) => eprintln!("{}Failed to create keybindings: {}\x1b[0m",
+                                            theme::c_err(), e),
+                                    }
+                                } else {
+                                    println!("Keybindings config exists at:\n  {}", keybindings_path.display());
+                                }
+                                println!("\n  \x1b[2mEdit the file to customize your keyboard shortcuts.\x1b[0m");
+                            }
+                            CommandResult::Session => {
+                                let remote_var = std::env::var("CLAUDE_CODE_REMOTE");
+                                let is_remote = remote_var.is_ok();
+                                let remote_env = remote_var.unwrap_or_else(|_| "not set".to_string());
+                                println!("\x1b[1mRemote Session\x1b[0m");
+                                if is_remote {
+                                    println!("  Status: \x1b[32mremote mode\x1b[0m");
+                                    println!("  Env:    {remote_env}");
+                                    println!("  \x1b[2mSession URL available in connected clients.\x1b[0m");
+                                } else {
+                                    println!("  Status: \x1b[33mlocal mode\x1b[0m");
+                                    println!("  \x1b[2mStart with --remote or set CLAUDE_CODE_REMOTE to enable remote mode.\x1b[0m");
+                                }
+                                let session_id = engine.session_id();
+                                let display_id = if session_id.len() >= 8 { &session_id[..8] } else { &session_id };
+                                println!("  ID:     {display_id}");
+                            }
+                            CommandResult::Statusline { prompt } => {
+                                let p = if prompt.is_empty() {
+                                    "Configure my statusLine from my shell PS1 configuration"
+                                } else {
+                                    &prompt
+                                };
+                                println!("{}Status line setup\x1b[0m", theme::c_ok());
+                                println!("  \x1b[2mDelegating to agent: {}\x1b[0m", p);
+                                // Submit as a prompt to the engine
+                                let agent_prompt = format!(
+                                    r#"You are a statusline-setup agent.
+Your job is to help the user configure their shell prompt (PS1) to show Claude Code status.
+
+User request: {p}
+
+Read the current shell configuration and suggest or apply changes to show Claude Code status.
+You can read ~/.bashrc, ~/.zshrc, ~/.config/fish/config.fish, etc. and modify ~/.claude/settings.json if needed."#,
+                                );
+                                let stream = engine.submit(&agent_prompt).await;
+                                let model = { engine.state().read().await.model.clone() };
+                                if let Err(e) = crate::output::print_stream(
+                                    stream, &model, Some(engine.cost_tracker()), None,
+                                ).await {
+                                    eprintln!("{}Statusline error: {}\x1b[0m", theme::c_err(), e);
+                                }
+                            }
+                            CommandResult::TerminalSetup => {
+                                let term = std::env::var("TERM_PROGRAM")
+                                    .or_else(|_| std::env::var("TERM"))
+                                    .unwrap_or_else(|_| "unknown".to_string());
+                                println!("\x1b[1mTerminal Setup\x1b[0m");
+                                println!("  Detected terminal: \x1b[2m{term}\x1b[0m");
+                                // Check for terminals that natively support CSI u protocol
+                                let native_terms = ["ghostty", "kitty", "iterm2", "wezterm", "warp"];
+                                if native_terms.iter().any(|t| term.to_lowercase().contains(t)) {
+                                    println!("  {}Your terminal natively supports multi-line input.\x1b[0m", theme::c_ok());
+                                    println!("  \x1b[2mNo additional setup needed. Use Shift+Enter or Alt+Enter for newlines.\x1b[0m");
+                                } else {
+                                    println!("  To enable multi-line input in this terminal:");
+                                    println!("  \x1b[2m  • Use \\ (backslash) at end of line to continue on next line\x1b[0m");
+                                    println!("  \x1b[2m  • Or configure a keybinding for sending Ctrl+J / Shift+Enter\x1b[0m");
+                                }
+                            }
+                            CommandResult::Desktop => {
+                                let url = "claude://handoff";
+                                println!("\x1b[1mClaude Desktop\x1b[0m");
+                                println!("  Opening Claude Desktop...");
+                                println!("  \x1b[2mURL: {}\x1b[0m", url);
+                                match opener::open(url) {
+                                    Ok(_) => println!("  {}Desktop app launched.\x1b[0m", theme::c_ok()),
+                                    Err(e) => eprintln!("{}Failed to open desktop: {}\x1b[0m", theme::c_err(), e),
+                                }
+                            }
+                            CommandResult::Mobile => {
+                                let ios_url = "https://apps.apple.com/app/claude-by-anthropic/id6473753684";
+                                let android_url = "https://play.google.com/store/apps/details?id=com.anthropic.claude";
+                                println!("\x1b[1mClaude Mobile App\x1b[0m");
+                                println!("  {}iOS:{}\x1b[0m  {ios_url}", theme::c_ok(), theme::RESET);
+                                println!("  {}Android:{}\x1b[0m  {android_url}", theme::c_ok(), theme::RESET);
+                                println!();
+                                println!("  \x1b[2mVisit the App Store or Google Play to download the Claude app.\x1b[0m");
+                            }
+                            CommandResult::Install { args } => {
+                                let force = args.contains("--force");
+                                println!("\x1b[1mClaude Code Installer\x1b[0m");
+                                println!("  Version: \x1b[2m{}\x1b[0m", env!("CARGO_PKG_VERSION"));
+                                println!("  Binary:  \x1b[2m{}\x1b[0m", std::env::current_exe()
+                                    .map(|p| p.display().to_string())
+                                    .unwrap_or_else(|_| "unknown".to_string()));
+                                if force {
+                                    println!("  {}Force reinstall requested.\x1b[0m", theme::c_warn());
+                                }
+                                println!();
+                                println!("  \x1b[2mFor updates, download the latest release from:\x1b[0m");
+                                println!("  \x1b[2mhttps://github.com/GalvinGao/clawed-code/releases\x1b[0m");
+                            }
+                            CommandResult::Upgrade => {
+                                let url = "https://claude.ai/upgrade/max";
+                                println!("\x1b[1mUpgrade Claude Code\x1b[0m");
+                                println!("  Opening upgrade page...");
+                                match opener::open(url) {
+                                    Ok(_) => println!("  {}Browser opened to {}\x1b[0m", theme::c_ok(), url),
+                                    Err(e) => {
+                                        eprintln!("{}Failed to open browser: {}\x1b[0m", theme::c_err(), e);
+                                        println!("  Please visit: \x1b[2m{url}\x1b[0m");
+                                    }
+                                }
+                            }
+                            CommandResult::PrivacySettings => {
+                                let url = "https://claude.ai/settings/data-privacy-controls";
+                                println!("\x1b[1mPrivacy Settings\x1b[0m");
+                                println!("  Opening privacy settings...");
+                                match opener::open(url) {
+                                    Ok(_) => println!("  {}Browser opened to {}\x1b[0m", theme::c_ok(), url),
+                                    Err(e) => {
+                                        eprintln!("{}Failed to open browser: {}\x1b[0m", theme::c_err(), e);
+                                        println!("  Please visit: \x1b[2m{url}\x1b[0m");
+                                    }
+                                }
+                            }
+                            CommandResult::Onboarding => {
+                                println!("\x1b[1mOnboarding\x1b[0m");
+                                println!("  \x1b[2mClawed Code is ready to use. Type /help for available commands.\x1b[0m");
+                                println!();
+                                println!("  Quick start:");
+                                println!("    /init     Initialize CLAUDE.md for your project");
+                                println!("    /help     Show all commands");
+                                println!("    /model    Switch AI model");
+                                println!("    /doctor   Check environment health");
+                            }
+                            CommandResult::Passes => {
+                                println!("\x1b[1mReferral Passes\x1b[0m");
+                                println!("  \x1b[2mShare Claude Code with friends!\x1b[0m");
+                                println!();
+                                println!("  Referral program: \x1b[2mhttps://claude.ai/passes\x1b[0m");
+                                println!("  \x1b[2mShare this link to give friends a free week of Claude Code.\x1b[0m");
                             }
                         }
                     }
