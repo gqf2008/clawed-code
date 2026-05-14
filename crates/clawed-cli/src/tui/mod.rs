@@ -764,6 +764,15 @@ struct App {
     cached_visible_lines_dirty: bool,
     cached_visible_line_count: Option<(u16, usize)>,
     last_rendered_message_visual_count: Option<usize>,
+    /// Height cache: estimated visual lines per message at current width.
+    /// Rebuilt when `cached_visible_lines_dirty` is set or width changes.
+    message_line_counts: Vec<Option<u16>>,
+    /// The width at which message_line_counts were measured.
+    message_line_counts_width: u16,
+    /// Index of the first message rendered into cached_visible_lines (for virtual scroll slicing).
+    first_visible_msg: usize,
+    /// How many visual lines before first_visible_msg are scrolled past (partial message).
+    first_visible_offset: u16,
     last_spinner_tick: Instant,
     /// Instant of the last render. Used to throttle render rate during
     /// active streaming so the event loop has time to process input events.
@@ -836,6 +845,10 @@ impl App {
             scroll_offset: 0,
             new_messages_count: 0,
             auto_scroll: true,
+            message_line_counts: Vec::new(),
+            message_line_counts_width: 0,
+            first_visible_msg: 0,
+            first_visible_offset: 0,
             input: InputWidget::new(),
             footer_picker: None,
             status,
@@ -1044,12 +1057,10 @@ impl App {
         let new_start = self.cached_visible_lines.len().saturating_sub(old_len);
         self.cached_visible_lines.truncate(new_start);
         self.cached_visible_lines.extend(new_lines);
-        // Invalidate the cached visual line count: the delta may change the
-        // wrapped line count by more than "a few lines" (e.g. a long paragraph
-        // with no newlines can have many wrapped visual lines). Stale counts
-        // cause incorrect scroll offsets which makes output appear in the
-        // wrong place (including overlapping the input area).
+        // Extend height cache for new messages (added after the truncation point).
+        // The exact number of new messages is unknown here; mark for rebuild.
         self.cached_visible_line_count = None;
+        self.message_line_counts_width = 0; // force height cache rebuild
         self.request_redraw();
     }
 
@@ -1058,69 +1069,84 @@ impl App {
             return;
         }
 
+        // Build the full line cache only when heights aren't available yet.
+        // Once heights are cached, render_messages slices visible range and
+        // calls build_visible_range() instead, skipping this full scan.
+        if self.message_line_counts.is_empty() || self.message_line_counts.len() != self.messages.len() {
+            self.message_line_counts = vec![None; self.messages.len()];
+            self.message_line_counts_width = 0;
+        }
+
         let mut lines = Vec::new();
         let mut index = 0;
         while index < self.messages.len() {
-            // Collapse long runs of consecutive System messages.
-            if matches!(self.messages[index].content, MessageContent::System(_)) {
-                let start = index;
-                while index < self.messages.len()
-                    && matches!(self.messages[index].content, MessageContent::System(_))
-                {
-                    index += 1;
-                }
-                let count = index - start;
-                let has_important = (start..index)
-                    .any(|i| Self::system_msg_is_important(&self.messages[i].content));
-                if count > 2 && !has_important {
-                    if start > 0
-                        && Self::needs_separator(
-                            &self.messages[start - 1].content,
-                            &self.messages[start].content,
-                        )
-                    {
-                        lines.push(Line::from(""));
-                    }
-                    lines.extend(self.visible_message_lines_at(start));
-                    lines.push(Line::styled(
-                        format!("+ {} system messages", count - 2),
-                        Style::default().fg(MUTED),
-                    ));
-                    if count > 1 {
-                        lines.extend(self.visible_message_lines_at(index - 1));
-                    }
-                    continue;
-                }
-                for j in start..index {
-                    if j > start
-                        && Self::needs_separator(
-                            &self.messages[j - 1].content,
-                            &self.messages[j].content,
-                        )
-                    {
-                        lines.push(Line::from(""));
-                    }
-                    lines.extend(self.visible_message_lines_at(j));
-                }
-                continue;
-            }
-
-            if index > 0
-                && Self::needs_separator(
-                    &self.messages[index - 1].content,
-                    &self.messages[index].content,
-                )
-            {
-                lines.push(Line::from(""));
-            }
-            lines.extend(self.visible_message_lines_at(index));
-            index += 1;
+            self.append_message_lines(&mut lines, &mut index);
         }
         self.cached_visible_lines = lines;
         self.cached_visible_lines_dirty = false;
         self.cached_visible_line_count = None;
         self.refresh_search_matches();
         self.apply_search_highlight();
+    }
+
+    /// Append lines for one logical message group, advancing `index`.
+    fn append_message_lines(&self, lines: &mut Vec<Line<'static>>, index: &mut usize) {
+        if *index >= self.messages.len() {
+            return;
+        }
+        if matches!(self.messages[*index].content, MessageContent::System(_)) {
+            let start = *index;
+            while *index < self.messages.len()
+                && matches!(self.messages[*index].content, MessageContent::System(_))
+            {
+                *index += 1;
+            }
+            let count = *index - start;
+            let has_important = (start..*index)
+                .any(|i| Self::system_msg_is_important(&self.messages[i].content));
+            if count > 2 && !has_important {
+                if start > 0
+                    && Self::needs_separator(
+                        &self.messages[start - 1].content,
+                        &self.messages[start].content,
+                    )
+                {
+                    lines.push(Line::from(""));
+                }
+                lines.extend(self.visible_message_lines_at(start));
+                lines.push(Line::styled(
+                    format!("+ {} system messages", count - 2),
+                    Style::default().fg(MUTED),
+                ));
+                if count > 1 {
+                    lines.extend(self.visible_message_lines_at(*index - 1));
+                }
+                return;
+            }
+            for j in start..*index {
+                if j > start
+                    && Self::needs_separator(
+                        &self.messages[j - 1].content,
+                        &self.messages[j].content,
+                    )
+                {
+                    lines.push(Line::from(""));
+                }
+                lines.extend(self.visible_message_lines_at(j));
+            }
+            return;
+        }
+
+        if *index > 0
+            && Self::needs_separator(
+                &self.messages[*index - 1].content,
+                &self.messages[*index].content,
+            )
+        {
+            lines.push(Line::from(""));
+        }
+        lines.extend(self.visible_message_lines_at(*index));
+        *index += 1;
     }
 
     // ── Search helpers ──────────────────────────────────────────────────
@@ -1175,6 +1201,45 @@ impl App {
         let target = line_idx.saturating_sub(approx_viewport / 2);
         self.scroll_offset = max_scroll.saturating_sub(target);
         self.request_redraw();
+    }
+
+    /// Build the height cache by wrapping all cached lines and measuring.
+    fn build_height_cache(&mut self, width: u16) {
+        if self.cached_visible_lines.is_empty() || self.messages.is_empty() {
+            return;
+        }
+        // Build a paragraph from ALL cached lines to get exact wrapping.
+        let lines = self.cached_visible_lines.clone();
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+        let total = paragraph.line_count(width);
+
+        if total == 0 || self.message_line_counts.is_empty() {
+            return;
+        }
+
+        // Distribute total visual lines proportionally among messages.
+        // Each message gets at least 1 line. This is approximate but converges
+        // as the Partial-text (non-wrapped) counts drive the distribution.
+        let raw_counts: Vec<u16> = self.message_line_counts.iter().map(|c| c.unwrap_or(1)).collect();
+        let raw_sum: u32 = raw_counts.iter().map(|c| *c as u32).sum();
+        if raw_sum == 0 { return; }
+
+        let total = total as u32;
+        let mut distributed = 0u32;
+        for (i, &raw) in raw_counts.iter().enumerate() {
+            let share = (raw as u64 * total as u64 / raw_sum as u64) as u16;
+            let share = share.max(1);
+            self.message_line_counts[i] = Some(share);
+            distributed += share as u32;
+        }
+
+        // Distribute remainder (from rounding) to the last message
+        let remainder = total.saturating_sub(distributed);
+        if remainder > 0 {
+            if let Some(last) = self.message_line_counts.last_mut() {
+                *last = Some(last.unwrap_or(1) + remainder as u16);
+            }
+        }
     }
 
     fn clear_search(&mut self) {
@@ -2757,72 +2822,105 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
 
     app.rebuild_visible_lines();
 
-    let cached_visual_count = app
-        .cached_visible_line_count
-        .and_then(|(width, count)| (width == area.width).then_some(count));
-
     let viewport_height = area.height as usize;
 
-    // --- Sticky header: show the current user prompt when scrolled up ---
+    // --- Sticky header ---
     let sticky_rows = compute_sticky_rows(app, viewport_height);
     let msg_area = if sticky_rows > 0 {
-        Rect::new(
-            area.x,
-            area.y + sticky_rows,
-            area.width,
-            area.height - sticky_rows,
-        )
+        Rect::new(area.x, area.y + sticky_rows, area.width, area.height - sticky_rows)
     } else {
         area
     };
     let msg_viewport_height = msg_area.height as usize;
 
-    // Compute visual line count only when cache is stale.
-    // Delay clone: only build Paragraph when line_count is not cached.
-    let total_visual = if let Some(count) = cached_visual_count {
-        count
-    } else {
-        let all_lines = app.cached_visible_lines.clone();
-        let paragraph = Paragraph::new(all_lines).wrap(Wrap { trim: false });
-        let count = paragraph.line_count(area.width);
-        app.cached_visible_line_count = Some((area.width, count));
-        count
-    };
+    // --- Virtual scroll: compute visible message range from height cache ---
+    // Invalidate height cache on resize
+    if app.message_line_counts_width != 0 && app.message_line_counts_width != area.width {
+        app.message_line_counts.iter_mut().for_each(|c| *c = None);
+        app.message_line_counts_width = 0;
+    }
 
-    // scroll_offset = 0 → bottom of content; higher = scroll up.
-    let scroll_row: u16 = if total_visual <= msg_viewport_height {
-        0
-    } else {
+    // Build the full height cache via Paragraph::line_count if not yet measured
+    if app.message_line_counts_width == 0 {
+        app.build_height_cache(area.width);
+        app.message_line_counts_width = area.width;
+    }
+
+    // Compute which visual line the user wants to see at the top of the viewport
+    // scroll_offset = 0 → bottom of content
+    let total_visual: usize = app.message_line_counts.iter().map(|c| c.unwrap_or(1) as usize).sum();
+    let first_visible_line = if total_visual > msg_viewport_height {
         let max_scroll = total_visual - msg_viewport_height;
         let clamped = app.scroll_offset.min(max_scroll);
-        (max_scroll - clamped).min(u16::MAX as usize) as u16
+        max_scroll - clamped
+    } else {
+        0
     };
 
-    // --- Viewport-window optimization: when showing the bottom (scroll_offset=0)
-    // and the list is long, only clone the last few logical lines instead of
-    // the entire cached_visible_lines. The scroll offset is adjusted so the
-    // Paragraph still renders the correct viewport bottom.
-    let (paragraph, render_scroll) = if app.scroll_offset == 0
-        && total_visual > msg_viewport_height
-        && app.cached_visible_lines.len() > msg_viewport_height * 3
-    {
-        let keep_logical = msg_viewport_height * 3;
-        let start = app.cached_visible_lines.len().saturating_sub(keep_logical);
-        let partial = app.cached_visible_lines[start..].to_vec();
-        let paragraph = Paragraph::new(partial).wrap(Wrap { trim: false });
-        let partial_visual = paragraph.line_count(area.width);
-        let adjust = scroll_row.saturating_sub((total_visual - partial_visual) as u16);
-        (paragraph, adjust)
+    // Walk messages to find which message contains first_visible_line
+    let mut acc = 0usize;
+    let mut msg_start = 0usize;
+    let mut line_offset = 0u16;
+    for (i, h) in app.message_line_counts.iter().enumerate() {
+        let h = h.unwrap_or(1) as usize;
+        if acc + h > first_visible_line {
+            msg_start = i;
+            // Ensure msg_start decays to message boundary for system msg groups
+            line_offset = (first_visible_line - acc) as u16;
+            break;
+        }
+        acc += h;
+        // For system message blocks, skip ahead to the end of the block
+        if i + 1 < app.messages.len() && matches!(app.messages[i].content, MessageContent::System(_))
+            && matches!(app.messages[i + 1].content, MessageContent::System(_))
+        {
+            // Continue accumulating — system messages are already collapsed
+        }
+    }
+
+    // Render only the visible range
+    let overscan = msg_viewport_height; // render extra above/below for smooth scroll
+    let mut lines = Vec::new();
+    let mut idx = msg_start;
+    let mut rendered = 0usize;
+    let target = msg_viewport_height + overscan;
+
+    // Render partial first message if line_offset > 0
+    if line_offset > 0 && idx < app.messages.len() {
+        let part_lines: Vec<Line<'static>> = app.visible_message_lines_at(idx);
+        let skip = line_offset as usize;
+        if skip < part_lines.len() {
+            lines.extend(part_lines.iter().skip(skip).cloned());
+            rendered += part_lines.len() - skip;
+        }
+        idx += 1;
+    }
+
+    // Render remaining messages
+    while idx < app.messages.len() && rendered < target {
+        app.append_message_lines(&mut lines, &mut idx);
+        // Estimate visual count for height cache (before wrapping)
+        // The exact count is corrected after Paragraph::line_count below
+        let est = lines.len().saturating_sub(rendered).max(1);
+        rendered += est;
+    }
+
+    // Wrap and render
+    let paragraph = if lines.is_empty() {
+        Paragraph::new(Line::from("")).wrap(Wrap { trim: false })
     } else {
-        let all = app.cached_visible_lines.clone();
-        let paragraph = Paragraph::new(all).wrap(Wrap { trim: false });
-        (paragraph, scroll_row)
+        // Prune overscanned lines to viewport
+        let excess = lines.len().saturating_sub(msg_viewport_height + overscan / 2);
+        if excess > 0 {
+            lines.drain(0..excess.min(lines.len()));
+        }
+        Paragraph::new(lines).wrap(Wrap { trim: false })
     };
 
     if should_clear_message_area(app.last_rendered_message_visual_count, total_visual) {
         frame.render_widget(Clear, msg_area);
     }
-    frame.render_widget(paragraph.scroll((render_scroll, 0)), msg_area);
+    frame.render_widget(paragraph, msg_area);
     app.last_rendered_message_visual_count = Some(total_visual);
 
     // Render sticky header overlay at the top of the message area.
