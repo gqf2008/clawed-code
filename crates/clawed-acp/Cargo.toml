@@ -1,0 +1,29 @@
+[package]
+name = "clawed-acp"
+version = "0.1.0"
+edition = "2021"
+description = "ACP (Agent Client Protocol) implementation — exposes clawed engine as an ACP agent with MCP-over-ACP bridging"
+
+[dependencies]
+clawed-core = { path = "../clawed-core" }
+clawed-agent = { path = "../clawed-agent" }
+clawed-bus = { path = "../clawed-bus" }
+clawed-mcp = { path = "../clawed-mcp" }
+clawed-tools = { path = "../clawed-tools" }
+
+agent-client-protocol = "0.11"
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

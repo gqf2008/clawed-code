@@ -11,6 +11,7 @@ members = [
     "crates/clawed-bridge",
     "crates/clawed-computer-use",
     "crates/clawed-swarm",
+    "crates/clawed-acp",
 ]
 resolver = "2"
 
