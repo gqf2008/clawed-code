@@ -286,16 +286,13 @@ pub(super) fn block_to_api(block: &ContentBlock, has_thinking: bool) -> ApiConte
             thinking,
             signature,
         } => {
-            if has_thinking && signature.as_deref().is_some_and(|s| !s.is_empty()) {
+            if has_thinking {
+                // API requires thinking blocks to be passed back faithfully
+                // when extended thinking is enabled. Preserve both content
+                // and signature as returned by the API.
                 ApiContentBlock::Thinking {
                     thinking: thinking.clone(),
                     signature: signature.clone(),
-                }
-            } else if has_thinking {
-                // Drop thinking blocks without valid signature — API requires it
-                ApiContentBlock::Text {
-                    text: String::new(),
-                    cache_control: None,
                 }
             } else {
                 ApiContentBlock::Text {
