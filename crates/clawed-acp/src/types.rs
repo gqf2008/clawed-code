@@ -7,11 +7,11 @@
 use serde_json::{json, Value};
 
 /// ACP agent info metadata.
-pub fn agent_info() -> Value {
+pub fn agent_info(version: Option<&str>) -> Value {
     json!({
         "name": "clawed",
         "title": "Clawed Code Agent",
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": version.unwrap_or(env!("CARGO_PKG_VERSION")),
     })
 }
 
@@ -33,11 +33,11 @@ pub fn agent_capabilities() -> Value {
 }
 
 /// ACP initialize response body.
-pub fn initialize_response() -> Value {
+pub fn initialize_response(version: Option<&str>) -> Value {
     json!({
         "protocolVersion": 1,
         "agentCapabilities": agent_capabilities(),
-        "agentInfo": agent_info(),
+        "agentInfo": agent_info(version),
         "authMethods": [],
     })
 }
@@ -82,4 +82,16 @@ pub fn extract_text_from_content(blocks: &[Value]) -> Option<String> {
         }
     }
     if text.is_empty() { None } else { Some(text) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test] fn version_override() { assert_eq!(agent_info(Some("2.0"))["version"], "2.0"); }
+    #[test] fn caps_exist() { assert!(agent_capabilities().get("promptCapabilities").is_some()); }
+    #[test] fn init_ok() { assert_eq!(initialize_response(Some("1"))["protocolVersion"], 1); }
+    #[test] fn rpc_ok() { let r = rpc_result(&json!(1), json!({})); assert_eq!(r["jsonrpc"], "2.0"); }
+    #[test] fn rpc_err() { let e = rpc_error(&json!("a"), -1, "err"); assert_eq!(e["error"]["code"], -1); }
+    #[test] fn extract() { let b: Vec<Value> = serde_json::from_value(json!([{"type":"text","text":"hi"}])).unwrap(); assert_eq!(extract_text_from_content(&b), Some("hi\n".into())); }
+    #[test] fn extract_empty() { assert_eq!(extract_text_from_content(&[]), None); }
 }

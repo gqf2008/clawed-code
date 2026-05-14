@@ -48,7 +48,7 @@ impl AcpAgent {
     /// Agent info for initialize response.
     #[must_use]
     pub fn info(&self) -> Value {
-        types::agent_info()
+        types::agent_info(None)
     }
 
     /// Agent capabilities for initialize response.

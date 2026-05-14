@@ -23,6 +23,7 @@ use crate::types;
 pub struct AcpServer {
     agent: Arc<AcpAgent>,
     _transport: AcpTransportConfig,
+    version: Option<String>,
 }
 
 impl AcpServer {
@@ -38,7 +39,15 @@ impl AcpServer {
         Self {
             agent,
             _transport: transport,
+            version: None,
         }
+    }
+
+    /// Set the application version string reported during initialization.
+    #[must_use]
+    pub fn version(mut self, version: &str) -> Self {
+        self.version = Some(version.to_string());
+        self
     }
 
     /// Run the server on stdio (default local agent transport).
@@ -90,7 +99,7 @@ impl AcpServer {
         let is_notification = id.is_null();
 
         let result = match method {
-            "initialize" => Ok(types::initialize_response()),
+            "initialize" => Ok(types::initialize_response(self.version.as_deref())),
             "session/new" => self.handle_new_session(params),
             "session/prompt" => self.handle_prompt(params).await,
             "session/cancel" => self.handle_cancel(params).await,
