@@ -400,6 +400,11 @@ impl Message {
             };
             *e = is_error;
             *d = duration_ms;
+            // Auto-collapse large tool results so they don't flood the screen
+            const AUTO_COLLAPSE_LINES: usize = 30;
+            if full_result.as_ref().map_or(0, |r| r.lines().count()) > AUTO_COLLAPSE_LINES {
+                self.collapsed = true;
+            }
             self.invalidate_cache();
         }
     }
