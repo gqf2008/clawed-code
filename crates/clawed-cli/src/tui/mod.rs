@@ -769,10 +769,6 @@ struct App {
     message_line_counts: Vec<Option<u16>>,
     /// The width at which message_line_counts were measured.
     message_line_counts_width: u16,
-    /// Index of the first message rendered into cached_visible_lines (for virtual scroll slicing).
-    first_visible_msg: usize,
-    /// How many visual lines before first_visible_msg are scrolled past (partial message).
-    first_visible_offset: u16,
     last_spinner_tick: Instant,
     /// Instant of the last render. Used to throttle render rate during
     /// active streaming so the event loop has time to process input events.
@@ -847,8 +843,6 @@ impl App {
             auto_scroll: true,
             message_line_counts: Vec::new(),
             message_line_counts_width: 0,
-            first_visible_msg: 0,
-            first_visible_offset: 0,
             input: InputWidget::new(),
             footer_picker: None,
             status,
@@ -1069,12 +1063,9 @@ impl App {
             return;
         }
 
-        // Build the full line cache only when heights aren't available yet.
-        // Once heights are cached, render_messages slices visible range and
-        // calls build_visible_range() instead, skipping this full scan.
-        if self.message_line_counts.is_empty() || self.message_line_counts.len() != self.messages.len() {
-            self.message_line_counts = vec![None; self.messages.len()];
-            self.message_line_counts_width = 0;
+        // Ensure height cache length matches messages
+        if self.message_line_counts.len() != self.messages.len() {
+            self.message_line_counts.resize(self.messages.len(), None);
         }
 
         let mut lines = Vec::new();
@@ -1208,37 +1199,36 @@ impl App {
         if self.cached_visible_lines.is_empty() || self.messages.is_empty() {
             return;
         }
-        // Build a paragraph from ALL cached lines to get exact wrapping.
+        // Measure exact total visual lines from the full pre-wrapped buffer.
         let lines = self.cached_visible_lines.clone();
-        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
-        let total = paragraph.line_count(width);
+        let total = Paragraph::new(lines).wrap(Wrap { trim: false }).line_count(width);
 
-        if total == 0 || self.message_line_counts.is_empty() {
-            return;
+        if total == 0 { return; }
+
+        // Ensure vec length matches messages.
+        if self.message_line_counts.len() != self.messages.len() {
+            self.message_line_counts.resize(self.messages.len(), None);
         }
 
-        // Distribute total visual lines proportionally among messages.
-        // Each message gets at least 1 line. This is approximate but converges
-        // as the Partial-text (non-wrapped) counts drive the distribution.
-        let raw_counts: Vec<u16> = self.message_line_counts.iter().map(|c| c.unwrap_or(1)).collect();
-        let raw_sum: u32 = raw_counts.iter().map(|c| *c as u32).sum();
-        if raw_sum == 0 { return; }
+        let total = total as u64;
+        let n = self.message_line_counts.len();
 
-        let total = total as u32;
-        let mut distributed = 0u32;
-        for (i, &raw) in raw_counts.iter().enumerate() {
-            let share = (raw as u64 * total as u64 / raw_sum as u64) as u16;
-            let share = share.max(1);
-            self.message_line_counts[i] = Some(share);
-            distributed += share as u32;
+        // Use existing cached heights as raw distribution basis.
+        // When all entries are None (first frame), use uniform 1.
+        let raw_sum: u64 = self.message_line_counts.iter()
+            .map(|c| u64::from(c.unwrap_or(1))).sum::<u64>().max(1);
+
+        let mut distributed = 0u64;
+        for entry in self.message_line_counts.iter_mut() {
+            let raw = u64::from(entry.unwrap_or(1));
+            let share = (raw * total / raw_sum).max(1) as u16;
+            *entry = Some(share);
+            distributed += u64::from(share);
         }
 
-        // Distribute remainder (from rounding) to the last message
-        let remainder = total.saturating_sub(distributed);
-        if remainder > 0 {
-            if let Some(last) = self.message_line_counts.last_mut() {
-                *last = Some(last.unwrap_or(1) + remainder as u16);
-            }
+        // Apply rounding remainder to last message
+        if let Some(last) = self.message_line_counts.last_mut() {
+            *last = Some(last.unwrap_or(1) + total.saturating_sub(distributed) as u16);
         }
     }
 
@@ -1284,6 +1274,8 @@ impl App {
         self.cached_visible_lines.clear();
         self.cached_visible_lines_dirty = false;
         self.cached_visible_line_count = None;
+        self.message_line_counts.clear();
+        self.message_line_counts_width = 0;
         self.last_rendered_message_visual_count = None;
         self.footer_picker = None;
         self.agent_progress.clear();
@@ -1297,6 +1289,7 @@ impl App {
             .map(|prev| Self::needs_separator(prev, &msg.content))
             .unwrap_or(false);
         self.messages.push(msg);
+        self.message_line_counts.push(None);
         if !self.cached_visible_lines_dirty {
             if needs_sep {
                 self.cached_visible_lines.push(Line::from(""));
