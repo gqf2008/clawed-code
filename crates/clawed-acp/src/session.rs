@@ -105,9 +105,6 @@ impl SessionManager {
     /// Check if a session is active.
     pub async fn is_active(&self, session_id: &str) -> bool {
         let sessions = self.sessions.read().await;
-        sessions
-            .get(session_id)
-            .map(|s| s.try_read().map(|s| s.active).unwrap_or(false))
-            .unwrap_or(false)
+        if let Some(s) = sessions.get(session_id) { s.read().await.active } else { false }
     }
 }
