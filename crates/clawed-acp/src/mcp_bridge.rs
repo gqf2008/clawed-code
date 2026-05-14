@@ -44,7 +44,6 @@ use clawed_mcp::McpManager;
 
 /// Represents an active MCP-over-ACP connection.
 #[derive(Clone)]
-#[derive(Clone)]
 struct McpAcpConnection {
     /// The ACP component ID that owns this MCP server.
     #[allow(dead_code)]
