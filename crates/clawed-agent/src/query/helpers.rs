@@ -216,10 +216,34 @@ pub(super) fn messages_to_api(
                 role: "user".into(),
                 content: to_api_content(&u.content),
             }),
-            Message::Assistant(a) => Some(ApiMessage {
-                role: "assistant".into(),
-                content: to_api_content(&a.content),
-            }),
+            Message::Assistant(a) => {
+                let content = to_api_content(&a.content);
+                if has_thinking && !content.iter().any(|b| matches!(b, ApiContentBlock::Thinking { .. })) {
+                    // When thinking mode is enabled, the API requires assistant
+                    // messages to contain a thinking block. If this message
+                    // predates thinking mode (no thinking block), wrap its
+                    // text content in a thinking block to satisfy validation.
+                    let mut wrapped = Vec::with_capacity(content.len() + 1);
+                    // Extract text from existing content blocks as thinking
+                    let thinking_text: String = content.iter().filter_map(|b| {
+                        if let ApiContentBlock::Text { text, .. } = b { Some(text.as_str()) } else { None }
+                    }).collect::<Vec<_>>().join("\n");
+                    if !thinking_text.is_empty() {
+                        wrapped.push(ApiContentBlock::Thinking {
+                            thinking: thinking_text,
+                            signature: None,
+                        });
+                    }
+                    // Add non-thinking blocks after (non-text blocks like tool_use)
+                    for b in content.into_iter().filter(|b| !matches!(b, ApiContentBlock::Text { .. })) {
+                        wrapped.push(b);
+                    }
+                    if wrapped.is_empty() { return None; }
+                    Some(ApiMessage { role: "assistant".into(), content: wrapped })
+                } else {
+                    Some(ApiMessage { role: "assistant".into(), content })
+                }
+            },
             Message::System(_) => None,
         })
         .collect();
