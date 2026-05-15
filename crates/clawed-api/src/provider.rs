@@ -13,6 +13,7 @@ use std::pin::Pin;
 use anyhow::Result;
 use futures::Stream;
 use reqwest::header::HeaderMap;
+use tracing::error;
 
 use crate::types::{MessagesRequest, MessagesResponse, StreamEvent};
 
@@ -165,6 +166,13 @@ impl ApiBackend for FirstPartyBackend {
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let body = response.text().await.unwrap_or_default();
+            if status == 400 {
+                if let Ok(req_json) = serde_json::to_string_pretty(req) {
+                    error!(status = 400, body = %body, request = %req_json, "API 400 error");
+                } else {
+                    error!(status = 400, body = %body, "API 400 error");
+                }
+            }
             anyhow::bail!("Stream API error {status}: {body}");
         }
 
