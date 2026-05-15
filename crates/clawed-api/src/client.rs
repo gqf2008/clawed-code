@@ -9,7 +9,7 @@ use futures::Stream;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use std::pin::Pin;
 use std::sync::Arc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, info, trace};
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
