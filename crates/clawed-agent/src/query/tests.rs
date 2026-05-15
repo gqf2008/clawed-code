@@ -423,17 +423,18 @@ fn thinking_block_preserved_when_has_thinking_true() {
 }
 
 #[test]
-fn thinking_block_without_signature_still_kept() {
-    // Even without a signature, the thinking block type must be preserved.
-    // Converting it to empty text causes the API to reject the request.
+fn thinking_block_without_signature_becomes_text() {
+    // Anthropic only accepts signed thinking blocks in subsequent requests.
+    // Unsigned historical thinking is safer as regular text than as a typed
+    // thinking block that the API cannot verify.
     let block = ContentBlock::Thinking {
         thinking: "hmm".into(),
         signature: None,
     };
     let api = block_to_api(&block, true);
     assert!(
-        matches!(api, ApiContentBlock::Thinking { .. }),
-        "thinking block without signature must remain as Thinking type"
+        matches!(api, ApiContentBlock::Text { text, .. } if text == "<thinking>hmm</thinking>"),
+        "unsigned thinking block must be converted to text"
     );
 }
 
@@ -465,10 +466,10 @@ fn compact_preserves_thinking_blocks() {
 }
 
 #[test]
-fn pre_thinking_assistant_gets_text_wrapped() {
-    // When has_thinking=true but an assistant message has no Thinking block
-    // (e.g. from before /think was toggled on), its text must be wrapped
-    // in a synthetic Thinking block to satisfy the API.
+fn pre_thinking_assistant_stays_text_when_thinking_enabled() {
+    // Thinking blocks must be passed back exactly as returned by the API.
+    // Assistant messages that predate thinking mode must not be upgraded into
+    // synthetic Thinking blocks because they have no API signature.
     let messages = vec![Message::Assistant(AssistantMessage {
         uuid: "a_old".into(),
         content: vec![ContentBlock::Text {
@@ -479,13 +480,9 @@ fn pre_thinking_assistant_gets_text_wrapped() {
     })];
     let api = messages_to_api(&messages, false, true);
     assert_eq!(api.len(), 1);
-    let has_thinking = api[0]
-        .content
-        .iter()
-        .any(|b| matches!(b, ApiContentBlock::Thinking { .. }));
     assert!(
-        has_thinking,
-        "pre-thinking assistant message must have a thinking block injected"
+        matches!(&api[0].content[0], ApiContentBlock::Text { text, .. } if text == "old response before thinking was enabled"),
+        "pre-thinking assistant messages must not get synthetic Thinking blocks"
     );
 }
 

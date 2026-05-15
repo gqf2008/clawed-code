@@ -274,24 +274,6 @@ pub fn query_stream_with_injection(
             let has_thinking = config.thinking.is_some();
             let api_messages = messages_to_api(&messages, config.break_cache, has_thinking);
 
-            // Verify every assistant message has a thinking block when thinking is enabled
-            if has_thinking {
-                for (i, m) in api_messages.iter().enumerate() {
-                    if m.role == "assistant" {
-                        let has_thinking_block = m.content.iter().any(|b| matches!(b, ApiContentBlock::Thinking { .. }));
-                        if !has_thinking_block {
-                            eprintln!("\x1b[31m[THINKING BUG] assistant message {} has no thinking block!\x1b[0m", i);
-                            eprintln!("  content blocks: {:?}", m.content.iter().map(|b| match b {
-                                ApiContentBlock::Text { .. } => "Text",
-                                ApiContentBlock::Thinking { .. } => "Thinking",
-                                ApiContentBlock::ToolUse { .. } => "ToolUse",
-                                ApiContentBlock::ToolResult { .. } => "ToolResult",
-                                _ => "Other",
-                            }).collect::<Vec<_>>());
-                        }
-                    }
-                }
-            }
             let effective_system = if tool_context.permission_mode == clawed_core::permissions::PermissionMode::Plan {
                 format!("{}\n\n{}", current_system_prompt, crate::system_prompt::sections::section_plan_mode_constraints())
             } else {

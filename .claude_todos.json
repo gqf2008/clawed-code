@@ -1,44 +1,32 @@
 [
   {
     "id": "1",
-    "content": "Explore project structure and crate organization",
-    "status": "in_progress",
+    "content": "Review clawed-core crate (base types, Tool trait, permissions, config, file watching)",
+    "status": "pending",
     "priority": "high"
   },
   {
     "id": "2",
-    "content": "Review clawed-core: base types, Tool trait, permissions, config, file watching",
+    "content": "Review clawed-agent crate (engine orchestration, sessions, hooks, permissions, compaction)",
     "status": "pending",
     "priority": "high"
   },
   {
     "id": "3",
-    "content": "Review clawed-bus: event bus pattern, ClientHandle, AgentRequest/AgentNotification",
+    "content": "Review clawed-bus crate (event bus, ClientHandle, notifications)",
     "status": "pending",
     "priority": "high"
   },
   {
     "id": "4",
-    "content": "Review clawed-agent: engine orchestration, sessions, hooks, permissions, compaction",
+    "content": "Review clawed-tools crate (Tool implementations, ToolRegistry, LSP)",
     "status": "pending",
     "priority": "high"
   },
   {
     "id": "5",
-    "content": "Review clawed-tools: tool implementations, ToolRegistry, LSP",
-    "status": "pending",
-    "priority": "high"
-  },
-  {
-    "id": "6",
-    "content": "Review clawed-api: HTTP client, SSE streaming, OAuth PKCE",
+    "content": "Summarize findings and architectural issues",
     "status": "pending",
     "priority": "medium"
-  },
-  {
-    "id": "7",
-    "content": "Summarize findings and recommendations",
-    "status": "pending",
-    "priority": "high"
   }
 ]
