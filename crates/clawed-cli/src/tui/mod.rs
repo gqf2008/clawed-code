@@ -2838,9 +2838,10 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
         app.message_line_counts_width = area.width;
     }
 
-    // Compute which visual line the user wants to see at the top of the viewport
-    // scroll_offset = 0 → bottom of content
     let total_visual: usize = app.message_line_counts.iter().map(|c| c.unwrap_or(1) as usize).sum();
+
+    // The first visible line counting from the top of the (wrapped) content.
+    // Used by the scroll-up path and system message block adjustment.
     let first_visible_line = if total_visual > msg_viewport_height {
         let max_scroll = total_visual - msg_viewport_height;
         let clamped = app.scroll_offset.min(max_scroll);
@@ -2849,19 +2850,43 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
         0
     };
 
-    // Walk messages to find which message contains first_visible_line
-    let mut acc = 0usize;
-    let mut msg_start = 0usize;
-    let mut line_offset = 0u16;
-    for (i, h) in app.message_line_counts.iter().enumerate() {
-        let h = h.unwrap_or(1) as usize;
-        if acc + h > first_visible_line {
-            msg_start = i;
-            line_offset = (first_visible_line - acc) as u16;
-            break;
+    // Compute the first visible message by walking from the correct end.
+    // When auto-scrolling to bottom (scroll_offset=0), walk backward from the
+    // last message to find the one that falls at the top of the viewport.
+    // When scrolled up (scroll_offset>0), walk forward from the beginning.
+    let (mut msg_start, mut line_offset) = if app.scroll_offset == 0 {
+        // Bottom-anchored: walk messages backward from the end
+        let mut remaining = msg_viewport_height;
+        let mut start = app.messages.len();
+        let mut use_offset = 0u16;
+        for i in (0..app.messages.len()).rev() {
+            let h = app.message_line_counts.get(i).copied().flatten().unwrap_or(1) as usize;
+            if remaining > h {
+                remaining -= h;
+                start = i;
+            } else {
+                start = i;
+                use_offset = (h - remaining) as u16;
+                break;
+            }
         }
-        acc += h;
-    }
+        (start.min(app.messages.len()), use_offset)
+    } else {
+        // Top-offset: walk forward to find which message contains first_visible_line
+        let mut acc = 0usize;
+        let mut start = 0usize;
+        let mut offset = 0u16;
+        for (i, h) in app.message_line_counts.iter().enumerate() {
+            let h = h.unwrap_or(1) as usize;
+            if acc + h > first_visible_line {
+                start = i;
+                offset = (first_visible_line - acc) as u16;
+                break;
+            }
+            acc += h;
+        }
+        (start, offset)
+    };
 
     // Adjust msg_start to the start of a system message block so that
     // append_message_lines doesn't begin mid-group (which would lose the
