@@ -5,6 +5,14 @@ use serde::Deserialize;
 const GOAL_REASON_PREVIEW_CHARS: usize = 200;
 const GOAL_NO_TOOLS_SENTINEL: &str = "__goal_no_tools__";
 
+struct GoalToolRestrictionGuard<'a>(&'a QueryEngine);
+
+impl Drop for GoalToolRestrictionGuard<'_> {
+    fn drop(&mut self) {
+        self.0.clear_skill_allowed_tools();
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum GoalStatus {
     Active,
@@ -117,7 +125,10 @@ fn extract_goal_judge_json(raw: &str) -> String {
         .or_else(|| trimmed.strip_prefix("```"))
         .unwrap_or(trimmed)
         .trim();
-    let without_end_fence = without_fence.strip_suffix("```").unwrap_or(without_fence).trim();
+    let without_end_fence = without_fence
+        .strip_suffix("```")
+        .unwrap_or(without_fence)
+        .trim();
     if let (Some(start), Some(end)) = (without_end_fence.find('{'), without_end_fence.rfind('}')) {
         without_end_fence[start..=end].to_string()
     } else {
@@ -127,8 +138,8 @@ fn extract_goal_judge_json(raw: &str) -> String {
 
 fn parse_goal_judge_response(raw: &str) -> anyhow::Result<GoalDecision> {
     let json = extract_goal_judge_json(raw);
-    let parsed: GoalJudgeResponse =
-        serde_json::from_str(&json).map_err(|e| anyhow::anyhow!("invalid goal-judge JSON: {}", e))?;
+    let parsed: GoalJudgeResponse = serde_json::from_str(&json)
+        .map_err(|e| anyhow::anyhow!("invalid goal-judge JSON: {}", e))?;
 
     let action = match parsed.action.trim().to_ascii_lowercase().as_str() {
         "continue" => GoalDecisionAction::Continue,
@@ -152,8 +163,8 @@ pub(crate) async fn judge_goal_progress(
     goal: &GoalState,
 ) -> anyhow::Result<GoalDecision> {
     engine.set_skill_allowed_tools(vec![GOAL_NO_TOOLS_SENTINEL.to_string()]);
+    let _tool_restriction = GoalToolRestrictionGuard(engine);
     let judge_result = run_task_silent(engine, &build_goal_judge_prompt(goal)).await;
-    engine.clear_skill_allowed_tools();
 
     if !judge_result.success() {
         anyhow::bail!("goal judge stopped with {}", judge_result.reason);

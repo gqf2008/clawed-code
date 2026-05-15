@@ -1100,8 +1100,8 @@ impl App {
                 *index += 1;
             }
             let count = *index - start;
-            let has_important = (start..*index)
-                .any(|i| Self::system_msg_is_important(&self.messages[i].content));
+            let has_important =
+                (start..*index).any(|i| Self::system_msg_is_important(&self.messages[i].content));
             if count > 2 && !has_important {
                 if start > 0
                     && Self::needs_separator(
@@ -2122,9 +2122,9 @@ impl App {
                             self.request_redraw();
                         }
                         Err(_) => {
-                            self.push_message(MessageContent::System(
-                                format!("Task '{id}' not found."),
-                            ));
+                            self.push_message(MessageContent::System(format!(
+                                "Task '{id}' not found."
+                            )));
                         }
                     }
                 } else {
@@ -2177,14 +2177,14 @@ impl App {
                 } else {
                     let resolved = clawed_core::model::resolve_model_string(&sub);
                     if resolved.is_empty() {
-                        self.push_message(MessageContent::System(
-                            format!("Unknown model: '{sub}'"),
-                        ));
+                        self.push_message(MessageContent::System(format!(
+                            "Unknown model: '{sub}'"
+                        )));
                     } else {
                         let display = clawed_core::model::display_name_any(&resolved);
-                        self.push_message(MessageContent::System(
-                            format!("Advisor set to: {display} ({resolved})"),
-                        ));
+                        self.push_message(MessageContent::System(format!(
+                            "Advisor set to: {display} ({resolved})"
+                        )));
                     }
                 }
                 return;
@@ -2207,16 +2207,16 @@ impl App {
                 if sub.eq_ignore_ascii_case("open") {
                     let result = std::process::Command::new("code").arg(".").output();
                     match result {
-                        Ok(_) => self.push_message(MessageContent::System(
-                            "VS Code launched.".to_string(),
-                        )),
+                        Ok(_) => self
+                            .push_message(MessageContent::System("VS Code launched.".to_string())),
                         Err(_) => self.push_message(MessageContent::System(
                             "VS Code not found in PATH.\nOpen your IDE manually.".to_string(),
                         )),
                     }
                 } else {
                     self.push_message(MessageContent::System(
-                        "IDE Integration: not connected\nUse /ide open to launch VS Code.".to_string(),
+                        "IDE Integration: not connected\nUse /ide open to launch VS Code."
+                            .to_string(),
                     ));
                 }
                 return;
@@ -2238,18 +2238,20 @@ impl App {
                             "Could not create ~/.claude/ directory.".to_string(),
                         ));
                     } else if std::fs::write(&path, template).is_ok() {
-                        self.push_message(MessageContent::System(
-                            format!("Created keybindings config at:\n{}", path.display()),
-                        ));
+                        self.push_message(MessageContent::System(format!(
+                            "Created keybindings config at:\n{}",
+                            path.display()
+                        )));
                     } else {
                         self.push_message(MessageContent::System(
                             "Failed to create keybindings file.".to_string(),
                         ));
                     }
                 } else {
-                    self.push_message(MessageContent::System(
-                        format!("Keybindings config at:\n{}", path.display()),
-                    ));
+                    self.push_message(MessageContent::System(format!(
+                        "Keybindings config at:\n{}",
+                        path.display()
+                    )));
                 }
                 return;
             }
@@ -2265,7 +2267,9 @@ impl App {
             }
             Some(crate::commands::SlashCommand::Statusline { .. }) => {
                 // Defer to pending_command for engine access
-                let result = crate::commands::CommandResult::Statusline { prompt: String::new() };
+                let result = crate::commands::CommandResult::Statusline {
+                    prompt: String::new(),
+                };
                 self.pending_command = Some(result);
                 return;
             }
@@ -2288,9 +2292,9 @@ impl App {
                     Ok(_) => self.push_message(MessageContent::System(
                         "Claude Desktop: opened.".to_string(),
                     )),
-                    Err(e) => self.push_message(MessageContent::System(
-                        format!("Claude Desktop: failed to open ({e})"),
-                    )),
+                    Err(e) => self.push_message(MessageContent::System(format!(
+                        "Claude Desktop: failed to open ({e})"
+                    ))),
                 }
                 return;
             }
@@ -2301,12 +2305,18 @@ impl App {
                 return;
             }
             Some(crate::commands::SlashCommand::Install { args }) => {
-                let force = if args.contains("--force") { " (force)" } else { "" };
-                self.push_message(MessageContent::System(
-                    format!("Claude Code v{}{force}\nBinary: {}",
-                        env!("CARGO_PKG_VERSION"),
-                        std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "unknown".to_string())),
-                ));
+                let force = if args.contains("--force") {
+                    " (force)"
+                } else {
+                    ""
+                };
+                self.push_message(MessageContent::System(format!(
+                    "Claude Code v{}{force}\nBinary: {}",
+                    env!("CARGO_PKG_VERSION"),
+                    std::env::current_exe()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|_| "unknown".to_string())
+                )));
                 return;
             }
             Some(crate::commands::SlashCommand::Upgrade) => {
@@ -2315,9 +2325,9 @@ impl App {
                     Ok(_) => self.push_message(MessageContent::System(
                         "Upgrade page opened in browser.".to_string(),
                     )),
-                    Err(e) => self.push_message(MessageContent::System(
-                        format!("Could not open browser: {e}\nVisit: {url}"),
-                    )),
+                    Err(e) => self.push_message(MessageContent::System(format!(
+                        "Could not open browser: {e}\nVisit: {url}"
+                    ))),
                 }
                 return;
             }
@@ -2327,9 +2337,9 @@ impl App {
                     Ok(_) => self.push_message(MessageContent::System(
                         "Privacy settings opened in browser.".to_string(),
                     )),
-                    Err(e) => self.push_message(MessageContent::System(
-                        format!("Could not open browser: {e}\nVisit: {url}"),
-                    )),
+                    Err(e) => self.push_message(MessageContent::System(format!(
+                        "Could not open browser: {e}\nVisit: {url}"
+                    ))),
                 }
                 return;
             }
@@ -2825,7 +2835,12 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
     // --- Sticky header ---
     let sticky_rows = compute_sticky_rows(app, viewport_height);
     let msg_area = if sticky_rows > 0 {
-        Rect::new(area.x, area.y + sticky_rows, area.width, area.height - sticky_rows)
+        Rect::new(
+            area.x,
+            area.y + sticky_rows,
+            area.width,
+            area.height - sticky_rows,
+        )
     } else {
         area
     };
@@ -2839,7 +2854,11 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
         app.message_line_counts_width = area.width;
     }
 
-    let total_visual: usize = app.message_line_counts.iter().map(|c| c.unwrap_or(1) as usize).sum();
+    let total_visual: usize = app
+        .message_line_counts
+        .iter()
+        .map(|c| c.unwrap_or(1) as usize)
+        .sum();
 
     // The first visible line counting from the top of the (wrapped) content.
     // Used by the scroll-up path and system message block adjustment.
@@ -2861,7 +2880,12 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
         let mut start = app.messages.len();
         let mut use_offset = 0u16;
         for i in (0..app.messages.len()).rev() {
-            let h = app.message_line_counts.get(i).copied().flatten().unwrap_or(1) as usize;
+            let h = app
+                .message_line_counts
+                .get(i)
+                .copied()
+                .flatten()
+                .unwrap_or(1) as usize;
             if remaining > h {
                 remaining -= h;
                 start = i;
@@ -2892,11 +2916,17 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
     // Adjust msg_start to the start of a system message block so that
     // append_message_lines doesn't begin mid-group (which would lose the
     // folding header and potentially skip messages).
-    if msg_start > 0 && msg_start < app.messages.len()
+    if msg_start > 0
+        && msg_start < app.messages.len()
         && matches!(app.messages[msg_start].content, MessageContent::System(_))
     {
         let mut block_start = msg_start;
-        while block_start > 0 && matches!(app.messages[block_start - 1].content, MessageContent::System(_)) {
+        while block_start > 0
+            && matches!(
+                app.messages[block_start - 1].content,
+                MessageContent::System(_)
+            )
+        {
             block_start -= 1;
         }
         // Recompute line_offset: subtract heights of messages before block_start
@@ -2942,10 +2972,15 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
             // Find the offset of the first local line within cached_visible_lines
             // by matching the first few lines' text content. This is O(1) when the
             // first lines are distinct, and still correct (just slower) when not.
-            let local_first: Vec<String> = lines.iter().take(5).map(crate::tui::line_text).collect();
-            let offset = app.cached_visible_lines.windows(local_first.len())
+            let local_first: Vec<String> =
+                lines.iter().take(5).map(crate::tui::line_text).collect();
+            let offset = app
+                .cached_visible_lines
+                .windows(local_first.len())
                 .position(|w| {
-                    w.iter().zip(&local_first).all(|(l, t)| &crate::tui::line_text(l) == t)
+                    w.iter()
+                        .zip(&local_first)
+                        .all(|(l, t)| &crate::tui::line_text(l) == t)
                 })
                 .unwrap_or(0);
 
@@ -2966,7 +3001,9 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
         Paragraph::new(Line::from("")).wrap(Wrap { trim: false })
     } else {
         // Prune overscanned lines to viewport
-        let excess = lines.len().saturating_sub(msg_viewport_height + overscan / 2);
+        let excess = lines
+            .len()
+            .saturating_sub(msg_viewport_height + overscan / 2);
         if excess > 0 {
             lines.drain(0..excess.min(lines.len()));
         }
@@ -3047,7 +3084,9 @@ fn compute_sticky_rows(app: &mut App, viewport_height: usize) -> u16 {
         return 0;
     }
 
-    let total_visual: usize = app.message_line_counts.iter()
+    let total_visual: usize = app
+        .message_line_counts
+        .iter()
         .map(|c| c.unwrap_or(1) as usize)
         .sum::<usize>()
         .max(app.cached_visible_lines.len());
@@ -5788,9 +5827,15 @@ async fn handle_async_command(
                     .ok()
                     .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
                     .unwrap_or_default()
-            }).await.unwrap_or_default();
+            })
+            .await
+            .unwrap_or_default();
             let diff_short = if diff.len() > 12000 {
-                format!("{}…\n[truncated, {} bytes total]", &diff[..12000], diff.len())
+                format!(
+                    "{}…\n[truncated, {} bytes total]",
+                    &diff[..12000],
+                    diff.len()
+                )
             } else if diff.is_empty() {
                 "No changes found (working tree matches HEAD).".to_string()
             } else {
@@ -9037,7 +9082,9 @@ mod tests {
 
         assert_eq!(total_visual, app.cached_visible_lines.len());
         assert_eq!(app.message_line_counts[0], Some(3));
-        assert!(app.message_line_counts[1..].iter().all(|count| *count == Some(0)));
+        assert!(app.message_line_counts[1..]
+            .iter()
+            .all(|count| *count == Some(0)));
     }
 
     #[test]

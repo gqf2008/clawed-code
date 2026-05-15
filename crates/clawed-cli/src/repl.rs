@@ -2390,5 +2390,4 @@ mod tests {
         // Display length matters, not byte length
         assert!(result.chars().count() <= 16);
     }
-
 }

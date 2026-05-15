@@ -284,13 +284,12 @@ fn messages_for_compact(messages: &[Message]) -> Vec<ApiMessage> {
                                 input: input.clone(),
                             })
                         }
-                        clawed_core::message::ContentBlock::Thinking {
-                            thinking,
-                            ..
-                        } => Some(ApiContentBlock::Text {
-                            text: format!("<thinking>{}</thinking>", thinking),
-                            cache_control: None,
-                        }),
+                        clawed_core::message::ContentBlock::Thinking { thinking, .. } => {
+                            Some(ApiContentBlock::Text {
+                                text: format!("<thinking>{}</thinking>", thinking),
+                                cache_control: None,
+                            })
+                        }
                         _ => None,
                     })
                     .collect();
@@ -380,23 +379,20 @@ pub async fn compact_conversation(
         tool_choice: None,
     };
 
-    let response = client
-        .messages(&request)
-        .await
-        .map_err(|e| {
-            // On 4xx the message often hides which content block was malformed.
-            // Dump a redacted request preview to make root-causing easier next
-            // time (this is what the prior "fixed it many times" issue lacked).
-            if let Ok(body) = serde_json::to_string(&request) {
-                let preview: String = body.chars().take(2000).collect();
-                tracing::error!(
-                    error = %e,
-                    request_preview = %preview,
-                    "Compact API call failed — request preview logged"
-                );
-            }
-            anyhow::anyhow!("Compact API call failed: {}", e)
-        })?;
+    let response = client.messages(&request).await.map_err(|e| {
+        // On 4xx the message often hides which content block was malformed.
+        // Dump a redacted request preview to make root-causing easier next
+        // time (this is what the prior "fixed it many times" issue lacked).
+        if let Ok(body) = serde_json::to_string(&request) {
+            let preview: String = body.chars().take(2000).collect();
+            tracing::error!(
+                error = %e,
+                request_preview = %preview,
+                "Compact API call failed — request preview logged"
+            );
+        }
+        anyhow::anyhow!("Compact API call failed: {}", e)
+    })?;
 
     // Extract text from response
     let raw_text: String = response
