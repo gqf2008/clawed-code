@@ -9,7 +9,7 @@ use futures::Stream;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use std::pin::Pin;
 use std::sync::Arc;
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace};
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
@@ -270,8 +270,14 @@ impl ApiClient {
             tools_count = req.tools.as_ref().map_or(0, |t| t.len()),
             "API request (stream)"
         );
+        // Always log the request body at info level when thinking is enabled
+        // to help debug 'content[].thinking' API errors.
         if let Ok(body) = serde_json::to_string_pretty(&req) {
-            trace!(body = %body, "Request body");
+            if req.thinking.is_some() {
+                info!(body = %body, "Request body (thinking enabled)");
+            } else {
+                trace!(body = %body, "Request body");
+            }
         }
 
         // Retry only the initial connection — once streaming starts, errors
