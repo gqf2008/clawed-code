@@ -738,9 +738,19 @@ pub fn query_stream_with_injection(
                 }
             }
 
+            let has_follow_up_tools = early_exec.is_some() || !tool_uses.is_empty();
             let actual_stop = stop_reason.unwrap_or(StopReason::EndTurn);
-            match actual_stop {
-                StopReason::ToolUse if early_exec.is_some() || !tool_uses.is_empty() => {
+            if has_follow_up_tools {
+                match actual_stop {
+                    StopReason::ToolUse => {}
+                    other => {
+                        tracing::debug!(
+                            ?other,
+                            "Continuing turn because tool_use blocks were emitted despite non-tool stop_reason"
+                        );
+                    }
+                }
+                {
                     // called_tool_names was already captured from assistant_blocks above.
 
                     let mut results = if let Some(handle) = early_exec.take() {
@@ -993,7 +1003,10 @@ pub fn query_stream_with_injection(
                         }
                     }
                 }
+                continue;
+            }
 
+            match actual_stop {
                 StopReason::MaxTokens => {
                     // Strategy 1: Escalate max_tokens to model's upper limit,
                     // but cap so input + output doesn't exceed the context window.

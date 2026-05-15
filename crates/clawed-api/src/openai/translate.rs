@@ -389,7 +389,10 @@ impl OpenAIStreamState {
                 if !text.is_empty() {
                     // Close thinking block before starting text block
                     if self.thinking_block_started && !self.text_block_started {
-                        events.push(StreamEvent::ContentBlockStop { signature: None, index: 0 });
+                        events.push(StreamEvent::ContentBlockStop {
+                            signature: None,
+                            index: 0,
+                        });
                     }
                     if !self.text_block_started {
                         self.text_block_started = true;
@@ -448,13 +451,16 @@ impl OpenAIStreamState {
             if let Some(ref reason) = choice.finish_reason {
                 // Close thinking block if still open (not already closed by text start)
                 if self.thinking_block_started && !self.text_block_started {
-                    events.push(StreamEvent::ContentBlockStop { signature: None, index: 0 });
+                    events.push(StreamEvent::ContentBlockStop {
+                        signature: None,
+                        index: 0,
+                    });
                 }
                 // Emit ContentBlockStop for text block
                 if self.text_block_started {
                     events.push(StreamEvent::ContentBlockStop {
                         signature: None,
-                    index: self.text_block_index,
+                        index: self.text_block_index,
                     });
                 }
                 let mut tool_indices: Vec<usize> =
@@ -463,7 +469,7 @@ impl OpenAIStreamState {
                 for idx in tool_indices {
                     events.push(StreamEvent::ContentBlockStop {
                         signature: None,
-                    index: self.next_block_index + idx,
+                        index: self.next_block_index + idx,
                     });
                 }
 
@@ -502,7 +508,10 @@ impl OpenAIStreamState {
 
         // Close any open content blocks
         if self.thinking_block_started && !self.text_block_started {
-            events.push(StreamEvent::ContentBlockStop { signature: None, index: 0 });
+            events.push(StreamEvent::ContentBlockStop {
+                signature: None,
+                index: 0,
+            });
             self.thinking_block_started = false;
         }
         if self.text_block_started {

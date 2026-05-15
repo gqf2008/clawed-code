@@ -50,11 +50,7 @@ impl SessionManager {
     }
 
     /// Create a new session and return its ID.
-    pub async fn create_session(
-        &self,
-        engine: Arc<QueryEngine>,
-        cwd: String,
-    ) -> Result<String> {
+    pub async fn create_session(&self, engine: Arc<QueryEngine>, cwd: String) -> Result<String> {
         let session_id = format!("sess_{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
 
         let session = AcpSession {
@@ -73,10 +69,7 @@ impl SessionManager {
     }
 
     /// Get a session by ID.
-    pub async fn get_session(
-        &self,
-        session_id: &str,
-    ) -> Option<Arc<RwLock<AcpSession>>> {
+    pub async fn get_session(&self, session_id: &str) -> Option<Arc<RwLock<AcpSession>>> {
         let sessions = self.sessions.read().await;
         sessions.get(session_id).cloned()
     }
@@ -119,7 +112,10 @@ impl SessionManager {
 
     pub async fn get_config_json(&self, sid: &str) -> Value {
         let sessions = self.sessions.read().await;
-        let session = match sessions.get(sid) { Some(s) => s, _ => return json!({"configOptions":[]}) };
+        let session = match sessions.get(sid) {
+            Some(s) => s,
+            _ => return json!({"configOptions":[]}),
+        };
         let s = session.read().await;
         let opts: Vec<Value> = s.config.iter().map(|(k,v)| json!({"configId":k,"type":"select","currentValue":v,"options":[{"name":v,"value":v}]})).collect();
         json!({"configOptions": opts})
@@ -134,6 +130,10 @@ impl SessionManager {
 
     pub async fn is_active(&self, session_id: &str) -> bool {
         let sessions = self.sessions.read().await;
-        if let Some(s) = sessions.get(session_id) { s.read().await.active } else { false }
+        if let Some(s) = sessions.get(session_id) {
+            s.read().await.active
+        } else {
+            false
+        }
     }
 }

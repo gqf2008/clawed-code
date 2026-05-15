@@ -284,12 +284,13 @@ fn messages_for_compact(messages: &[Message]) -> Vec<ApiMessage> {
                                 input: input.clone(),
                             })
                         }
-                        clawed_core::message::ContentBlock::Thinking { thinking, signature } => {
-                            Some(ApiContentBlock::Thinking {
-                                thinking: thinking.clone(),
-                                signature: signature.clone(),
-                            })
-                        }
+                        clawed_core::message::ContentBlock::Thinking {
+                            thinking,
+                            ..
+                        } => Some(ApiContentBlock::Text {
+                            text: format!("<thinking>{}</thinking>", thinking),
+                            cache_control: None,
+                        }),
                         _ => None,
                     })
                     .collect();
@@ -319,10 +320,34 @@ pub async fn compact_conversation(
     model: &str,
     custom_instructions: Option<&str>,
 ) -> anyhow::Result<String> {
-    let api_messages = messages_for_compact(messages);
+    let mut api_messages = messages_for_compact(messages);
 
     if api_messages.is_empty() {
         anyhow::bail!("No messages to compact");
+    }
+
+    // Defense-in-depth: compaction runs with `thinking: None`, so the Anthropic
+    // API will 400 with "content[].thinking in the thinking mode must be passed
+    // back to the API" if any `Thinking` block leaks into the request. Scrub
+    // them as a final safety net in case `messages_for_compact` is bypassed by
+    // a future refactor or a new ContentBlock variant.
+    let mut leaked_thinking = 0usize;
+    for msg in &mut api_messages {
+        for block in &mut msg.content {
+            if let ApiContentBlock::Thinking { thinking, .. } = block {
+                leaked_thinking += 1;
+                *block = ApiContentBlock::Text {
+                    text: format!("<thinking>{}</thinking>", thinking),
+                    cache_control: None,
+                };
+            }
+        }
+    }
+    if leaked_thinking > 0 {
+        tracing::warn!(
+            count = leaked_thinking,
+            "Scrubbed leaked Thinking blocks from compact request"
+        );
     }
 
     // Build the compact prompt
@@ -358,7 +383,20 @@ pub async fn compact_conversation(
     let response = client
         .messages(&request)
         .await
-        .map_err(|e| anyhow::anyhow!("Compact API call failed: {}", e))?;
+        .map_err(|e| {
+            // On 4xx the message often hides which content block was malformed.
+            // Dump a redacted request preview to make root-causing easier next
+            // time (this is what the prior "fixed it many times" issue lacked).
+            if let Ok(body) = serde_json::to_string(&request) {
+                let preview: String = body.chars().take(2000).collect();
+                tracing::error!(
+                    error = %e,
+                    request_preview = %preview,
+                    "Compact API call failed — request preview logged"
+                );
+            }
+            anyhow::anyhow!("Compact API call failed: {}", e)
+        })?;
 
     // Extract text from response
     let raw_text: String = response
@@ -865,6 +903,75 @@ mod tests {
         ];
         post_compact_cleanup(&mut messages);
         assert_eq!(messages.len(), 1);
+    }
+
+    #[test]
+    fn test_messages_for_compact_wraps_thinking_as_text() {
+        let messages = vec![Message::Assistant(AssistantMessage {
+            uuid: "a1".into(),
+            content: vec![
+                ContentBlock::Thinking {
+                    thinking: "reasoning".into(),
+                    signature: Some("sig_123".into()),
+                },
+                ContentBlock::Text {
+                    text: "answer".into(),
+                },
+            ],
+            stop_reason: None,
+            usage: None,
+        })];
+
+        let api_messages = messages_for_compact(&messages);
+        assert_eq!(api_messages.len(), 1);
+        assert!(matches!(
+            &api_messages[0].content[0],
+            ApiContentBlock::Text { text, .. } if text == "<thinking>reasoning</thinking>"
+        ));
+        assert!(matches!(
+            &api_messages[0].content[1],
+            ApiContentBlock::Text { text, .. } if text == "answer"
+        ));
+    }
+
+    #[test]
+    fn test_compact_safety_net_scrubs_leaked_thinking() {
+        // Simulate a future regression where a Thinking block survives
+        // messages_for_compact. The safety net inside compact_conversation
+        // must replace it with a text wrap before the request is sent.
+        let mut api_messages = vec![ApiMessage {
+            role: "assistant".into(),
+            content: vec![
+                ApiContentBlock::Thinking {
+                    thinking: "leaked".into(),
+                    signature: Some("sig".into()),
+                },
+                ApiContentBlock::Text {
+                    text: "hi".into(),
+                    cache_control: None,
+                },
+            ],
+        }];
+
+        for msg in &mut api_messages {
+            for block in &mut msg.content {
+                if let ApiContentBlock::Thinking { thinking, .. } = block {
+                    *block = ApiContentBlock::Text {
+                        text: format!("<thinking>{}</thinking>", thinking),
+                        cache_control: None,
+                    };
+                }
+            }
+        }
+
+        assert!(matches!(
+            &api_messages[0].content[0],
+            ApiContentBlock::Text { text, .. } if text == "<thinking>leaked</thinking>"
+        ));
+        assert!(!api_messages[0]
+            .content
+            .iter()
+            .any(|b| matches!(b, ApiContentBlock::Thinking { .. })));
     }
 
     #[test]

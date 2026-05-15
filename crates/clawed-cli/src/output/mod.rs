@@ -7,7 +7,7 @@ pub use renderer::OutputRenderer;
 pub use stream::print_stream;
 
 use clawed_agent::engine::QueryEngine;
-use clawed_agent::task_runner::{run_task, CompletionReason, TaskProgress};
+use clawed_agent::task_runner::{run_task, CompletionReason, TaskProgress, TaskResult};
 use helpers::format_tool_result_inline;
 
 pub async fn run_single(engine: &QueryEngine, prompt: &str) -> anyhow::Result<()> {
@@ -133,7 +133,10 @@ pub async fn run_stream_json(engine: &QueryEngine, prompt: &str) -> anyhow::Resu
 ///   • Inline task/todo summaries
 ///   • Turn separators
 ///   • Final summary with token/timing stats
-pub async fn run_task_interactive(engine: &QueryEngine, task: &str) -> anyhow::Result<()> {
+pub async fn run_task_interactive_result(
+    engine: &QueryEngine,
+    task: &str,
+) -> anyhow::Result<TaskResult> {
     use std::io::Write;
 
     let mut last_tool = String::new();
@@ -198,5 +201,9 @@ pub async fn run_task_interactive(engine: &QueryEngine, task: &str) -> anyhow::R
         }
     }
 
-    Ok(())
+    Ok(result)
+}
+
+pub async fn run_task_interactive(engine: &QueryEngine, task: &str) -> anyhow::Result<()> {
+    run_task_interactive_result(engine, task).await.map(|_| ())
 }

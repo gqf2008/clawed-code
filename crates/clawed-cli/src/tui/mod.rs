@@ -55,6 +55,10 @@ use ratatui::{
 use tokio::sync::mpsc;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::goal::{
+    goal_status_message, judge_goal_progress, prepare_goal_iteration, GoalDecisionAction,
+    GoalState, GoalStatus,
+};
 use crate::input::command_description;
 
 use self::messages::{Message, MessageContent};
@@ -742,6 +746,7 @@ struct App {
     total_cost_usd: f64,
     model: String,
     pending_images: Vec<ImageAttachment>,
+    goal_state: Option<GoalState>,
     /// Async command waiting to be executed in the event loop (needs engine access).
     pending_command: Option<crate::commands::CommandResult>,
     /// Debug mode: log raw key events as system messages.
@@ -862,6 +867,7 @@ impl App {
             total_cost_usd: 0.0,
             model,
             pending_images: Vec::new(),
+            goal_state: None,
             pending_command: None,
             key_debug: false,
             queued_inputs: Vec::new(),
@@ -1203,23 +1209,24 @@ impl App {
 
         self.message_line_counts.resize(self.messages.len(), None);
 
-        for i in 0..self.messages.len() {
-            let msg_lines = self.visible_message_lines_at(i);
-            let base_h = if msg_lines.is_empty() {
+        let mut index = 0;
+        while index < self.messages.len() {
+            let start = index;
+            let mut group_lines = Vec::new();
+            self.append_message_lines(&mut group_lines, &mut index);
+            let height = if group_lines.is_empty() {
                 1u16
             } else {
-                Paragraph::new(msg_lines).wrap(Wrap { trim: false }).line_count(width).max(1) as u16
+                Paragraph::new(group_lines)
+                    .wrap(Wrap { trim: false })
+                    .line_count(width)
+                    .max(1) as u16
             };
 
-            let sep = if i > 0
-                && Self::needs_separator(&self.messages[i - 1].content, &self.messages[i].content)
-            {
-                1u16
-            } else {
-                0u16
-            };
-
-            self.message_line_counts[i] = Some(base_h + sep);
+            self.message_line_counts[start] = Some(height);
+            for slot in &mut self.message_line_counts[start + 1..index] {
+                *slot = Some(0);
+            }
         }
     }
 
@@ -1279,16 +1286,22 @@ impl App {
         let needs_sep = prev_content
             .map(|prev| Self::needs_separator(prev, &msg.content))
             .unwrap_or(false);
+        let affects_system_grouping = matches!(prev_content, Some(MessageContent::System(_)))
+            || matches!(msg.content, MessageContent::System(_));
         self.messages.push(msg);
         self.message_line_counts.push(None);
         if !self.cached_visible_lines_dirty {
-            if needs_sep {
-                self.cached_visible_lines.push(Line::from(""));
+            if affects_system_grouping {
+                self.invalidate_visible_lines();
+            } else {
+                if needs_sep {
+                    self.cached_visible_lines.push(Line::from(""));
+                }
+                let last_index = self.messages.len().saturating_sub(1);
+                self.cached_visible_lines
+                    .extend(self.visible_message_lines_at(last_index));
+                self.cached_visible_line_count = None;
             }
-            let last_index = self.messages.len().saturating_sub(1);
-            self.cached_visible_lines
-                .extend(self.visible_message_lines_at(last_index));
-            self.cached_visible_line_count = None;
         }
         if self.auto_scroll {
             self.scroll_offset = 0;
@@ -2531,6 +2544,7 @@ impl App {
             | crate::commands::CommandResult::Doctor
             | crate::commands::CommandResult::Init
             | crate::commands::CommandResult::Plan { .. }
+            | crate::commands::CommandResult::Goal { .. }
             | crate::commands::CommandResult::Theme { .. }
             | crate::commands::CommandResult::Agents { .. }
             | crate::commands::CommandResult::Plugin { .. }
@@ -2905,18 +2919,12 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
     // Render partial first message if line_offset > 0
     if line_offset > 0 && idx < app.messages.len() {
         let mut part_lines: Vec<Line<'static>> = Vec::new();
-        if idx > 0
-            && App::needs_separator(&app.messages[idx - 1].content, &app.messages[idx].content)
-        {
-            part_lines.push(Line::from(""));
-        }
-        part_lines.extend(app.visible_message_lines_at(idx));
+        app.append_message_lines(&mut part_lines, &mut idx);
         let skip = line_offset as usize;
         if skip < part_lines.len() {
             lines.extend(part_lines.iter().skip(skip).cloned());
             rendered += part_lines.len() - skip;
         }
-        idx += 1;
     }
 
     // Render remaining messages
@@ -3965,6 +3973,15 @@ pub async fn run_tui(
                 continue;
             }
 
+            let goal_submitted = if turn_complete {
+                handle_goal_turn_complete(&client, &engine, &mut app).await
+            } else {
+                false
+            };
+            if goal_submitted {
+                continue;
+            }
+
             if let Some(merged) = merged {
                 app.push_message(MessageContent::UserInput(merged.clone()));
                 let _ = client.submit(&merged);
@@ -4657,6 +4674,79 @@ fn submit_queued_inputs(client: &ClientHandle, app: &mut App) {
     }
 }
 
+fn submit_goal_iteration(client: &ClientHandle, app: &mut App) -> bool {
+    let Some((prompt, iteration, objective)) = app.goal_state.as_mut().and_then(|goal| {
+        if goal.status != GoalStatus::Active {
+            None
+        } else {
+            let prompt = prepare_goal_iteration(goal);
+            Some((prompt, goal.iteration, goal.objective.clone()))
+        }
+    }) else {
+        return false;
+    };
+
+    app.push_message(MessageContent::System(format!(
+        "Goal iteration {}: {}",
+        iteration, objective
+    )));
+    let _ = client.submit(&prompt);
+    app.mark_generating();
+    true
+}
+
+async fn handle_goal_turn_complete(
+    client: &ClientHandle,
+    engine: &Arc<QueryEngine>,
+    app: &mut App,
+) -> bool {
+    let Some(goal) = app.goal_state.as_mut() else {
+        return false;
+    };
+    if goal.status != GoalStatus::Active {
+        return false;
+    }
+
+    let decision = match judge_goal_progress(engine, goal).await {
+        Ok(decision) => decision,
+        Err(e) => {
+            goal.status = GoalStatus::Blocked;
+            goal.last_reason = Some(format!("Goal judge failed: {}", e));
+            app.push_message(MessageContent::System(format!("Goal blocked: {e}")));
+            return false;
+        }
+    };
+
+    goal.last_reason = Some(decision.reason.clone());
+    goal.next_prompt = decision.next_prompt.clone();
+
+    match decision.action {
+        GoalDecisionAction::Continue => {
+            app.push_message(MessageContent::System(format!(
+                "Goal continuing: {}",
+                clawed_core::text_util::truncate_chars(&decision.reason, 200, "…")
+            )));
+            submit_goal_iteration(client, app)
+        }
+        GoalDecisionAction::Completed => {
+            goal.status = GoalStatus::Completed;
+            app.push_message(MessageContent::System(format!(
+                "Goal completed: {}",
+                clawed_core::text_util::truncate_chars(&decision.reason, 200, "…")
+            )));
+            false
+        }
+        GoalDecisionAction::Blocked => {
+            goal.status = GoalStatus::Blocked;
+            app.push_message(MessageContent::System(format!(
+                "Goal blocked: {}",
+                clawed_core::text_util::truncate_chars(&decision.reason, 200, "…")
+            )));
+            false
+        }
+    }
+}
+
 async fn git_status_porcelain(cwd: &std::path::Path) -> String {
     let cwd = cwd.to_path_buf();
     tokio::task::spawn_blocking(move || {
@@ -4802,6 +4892,84 @@ async fn handle_async_command(
     use clawed_core::message::{ContentBlock, Message as CoreMsg};
 
     match cmd {
+        CommandResult::Goal { args } => {
+            let goal_arg = args.trim();
+            match goal_arg {
+                "" | "status" => {
+                    if let Some(goal) = &app.goal_state {
+                        app.push_message(MessageContent::System(goal_status_message(goal)));
+                    } else {
+                        app.push_message(MessageContent::System(
+                            "No active goal. Use /goal <objective> to start.".to_string(),
+                        ));
+                    }
+                }
+                "pause" => {
+                    if let Some(goal) = app.goal_state.as_mut() {
+                        goal.status = GoalStatus::Paused;
+                        goal.last_reason = Some("Paused by user.".into());
+                        goal.next_prompt = Some(
+                            "Resume from the current point and continue toward the goal.".into(),
+                        );
+                        if app.is_generating {
+                            abort_session(client, app, engine).await;
+                        }
+                        app.push_message(MessageContent::System("Goal paused.".to_string()));
+                    } else {
+                        app.push_message(MessageContent::System("No goal to pause.".to_string()));
+                    }
+                }
+                "resume" => {
+                    if let Some(goal) = app.goal_state.as_mut() {
+                        if goal.status == GoalStatus::Paused {
+                            goal.status = GoalStatus::Active;
+                            if !submit_goal_iteration(client, app) {
+                                app.push_message(MessageContent::System(
+                                    "Could not resume goal.".to_string(),
+                                ));
+                            }
+                        } else {
+                            let label = goal.status.label().to_string();
+                            app.push_message(MessageContent::System(format!(
+                                "Goal is {}. Only paused goals can be resumed.",
+                                label
+                            )));
+                        }
+                    } else {
+                        app.push_message(MessageContent::System(
+                            "No paused goal to resume.".to_string(),
+                        ));
+                    }
+                }
+                "clear" => {
+                    if app.is_generating
+                        && app
+                            .goal_state
+                            .as_ref()
+                            .is_some_and(|goal| goal.status == GoalStatus::Active)
+                    {
+                        abort_session(client, app, engine).await;
+                    }
+                    if app.goal_state.take().is_some() {
+                        app.push_message(MessageContent::System("Goal cleared.".to_string()));
+                    } else {
+                        app.push_message(MessageContent::System("No goal to clear.".to_string()));
+                    }
+                }
+                _ => {
+                    if app.is_generating
+                        && app
+                            .goal_state
+                            .as_ref()
+                            .is_some_and(|goal| goal.status == GoalStatus::Active)
+                    {
+                        abort_session(client, app, engine).await;
+                    }
+                    app.goal_state = Some(GoalState::new(goal_arg.to_string()));
+                    let _ = submit_goal_iteration(client, app);
+                }
+            }
+        }
         CommandResult::Diff => {
             let cwd = std::env::current_dir().unwrap_or_default();
             let result = tokio::task::spawn_blocking(move || {
@@ -8848,6 +9016,62 @@ mod tests {
         assert!(
             text.contains("+ 3 system messages"),
             "consecutive system messages should collapse (5 -> first + +3 + last), got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn virtual_scroll_height_cache_matches_collapsed_system_block() {
+        let mut app = App::new("claude-3.5".to_string());
+        for i in 0..5 {
+            app.push_message(MessageContent::System(format!("status {i}")));
+        }
+
+        app.rebuild_visible_lines();
+        app.build_height_cache(80);
+
+        let total_visual: usize = app
+            .message_line_counts
+            .iter()
+            .map(|count| count.unwrap_or(0) as usize)
+            .sum();
+
+        assert_eq!(total_visual, app.cached_visible_lines.len());
+        assert_eq!(app.message_line_counts[0], Some(3));
+        assert!(app.message_line_counts[1..].iter().all(|count| *count == Some(0)));
+    }
+
+    #[test]
+    fn virtual_scroll_partial_system_block_keeps_folded_lines() {
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::new("claude-3.5".to_string());
+        for i in 0..5 {
+            app.push_message(MessageContent::System(format!("status {i}")));
+        }
+
+        let backend = TestBackend::new(40, 2);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_messages(frame, Rect::new(0, 0, 40, 2), &mut app))
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let rendered = (0..buf.area().height)
+            .map(|y| {
+                (0..buf.area().width)
+                    .filter_map(|x| buf.cell((x, y)).map(|cell| cell.symbol().to_string()))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            rendered.contains("+ 3 system messages"),
+            "bottom viewport should keep folded summary, got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("status 4"),
+            "bottom viewport should keep the last system message, got:\n{rendered}"
         );
     }
 

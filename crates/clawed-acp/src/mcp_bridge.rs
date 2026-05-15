@@ -72,8 +72,10 @@ impl McpAcpBridge {
     ///
     /// Returns a fresh `connection_id` on success.
     pub async fn handle_connect(&self, acp_id: &str) -> Result<String> {
-        let connection_id =
-            format!("mcp_acp_{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+        let connection_id = format!(
+            "mcp_acp_{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..12]
+        );
 
         let connection = McpAcpConnection {
             acp_id: acp_id.to_string(),
@@ -95,7 +97,10 @@ impl McpAcpBridge {
         if conns.remove(connection_id).is_some() {
             info!("MCP-over-ACP disconnect: {}", &connection_id[..16]);
         } else {
-            warn!("MCP-over-ACP disconnect for unknown connection: {}", &connection_id[..16]);
+            warn!(
+                "MCP-over-ACP disconnect for unknown connection: {}",
+                &connection_id[..16]
+            );
         }
         Ok(())
     }

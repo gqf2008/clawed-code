@@ -401,13 +401,22 @@ fn thinking_block_preserved_when_has_thinking_true() {
     };
     let api = block_to_api(&block, true);
     match api {
-        ApiContentBlock::Thinking { thinking, signature } => {
+        ApiContentBlock::Thinking {
+            thinking,
+            signature,
+        } => {
             assert_eq!(thinking, "let me think...");
-            assert_eq!(signature, Some("sig_abc123".into()),
-                "signature must be preserved for API chain continuation");
+            assert_eq!(
+                signature,
+                Some("sig_abc123".into()),
+                "signature must be preserved for API chain continuation"
+            );
         }
         ApiContentBlock::Text { text, .. } => {
-            panic!("thinking block was converted to text: '{}' — API will reject", text);
+            panic!(
+                "thinking block was converted to text: '{}' — API will reject",
+                text
+            );
         }
         other => panic!("unexpected block type: {:?}", other),
     }
@@ -470,8 +479,14 @@ fn pre_thinking_assistant_gets_text_wrapped() {
     })];
     let api = messages_to_api(&messages, false, true);
     assert_eq!(api.len(), 1);
-    let has_thinking = api[0].content.iter().any(|b| matches!(b, ApiContentBlock::Thinking { .. }));
-    assert!(has_thinking, "pre-thinking assistant message must have a thinking block injected");
+    let has_thinking = api[0]
+        .content
+        .iter()
+        .any(|b| matches!(b, ApiContentBlock::Thinking { .. }));
+    assert!(
+        has_thinking,
+        "pre-thinking assistant message must have a thinking block injected"
+    );
 }
 
 #[test]
@@ -487,8 +502,11 @@ fn content_block_stop_signature_parsed() {
     match event {
         StreamEvent::ContentBlockStop { signature, index } => {
             assert_eq!(index, 0);
-            assert_eq!(signature, Some("final_sig_123".into()),
-                "ContentBlockStop must capture the thinking signature");
+            assert_eq!(
+                signature,
+                Some("final_sig_123".into()),
+                "ContentBlockStop must capture the thinking signature"
+            );
         }
         other => panic!("expected ContentBlockStop, got: {:?}", other),
     }
@@ -505,8 +523,10 @@ fn content_block_stop_without_signature_still_works() {
     match event {
         StreamEvent::ContentBlockStop { signature, index } => {
             assert_eq!(index, 1);
-            assert_eq!(signature, None,
-                "non-thinking ContentBlockStop should have None signature");
+            assert_eq!(
+                signature, None,
+                "non-thinking ContentBlockStop should have None signature"
+            );
         }
         other => panic!("expected ContentBlockStop"),
     }
@@ -524,8 +544,10 @@ fn thinking_config_includes_signature_for_chain() {
     };
     let json = serde_json::to_value(&cfg).unwrap();
     assert_eq!(json["type"], "enabled");
-    assert_eq!(json["signature"], "prev_sig",
-        "signature must be serialized in the thinking config");
+    assert_eq!(
+        json["signature"], "prev_sig",
+        "signature must be serialized in the thinking config"
+    );
 }
 
 #[test]
@@ -538,6 +560,8 @@ fn thinking_config_without_signature_omits_field() {
         signature: None,
     };
     let json = serde_json::to_value(&cfg).unwrap();
-    assert!(json.get("signature").is_none(),
-        "first-turn thinking config must omit signature field");
+    assert!(
+        json.get("signature").is_none(),
+        "first-turn thinking config must omit signature field"
+    );
 }

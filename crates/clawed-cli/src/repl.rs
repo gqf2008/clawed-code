@@ -3,19 +3,109 @@ use std::time::Duration;
 
 use clawed_agent::cron_scheduler::{CronScheduler, CronSchedulerOptions};
 use clawed_agent::engine::QueryEngine;
+use clawed_agent::task_runner::CompletionReason;
 use clawed_bus::bus::ClientHandle;
 use clawed_bus::events::AgentRequest;
 use clawed_core::file_watcher::ConfigWatcher;
 
 use crate::commands::{resolve_command_result, CommandResult};
 use crate::config;
+use crate::goal::{
+    goal_status_message, judge_goal_progress, prepare_goal_iteration, GoalDecisionAction,
+    GoalState, GoalStatus,
+};
 use crate::input::{history_file_path, InputReader, InputResult};
-use crate::output::{print_stream, spawn_stream_input, OutputRenderer};
+use crate::output::{
+    print_stream, run_task_interactive_result, spawn_stream_input, OutputRenderer,
+};
 use crate::repl_commands::*;
 use crate::theme;
 
 /// Timeout for command-response notification loops (e.g. ClearHistory, SetModel).
 const CMD_NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(30);
+
+async fn run_goal_loop(
+    engine: &QueryEngine,
+    goal: &mut GoalState,
+    turns_since_save: &mut u32,
+) -> anyhow::Result<()> {
+    loop {
+        if goal.status != GoalStatus::Active {
+            break;
+        }
+
+        let prompt = prepare_goal_iteration(goal);
+        println!(
+            "{}[Goal iteration {}] {}\x1b[0m",
+            theme::c_warn(),
+            goal.iteration,
+            goal.objective
+        );
+
+        let result = run_task_interactive_result(engine, &prompt).await?;
+        if matches!(result.reason, CompletionReason::Aborted) || engine.abort_signal().is_aborted()
+        {
+            goal.status = GoalStatus::Paused;
+            goal.last_reason = Some("Paused after interrupt.".into());
+            goal.next_prompt =
+                Some("Resume from the last interrupted step and continue toward the goal.".into());
+            engine.abort_signal().reset();
+            println!("{}Goal paused.\x1b[0m", theme::c_warn());
+            break;
+        }
+
+        let judge = match judge_goal_progress(engine, goal).await {
+            Ok(judge) => judge,
+            Err(e) => {
+                goal.status = GoalStatus::Blocked;
+                goal.last_reason = Some(format!("Goal judge failed: {}", e));
+                eprintln!("{}Goal blocked: {}\x1b[0m", theme::c_err(), e);
+                break;
+            }
+        };
+
+        goal.last_reason = Some(judge.reason.clone());
+        goal.next_prompt = judge.next_prompt.clone();
+
+        match judge.action {
+            GoalDecisionAction::Completed => {
+                goal.status = GoalStatus::Completed;
+                println!(
+                    "{}Goal completed: {}\x1b[0m",
+                    theme::c_ok(),
+                    clawed_core::text_util::truncate_chars(&judge.reason, 200, "…")
+                );
+            }
+            GoalDecisionAction::Blocked => {
+                goal.status = GoalStatus::Blocked;
+                eprintln!(
+                    "{}Goal blocked: {}\x1b[0m",
+                    theme::c_warn(),
+                    clawed_core::text_util::truncate_chars(&judge.reason, 200, "…")
+                );
+            }
+            GoalDecisionAction::Continue => {
+                println!(
+                    "{}Goal continuing: {}\x1b[0m",
+                    theme::c_warn(),
+                    clawed_core::text_util::truncate_chars(&judge.reason, 200, "…")
+                );
+            }
+        }
+
+        if let Err(e) = engine.save_session().await {
+            tracing::debug!("Goal loop session save failed: {}", e);
+        } else {
+            *turns_since_save = 0;
+        }
+
+        if goal.status != GoalStatus::Active {
+            break;
+        }
+    }
+
+    Ok(())
+}
 
 /// Receive next notification with timeout. Returns None on timeout or channel close.
 async fn recv_with_timeout(
@@ -97,6 +187,9 @@ pub async fn run(
 
     // Images queued via /image command (merged with @-references on next submit)
     let mut pending_images: Vec<clawed_core::message::ContentBlock> = Vec::new();
+
+    // REPL-local goal loop state (/goal).
+    let mut goal_state: Option<GoalState> = None;
 
     // Cron tasks that fired while readline was blocking; processed at top of next iteration.
     let mut cron_pending: Vec<clawed_core::cron_tasks::CronTask> = Vec::new();
@@ -509,6 +602,58 @@ pub async fn run(
                             CommandResult::Plan { args } => {
                                 handle_plan_command(&args, &engine, &cwd).await;
                             }
+                            CommandResult::Goal { args } => {
+                                let goal_arg = args.trim();
+                                match goal_arg {
+                                    "" | "status" => {
+                                        if let Some(goal) = &goal_state {
+                                            println!("{}", goal_status_message(goal));
+                                        } else {
+                                            println!(
+                                                "No active goal. Use /goal <objective> to start."
+                                            );
+                                        }
+                                    }
+                                    "pause" => {
+                                        if let Some(goal) = goal_state.as_mut() {
+                                            goal.status = GoalStatus::Paused;
+                                            goal.last_reason = Some("Paused by user.".into());
+                                            println!("{}Goal paused.\x1b[0m", theme::c_ok());
+                                        } else {
+                                            println!("No goal to pause.");
+                                        }
+                                    }
+                                    "resume" => {
+                                        if let Some(goal) = goal_state.as_mut() {
+                                            if goal.status == GoalStatus::Paused {
+                                                goal.status = GoalStatus::Active;
+                                                run_goal_loop(&engine, goal, &mut turns_since_save)
+                                                    .await?;
+                                            } else {
+                                                println!(
+                                                    "Goal is {}. Only paused goals can be resumed.",
+                                                    goal.status.label()
+                                                );
+                                            }
+                                        } else {
+                                            println!("No paused goal to resume.");
+                                        }
+                                    }
+                                    "clear" => {
+                                        if goal_state.take().is_some() {
+                                            println!("{}Goal cleared.\x1b[0m", theme::c_ok());
+                                        } else {
+                                            println!("No goal to clear.");
+                                        }
+                                    }
+                                    _ => {
+                                        let mut goal = GoalState::new(goal_arg.to_string());
+                                        run_goal_loop(&engine, &mut goal, &mut turns_since_save)
+                                            .await?;
+                                        goal_state = Some(goal);
+                                    }
+                                }
+                            }
                             CommandResult::Think { args } => {
                                 if let Some(ref mut c) = client {
                                     let mode = if args.is_empty() {
@@ -559,7 +704,7 @@ pub async fn run(
                                                 clawed_api::types::ThinkingConfig {
                                                     thinking_type: "enabled".into(),
                                                     budget_tokens: Some(10_000),
-                                                signature: None,
+                                                    signature: None,
                                                 },
                                             ));
                                             println!("{}✓ Extended thinking enabled (budget: 10000)\x1b[0m", theme::c_ok());
@@ -703,8 +848,11 @@ pub async fn run(
                                             return "";
                                         });
                                     if !code.is_empty() {
-                                        println!("{}Prompt color set to: {}\x1b[0m",
-                                            theme::c_ok(), name.to_lowercase());
+                                        println!(
+                                            "{}Prompt color set to: {}\x1b[0m",
+                                            theme::c_ok(),
+                                            name.to_lowercase()
+                                        );
                                     }
                                 }
                             }
@@ -1167,9 +1315,15 @@ pub async fn run(
                                     println!("No hooks configured.");
                                     println!("  \x1b[2mAdd hooks in .claude/settings.json or ~/.claude/settings.json\x1b[0m");
                                 } else {
-                                    println!("\n\x1b[2m{total} hook{} total across {} event{}.\x1b[0m",
+                                    println!(
+                                        "\n\x1b[2m{total} hook{} total across {} event{}.\x1b[0m",
                                         if total == 1 { "" } else { "s" },
-                                        loaded.sources.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", "),
+                                        loaded
+                                            .sources
+                                            .iter()
+                                            .map(|s| format!("{s:?}"))
+                                            .collect::<Vec<_>>()
+                                            .join(", "),
                                         if loaded.sources.len() == 1 { "" } else { "s" },
                                     );
                                 }
@@ -1195,8 +1349,10 @@ pub async fn run(
                                                 println!("{}", content);
                                             }
                                             Err(_) => {
-                                                eprintln!("{}Task '{id}' not found.\x1b[0m",
-                                                    theme::c_warn());
+                                                eprintln!(
+                                                    "{}Task '{id}' not found.\x1b[0m",
+                                                    theme::c_warn()
+                                                );
                                             }
                                         }
                                     }
@@ -1206,29 +1362,51 @@ pub async fn run(
                                         Ok(entries) => {
                                             let mut tasks: Vec<_> = entries
                                                 .flatten()
-                                                .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                                                .filter(|e| {
+                                                    e.path()
+                                                        .extension()
+                                                        .is_some_and(|ext| ext == "json")
+                                                })
                                                 .collect();
                                             tasks.sort_by_key(|e| e.file_name());
                                             if tasks.is_empty() {
                                                 println!("No background tasks.");
                                             } else {
-                                                println!("\x1b[1mBackground Tasks\x1b[0m ({} total):", tasks.len());
+                                                println!(
+                                                    "\x1b[1mBackground Tasks\x1b[0m ({} total):",
+                                                    tasks.len()
+                                                );
                                                 for entry in &tasks {
                                                     let name = entry.file_name();
                                                     let name_str = name.to_string_lossy();
                                                     let id = name_str.trim_end_matches(".json");
-                                                    let preview = std::fs::read_to_string(entry.path())
-                                                        .ok()
-                                                        .and_then(|c| {
-                                                            c.lines()
-                                                                .find(|l| l.contains("\"subject\""))
-                                                                .map(|l| {
-                                                                    let s = l.trim();
-                                                                    let s = s.trim_start_matches('"').trim_start_matches("subject").trim_start_matches(':').trim().trim_matches('"').trim_matches(',');
-                                                                    if s.len() > 60 { format!("{}…", &s[..57]) } else { s.to_string() }
-                                                                })
-                                                        })
-                                                        .unwrap_or_default();
+                                                    let preview =
+                                                        std::fs::read_to_string(entry.path())
+                                                            .ok()
+                                                            .and_then(|c| {
+                                                                c.lines()
+                                                                    .find(|l| {
+                                                                        l.contains("\"subject\"")
+                                                                    })
+                                                                    .map(|l| {
+                                                                        let s = l.trim();
+                                                                        let s = s
+                                                                            .trim_start_matches('"')
+                                                                            .trim_start_matches(
+                                                                                "subject",
+                                                                            )
+                                                                            .trim_start_matches(':')
+                                                                            .trim()
+                                                                            .trim_matches('"')
+                                                                            .trim_matches(',');
+                                                                        if s.len() > 60 {
+                                                                            format!("{}…", &s[..57])
+                                                                        } else {
+                                                                            s.to_string()
+                                                                        }
+                                                                    })
+                                                            })
+                                                            .unwrap_or_default();
                                                     println!("  \x1b[1m{id}\x1b[0m  {preview}");
                                                 }
                                             }
@@ -1246,15 +1424,24 @@ pub async fn run(
                                     .output();
                                 let diff_short = match diff_output {
                                     Err(e) => {
-                                        eprintln!("{}Git diff failed: {}\x1b[0m", theme::c_err(), e);
+                                        eprintln!(
+                                            "{}Git diff failed: {}\x1b[0m",
+                                            theme::c_err(),
+                                            e
+                                        );
                                         continue;
                                     }
                                     Ok(out) => {
                                         let text = String::from_utf8_lossy(&out.stdout).to_string();
                                         if text.len() > 12000 {
-                                            format!("{}…\n[truncated, {} bytes total]", &text[..12000], text.len())
+                                            format!(
+                                                "{}…\n[truncated, {} bytes total]",
+                                                &text[..12000],
+                                                text.len()
+                                            )
                                         } else if text.is_empty() {
-                                            "No changes found (working tree matches HEAD).".to_string()
+                                            "No changes found (working tree matches HEAD)."
+                                                .to_string()
                                         } else {
                                             text
                                         }
@@ -1276,9 +1463,18 @@ Report format: markdown with file, line, severity (CRITICAL/HIGH/MEDIUM/LOW), ca
                                 let model = { engine.state().read().await.model.clone() };
                                 let stream = engine.submit(&review_prompt).await;
                                 if let Err(e) = crate::output::print_stream(
-                                    stream, &model, Some(engine.cost_tracker()), None,
-                                ).await {
-                                    eprintln!("{}Security review error: {}\x1b[0m", theme::c_err(), e);
+                                    stream,
+                                    &model,
+                                    Some(engine.cost_tracker()),
+                                    None,
+                                )
+                                .await
+                                {
+                                    eprintln!(
+                                        "{}Security review error: {}\x1b[0m",
+                                        theme::c_err(),
+                                        e
+                                    );
                                 }
                             }
                             CommandResult::Advisor { sub } => {
@@ -1290,17 +1486,29 @@ Report format: markdown with file, line, severity (CRITICAL/HIGH/MEDIUM/LOW), ca
                                     let model = { engine.state().read().await.model.clone() };
                                     println!("Advisor: not set");
                                     println!("  \x1b[2mUse /advisor <model> to enable (e.g. /advisor opus)\x1b[0m");
-                                    println!("  \x1b[2mMain model: {} ({})\x1b[0m",
-                                        clawed_core::model::display_name_any(&model), model);
+                                    println!(
+                                        "  \x1b[2mMain model: {} ({})\x1b[0m",
+                                        clawed_core::model::display_name_any(&model),
+                                        model
+                                    );
                                 } else {
                                     // Try to resolve the model
                                     let resolved = clawed_core::model::resolve_model_string(&sub);
                                     if resolved.is_empty() {
-                                        println!("{}Unknown model: '{}'\x1b[0m", theme::c_warn(), sub);
+                                        println!(
+                                            "{}Unknown model: '{}'\x1b[0m",
+                                            theme::c_warn(),
+                                            sub
+                                        );
                                     } else {
-                                        let display = clawed_core::model::display_name_any(&resolved);
-                                        println!("{}Advisor set to: {} ({})\x1b[0m",
-                                            theme::c_ok(), display, resolved);
+                                        let display =
+                                            clawed_core::model::display_name_any(&resolved);
+                                        println!(
+                                            "{}Advisor set to: {} ({})\x1b[0m",
+                                            theme::c_ok(),
+                                            display,
+                                            resolved
+                                        );
                                         println!("  \x1b[2mNote: Advisor infrastructure is basic in this build. Use /advisor off to disable.\x1b[0m");
                                     }
                                 }
@@ -1316,7 +1524,10 @@ Report format: markdown with file, line, severity (CRITICAL/HIGH/MEDIUM/LOW), ca
                                     if pattern.is_empty() {
                                         println!("Usage: /sandbox exclude <pattern>");
                                     } else {
-                                        println!("{}Excluded pattern: {pattern}\x1b[0m", theme::c_ok());
+                                        println!(
+                                            "{}Excluded pattern: {pattern}\x1b[0m",
+                                            theme::c_ok()
+                                        );
                                     }
                                 } else {
                                     println!("Usage: /sandbox [exclude <pattern>]");
@@ -1329,9 +1540,8 @@ Report format: markdown with file, line, severity (CRITICAL/HIGH/MEDIUM/LOW), ca
                                     #[cfg(windows)]
                                     {
                                         // Try VS Code
-                                        let code_result = std::process::Command::new("code")
-                                            .arg(".")
-                                            .output();
+                                        let code_result =
+                                            std::process::Command::new("code").arg(".").output();
                                         match code_result {
                                             Ok(_) => println!("  {}VS Code launched.\x1b[0m", theme::c_ok()),
                                             Err(_) => println!("  \x1b[33mVS Code not found in PATH\x1b[0m\n  \x1b[2mInstall VS Code and add 'code' to your PATH.\x1b[0m"),
@@ -1369,20 +1579,30 @@ Report format: markdown with file, line, severity (CRITICAL/HIGH/MEDIUM/LOW), ca
 }
 "#;
                                     match std::fs::write(&keybindings_path, template) {
-                                        Ok(_) => println!("{}Created new keybindings config at:\x1b[0m\n  {}",
-                                            theme::c_ok(), keybindings_path.display()),
-                                        Err(e) => eprintln!("{}Failed to create keybindings: {}\x1b[0m",
-                                            theme::c_err(), e),
+                                        Ok(_) => println!(
+                                            "{}Created new keybindings config at:\x1b[0m\n  {}",
+                                            theme::c_ok(),
+                                            keybindings_path.display()
+                                        ),
+                                        Err(e) => eprintln!(
+                                            "{}Failed to create keybindings: {}\x1b[0m",
+                                            theme::c_err(),
+                                            e
+                                        ),
                                     }
                                 } else {
-                                    println!("Keybindings config exists at:\n  {}", keybindings_path.display());
+                                    println!(
+                                        "Keybindings config exists at:\n  {}",
+                                        keybindings_path.display()
+                                    );
                                 }
                                 println!("\n  \x1b[2mEdit the file to customize your keyboard shortcuts.\x1b[0m");
                             }
                             CommandResult::Session => {
                                 let remote_var = std::env::var("CLAUDE_CODE_REMOTE");
                                 let is_remote = remote_var.is_ok();
-                                let remote_env = remote_var.unwrap_or_else(|_| "not set".to_string());
+                                let remote_env =
+                                    remote_var.unwrap_or_else(|_| "not set".to_string());
                                 println!("\x1b[1mRemote Session\x1b[0m");
                                 if is_remote {
                                     println!("  Status: \x1b[32mremote mode\x1b[0m");
@@ -1393,7 +1613,11 @@ Report format: markdown with file, line, severity (CRITICAL/HIGH/MEDIUM/LOW), ca
                                     println!("  \x1b[2mStart with --remote or set CLAUDE_CODE_REMOTE to enable remote mode.\x1b[0m");
                                 }
                                 let session_id = engine.session_id();
-                                let display_id = if session_id.len() >= 8 { &session_id[..8] } else { &session_id };
+                                let display_id = if session_id.len() >= 8 {
+                                    &session_id[..8]
+                                } else {
+                                    &session_id
+                                };
                                 println!("  ID:     {display_id}");
                             }
                             CommandResult::Statusline { prompt } => {
@@ -1417,8 +1641,13 @@ You can read ~/.bashrc, ~/.zshrc, ~/.config/fish/config.fish, etc. and modify ~/
                                 let stream = engine.submit(&agent_prompt).await;
                                 let model = { engine.state().read().await.model.clone() };
                                 if let Err(e) = crate::output::print_stream(
-                                    stream, &model, Some(engine.cost_tracker()), None,
-                                ).await {
+                                    stream,
+                                    &model,
+                                    Some(engine.cost_tracker()),
+                                    None,
+                                )
+                                .await
+                                {
                                     eprintln!("{}Statusline error: {}\x1b[0m", theme::c_err(), e);
                                 }
                             }
@@ -1429,7 +1658,8 @@ You can read ~/.bashrc, ~/.zshrc, ~/.config/fish/config.fish, etc. and modify ~/
                                 println!("\x1b[1mTerminal Setup\x1b[0m");
                                 println!("  Detected terminal: \x1b[2m{term}\x1b[0m");
                                 // Check for terminals that natively support CSI u protocol
-                                let native_terms = ["ghostty", "kitty", "iterm2", "wezterm", "warp"];
+                                let native_terms =
+                                    ["ghostty", "kitty", "iterm2", "wezterm", "warp"];
                                 if native_terms.iter().any(|t| term.to_lowercase().contains(t)) {
                                     println!("  {}Your terminal natively supports multi-line input.\x1b[0m", theme::c_ok());
                                     println!("  \x1b[2mNo additional setup needed. Use Shift+Enter or Alt+Enter for newlines.\x1b[0m");
@@ -1445,16 +1675,31 @@ You can read ~/.bashrc, ~/.zshrc, ~/.config/fish/config.fish, etc. and modify ~/
                                 println!("  Opening Claude Desktop...");
                                 println!("  \x1b[2mURL: {}\x1b[0m", url);
                                 match opener::open(url) {
-                                    Ok(_) => println!("  {}Desktop app launched.\x1b[0m", theme::c_ok()),
-                                    Err(e) => eprintln!("{}Failed to open desktop: {}\x1b[0m", theme::c_err(), e),
+                                    Ok(_) => {
+                                        println!("  {}Desktop app launched.\x1b[0m", theme::c_ok())
+                                    }
+                                    Err(e) => eprintln!(
+                                        "{}Failed to open desktop: {}\x1b[0m",
+                                        theme::c_err(),
+                                        e
+                                    ),
                                 }
                             }
                             CommandResult::Mobile => {
-                                let ios_url = "https://apps.apple.com/app/claude-by-anthropic/id6473753684";
+                                let ios_url =
+                                    "https://apps.apple.com/app/claude-by-anthropic/id6473753684";
                                 let android_url = "https://play.google.com/store/apps/details?id=com.anthropic.claude";
                                 println!("\x1b[1mClaude Mobile App\x1b[0m");
-                                println!("  {}iOS:{}\x1b[0m  {ios_url}", theme::c_ok(), theme::RESET);
-                                println!("  {}Android:{}\x1b[0m  {android_url}", theme::c_ok(), theme::RESET);
+                                println!(
+                                    "  {}iOS:{}\x1b[0m  {ios_url}",
+                                    theme::c_ok(),
+                                    theme::RESET
+                                );
+                                println!(
+                                    "  {}Android:{}\x1b[0m  {android_url}",
+                                    theme::c_ok(),
+                                    theme::RESET
+                                );
                                 println!();
                                 println!("  \x1b[2mVisit the App Store or Google Play to download the Claude app.\x1b[0m");
                             }
@@ -1462,11 +1707,17 @@ You can read ~/.bashrc, ~/.zshrc, ~/.config/fish/config.fish, etc. and modify ~/
                                 let force = args.contains("--force");
                                 println!("\x1b[1mClaude Code Installer\x1b[0m");
                                 println!("  Version: \x1b[2m{}\x1b[0m", env!("CARGO_PKG_VERSION"));
-                                println!("  Binary:  \x1b[2m{}\x1b[0m", std::env::current_exe()
-                                    .map(|p| p.display().to_string())
-                                    .unwrap_or_else(|_| "unknown".to_string()));
+                                println!(
+                                    "  Binary:  \x1b[2m{}\x1b[0m",
+                                    std::env::current_exe()
+                                        .map(|p| p.display().to_string())
+                                        .unwrap_or_else(|_| "unknown".to_string())
+                                );
                                 if force {
-                                    println!("  {}Force reinstall requested.\x1b[0m", theme::c_warn());
+                                    println!(
+                                        "  {}Force reinstall requested.\x1b[0m",
+                                        theme::c_warn()
+                                    );
                                 }
                                 println!();
                                 println!("  \x1b[2mFor updates, download the latest release from:\x1b[0m");
@@ -1477,9 +1728,17 @@ You can read ~/.bashrc, ~/.zshrc, ~/.config/fish/config.fish, etc. and modify ~/
                                 println!("\x1b[1mUpgrade Claude Code\x1b[0m");
                                 println!("  Opening upgrade page...");
                                 match opener::open(url) {
-                                    Ok(_) => println!("  {}Browser opened to {}\x1b[0m", theme::c_ok(), url),
+                                    Ok(_) => println!(
+                                        "  {}Browser opened to {}\x1b[0m",
+                                        theme::c_ok(),
+                                        url
+                                    ),
                                     Err(e) => {
-                                        eprintln!("{}Failed to open browser: {}\x1b[0m", theme::c_err(), e);
+                                        eprintln!(
+                                            "{}Failed to open browser: {}\x1b[0m",
+                                            theme::c_err(),
+                                            e
+                                        );
                                         println!("  Please visit: \x1b[2m{url}\x1b[0m");
                                     }
                                 }
@@ -1489,9 +1748,17 @@ You can read ~/.bashrc, ~/.zshrc, ~/.config/fish/config.fish, etc. and modify ~/
                                 println!("\x1b[1mPrivacy Settings\x1b[0m");
                                 println!("  Opening privacy settings...");
                                 match opener::open(url) {
-                                    Ok(_) => println!("  {}Browser opened to {}\x1b[0m", theme::c_ok(), url),
+                                    Ok(_) => println!(
+                                        "  {}Browser opened to {}\x1b[0m",
+                                        theme::c_ok(),
+                                        url
+                                    ),
                                     Err(e) => {
-                                        eprintln!("{}Failed to open browser: {}\x1b[0m", theme::c_err(), e);
+                                        eprintln!(
+                                            "{}Failed to open browser: {}\x1b[0m",
+                                            theme::c_err(),
+                                            e
+                                        );
                                         println!("  Please visit: \x1b[2m{url}\x1b[0m");
                                     }
                                 }
@@ -1510,7 +1777,9 @@ You can read ~/.bashrc, ~/.zshrc, ~/.config/fish/config.fish, etc. and modify ~/
                                 println!("\x1b[1mReferral Passes\x1b[0m");
                                 println!("  \x1b[2mShare Claude Code with friends!\x1b[0m");
                                 println!();
-                                println!("  Referral program: \x1b[2mhttps://claude.ai/passes\x1b[0m");
+                                println!(
+                                    "  Referral program: \x1b[2mhttps://claude.ai/passes\x1b[0m"
+                                );
                                 println!("  \x1b[2mShare this link to give friends a free week of Claude Code.\x1b[0m");
                             }
                         }
@@ -2121,4 +2390,5 @@ mod tests {
         // Display length matters, not byte length
         assert!(result.chars().count() <= 16);
     }
+
 }

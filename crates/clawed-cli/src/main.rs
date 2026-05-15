@@ -3,6 +3,7 @@ mod chrome;
 mod commands;
 mod config;
 mod diff_display;
+mod goal;
 mod init;
 mod input;
 mod markdown;
@@ -470,7 +471,7 @@ async fn run() -> anyhow::Result<()> {
             Some(clawed_api::types::ThinkingConfig {
                 thinking_type: "enabled".into(),
                 budget_tokens: Some(cli.thinking_budget),
-                    signature: None,
+                signature: None,
             })
         } else {
             None
@@ -692,12 +693,9 @@ async fn run() -> anyhow::Result<()> {
             }
         }
         let _ = acp_mcp.start_all().await;
-        let server = clawed_acp::AcpServer::new(
-            engine,
-            acp_mcp,
-            clawed_acp::AcpTransportConfig::default(),
-        )
-        .version(env!("CARGO_PKG_VERSION"));
+        let server =
+            clawed_acp::AcpServer::new(engine, acp_mcp, clawed_acp::AcpTransportConfig::default())
+                .version(env!("CARGO_PKG_VERSION"));
         server.run_stdio().await?;
     } else if use_tui {
         // TUI mode: full-screen partitioned terminal UI

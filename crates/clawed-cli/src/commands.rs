@@ -98,6 +98,10 @@ pub enum SlashCommand {
     Plan {
         args: String,
     },
+    /// Goal loop management.
+    Goal {
+        args: String,
+    },
     /// Toggle extended thinking.
     Think {
         args: String,
@@ -282,6 +286,7 @@ impl SlashCommand {
             "agents" | "agent" => Self::Agents { sub: args },
             "theme" => Self::Theme { name: args },
             "plan" => Self::Plan { args },
+            "goal" => Self::Goal { args },
             "think" | "thinking" => Self::Think { args },
             "break-cache" | "breakcache" => Self::BreakCache,
             "rewind" => Self::Rewind { turns: args },
@@ -473,6 +478,7 @@ impl SlashCommand {
             Self::Agents { sub } => CommandResult::Agents { sub: sub.clone() },
             Self::Theme { name } => CommandResult::Theme { name: name.clone() },
             Self::Plan { args } => CommandResult::Plan { args: args.clone() },
+            Self::Goal { args } => CommandResult::Goal { args: args.clone() },
             Self::Think { args } => CommandResult::Think { args: args.clone() },
             Self::BreakCache => CommandResult::BreakCache,
             Self::Rewind { turns } => CommandResult::Rewind {
@@ -517,7 +523,9 @@ impl SlashCommand {
             Self::Ide { sub } => CommandResult::Ide { sub: sub.clone() },
             Self::Keybindings => CommandResult::Keybindings,
             Self::Session => CommandResult::Session,
-            Self::Statusline { prompt } => CommandResult::Statusline { prompt: prompt.clone() },
+            Self::Statusline { prompt } => CommandResult::Statusline {
+                prompt: prompt.clone(),
+            },
             Self::TerminalSetup => CommandResult::TerminalSetup,
             Self::Desktop => CommandResult::Desktop,
             Self::Mobile => CommandResult::Mobile,
@@ -695,6 +703,10 @@ pub enum CommandResult {
     },
     /// Plan mode (/plan [open|description]).
     Plan {
+        args: String,
+    },
+    /// Goal loop (/goal [objective|pause|resume|clear|status]).
+    Goal {
         args: String,
     },
     /// Toggle extended thinking (/think [on|off|<budget>]).
@@ -897,6 +909,11 @@ const HELP_TEXT_BASE: &str = "\
 \x1b[1mPlanning\x1b[0m
   /plan              Toggle plan mode (read-only tools, structured planning)
   /plan open         Open plan file in external editor
+  /goal <objective>  Keep iterating until the goal is done or blocked
+  /goal [status]     Show current goal loop state
+  /goal pause        Pause the current goal loop
+  /goal resume       Resume the paused goal loop
+  /goal clear        Clear the current goal loop state
 
 \x1b[1mSystem\x1b[0m
   /doctor            Check environment health
@@ -2094,6 +2111,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_parse_goal() {
+        let s = no_skills();
+        assert!(matches!(
+            SlashCommand::parse("/goal", &s),
+            Some(SlashCommand::Goal { args }) if args.is_empty()
+        ));
+        assert!(matches!(
+            SlashCommand::parse("/goal fix the flaky test", &s),
+            Some(SlashCommand::Goal { args }) if args == "fix the flaky test"
+        ));
+    }
+
+    #[test]
+    fn test_execute_goal() {
+        let cmd = SlashCommand::parse("/goal resume", &no_skills()).unwrap();
+        assert!(matches!(
+            cmd.execute(&no_skills(), &no_plugins()),
+            CommandResult::Goal { args } if args == "resume"
+        ));
+    }
+
     // ── new commands: /share, /files, /env ──────────────────────────
 
     #[test]
@@ -2162,6 +2201,7 @@ mod tests {
         assert!(text.contains("/env"));
         assert!(text.contains("/vim"));
         assert!(text.contains("/effort"));
+        assert!(text.contains("/goal"));
         assert!(text.contains("/stickers"));
         assert!(text.contains("/tag"));
         assert!(text.contains("/release-notes"));

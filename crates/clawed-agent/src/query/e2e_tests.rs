@@ -35,6 +35,15 @@ fn mock_tool_response(
     tool_name: &str,
     input: serde_json::Value,
 ) -> MessagesResponse {
+    mock_tool_response_with_stop_reason(tool_id, tool_name, input, Some("tool_use"))
+}
+
+fn mock_tool_response_with_stop_reason(
+    tool_id: &str,
+    tool_name: &str,
+    input: serde_json::Value,
+    stop_reason: Option<&str>,
+) -> MessagesResponse {
     MessagesResponse {
         id: "msg_tool".into(),
         response_type: "message".into(),
@@ -45,7 +54,7 @@ fn mock_tool_response(
             input,
         }],
         model: "claude-sonnet-4-20250514".into(),
-        stop_reason: Some("tool_use".into()),
+        stop_reason: stop_reason.map(std::string::ToString::to_string),
         usage: ApiUsage {
             input_tokens: 200,
             output_tokens: 100,
@@ -1284,4 +1293,124 @@ async fn e2e_text_and_tool_use_in_same_response() {
     assert!(has_tool, "expected tool use start");
     assert!(has_result, "expected tool result");
     assert!(has_final, "expected final text response");
+}
+
+#[tokio::test]
+async fn e2e_tool_use_continues_when_stop_reason_is_wrong() {
+    struct EchoTool3;
+
+    #[async_trait::async_trait]
+    impl clawed_core::tool::Tool for EchoTool3 {
+        fn name(&self) -> &str {
+            "echo"
+        }
+
+        fn description(&self) -> &str {
+            "Echo input"
+        }
+
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string" }
+                },
+                "required": ["text"]
+            })
+        }
+
+        async fn call(
+            &self,
+            input: serde_json::Value,
+            _ctx: &clawed_core::tool::ToolContext,
+        ) -> anyhow::Result<clawed_core::tool::ToolResult> {
+            Ok(clawed_core::tool::ToolResult::text(format!(
+                "Echo: {}",
+                input["text"].as_str().unwrap_or("")
+            )))
+        }
+
+        fn is_read_only(&self) -> bool {
+            true
+        }
+    }
+
+    let first = mock_tool_response_with_stop_reason(
+        "t1",
+        "echo",
+        serde_json::json!({ "text": "hello world" }),
+        Some("end_turn"),
+    );
+    let second = mock_text_response("Recovered and continued.");
+
+    let mock = MockBackend::new()
+        .with_stream_events(make_stream_events(first))
+        .with_stream_events(make_stream_events(second));
+
+    let client =
+        Arc::new(clawed_api::client::ApiClient::new("test-key").with_backend(Box::new(mock)));
+    let mut registry = clawed_tools::ToolRegistry::new();
+    registry.register(EchoTool3);
+    let registry = Arc::new(registry);
+    let perm = Arc::new(crate::permissions::PermissionChecker::new(
+        clawed_core::permissions::PermissionMode::Default,
+        vec![],
+    ));
+    let executor = Arc::new(crate::executor::ToolExecutor::new(registry, perm));
+    let state = crate::state::new_shared_state();
+    let tool_context = clawed_core::tool::ToolContext {
+        cwd: std::env::temp_dir(),
+        abort_signal: clawed_core::tool::AbortSignal::new(),
+        permission_mode: clawed_core::permissions::PermissionMode::Default,
+        messages: vec![],
+        output_line: None,
+    };
+    let hooks = Arc::new(crate::hooks::HookRegistry::new());
+    let config = QueryConfig {
+        max_turns: 5,
+        ..QueryConfig::default()
+    };
+
+    let events = collect_events(
+        client,
+        executor,
+        state,
+        tool_context,
+        config,
+        user_msg("Echo hello world"),
+        hooks,
+    )
+    .await;
+
+    let has_tool_start = events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::ToolUseStart { name, .. } if name == "echo"));
+    let has_tool_result = events.iter().any(|e| {
+        matches!(
+            e,
+            AgentEvent::ToolResult { text, .. }
+                if text
+                    .as_deref()
+                    .is_some_and(|t| t.starts_with("Echo: hello world"))
+        )
+    });
+    let has_final = events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::TextDelta(t) if t.contains("Recovered and continued.")));
+
+    assert!(
+        has_tool_start,
+        "expected ToolUseStart despite wrong stop_reason, got events: {:?}",
+        events
+    );
+    assert!(
+        has_tool_result,
+        "expected tool result despite wrong stop_reason, got events: {:?}",
+        events
+    );
+    assert!(
+        has_final,
+        "expected follow-up turn despite wrong stop_reason, got events: {:?}",
+        events
+    );
 }
