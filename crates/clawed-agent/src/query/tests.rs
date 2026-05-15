@@ -530,35 +530,17 @@ fn content_block_stop_without_signature_still_works() {
 }
 
 #[test]
-fn thinking_config_includes_signature_for_chain() {
-    // When a signature is present (from previous turn), it must be
-    // included in the thinking config for the next request.
+fn thinking_config_never_serializes_signature() {
+    // Anthropic signatures belong to content[].thinking blocks, not the
+    // top-level request thinking configuration.
     use clawed_api::types::ThinkingConfig;
     let cfg = ThinkingConfig {
         thinking_type: "enabled".into(),
         budget_tokens: Some(10000),
-        signature: Some("prev_sig".into()),
-    };
-    let json = serde_json::to_value(&cfg).unwrap();
-    assert_eq!(json["type"], "enabled");
-    assert_eq!(
-        json["signature"], "prev_sig",
-        "signature must be serialized in the thinking config"
-    );
-}
-
-#[test]
-fn thinking_config_without_signature_omits_field() {
-    // First turn: no signature yet, field should be absent from JSON.
-    use clawed_api::types::ThinkingConfig;
-    let cfg = ThinkingConfig {
-        thinking_type: "enabled".into(),
-        budget_tokens: Some(10000),
-        signature: None,
     };
     let json = serde_json::to_value(&cfg).unwrap();
     assert!(
         json.get("signature").is_none(),
-        "first-turn thinking config must omit signature field"
+        "thinking config must not serialize a signature field"
     );
 }

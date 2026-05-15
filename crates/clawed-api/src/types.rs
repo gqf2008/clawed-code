@@ -115,10 +115,6 @@ pub struct ThinkingConfig {
     /// Token budget for thinking (e.g. 10000).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget_tokens: Option<u32>,
-    /// Signature from the previous response's thinking block.
-    /// Required by the API to continue a thinking chain. Omit on the first turn.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub signature: Option<String>,
 }
 
 /// A single message in the API conversation (user or assistant role).
@@ -351,12 +347,12 @@ mod tests {
         let cfg = ThinkingConfig {
             thinking_type: "enabled".into(),
             budget_tokens: Some(10000),
-            signature: None,
         };
         let json = serde_json::to_value(&cfg).unwrap();
         assert_eq!(json["type"], "enabled");
         assert_eq!(json["budget_tokens"], 10000);
         assert!(json.get("thinking_type").is_none());
+        assert!(json.get("signature").is_none());
 
         let back: ThinkingConfig = serde_json::from_value(json).unwrap();
         assert_eq!(back.thinking_type, "enabled");

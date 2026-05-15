@@ -790,7 +790,6 @@ async fn e2e_thinking_blocks_emitted() {
         thinking: Some(clawed_api::types::ThinkingConfig {
             thinking_type: "enabled".into(),
             budget_tokens: Some(10000),
-            signature: None,
         }),
         ..QueryConfig::default()
     };
@@ -858,7 +857,6 @@ async fn e2e_omitted_thinking_signature_is_preserved() {
         thinking: Some(clawed_api::types::ThinkingConfig {
             thinking_type: "adaptive".into(),
             budget_tokens: None,
-            signature: None,
         }),
         ..QueryConfig::default()
     };
@@ -1002,7 +1000,6 @@ async fn e2e_tool_loop_round_trips_omitted_thinking_signature_in_next_request() 
         thinking: Some(clawed_api::types::ThinkingConfig {
             thinking_type: "adaptive".into(),
             budget_tokens: None,
-            signature: None,
         }),
         ..QueryConfig::default()
     };
@@ -1035,6 +1032,18 @@ async fn e2e_tool_loop_round_trips_omitted_thinking_signature_in_next_request() 
         "expected initial and tool-result requests"
     );
     let second_request = &requests[1];
+    let thinking_config_json = serde_json::to_value(
+        second_request
+            .thinking
+            .as_ref()
+            .expect("thinking should remain enabled"),
+    )
+    .unwrap();
+    assert!(
+        thinking_config_json.get("signature").is_none(),
+        "request.thinking must not carry signatures; signatures belong to content blocks: {thinking_config_json}"
+    );
+
     let assistant = second_request
         .messages
         .iter()

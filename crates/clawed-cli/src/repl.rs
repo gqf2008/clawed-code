@@ -704,7 +704,6 @@ pub async fn run(
                                                 clawed_api::types::ThinkingConfig {
                                                     thinking_type: "enabled".into(),
                                                     budget_tokens: Some(10_000),
-                                                    signature: None,
                                                 },
                                             ));
                                             println!("{}✓ Extended thinking enabled (budget: 10000)\x1b[0m", theme::c_ok());
@@ -715,7 +714,6 @@ pub async fn run(
                                                     clawed_api::types::ThinkingConfig {
                                                         thinking_type: "enabled".into(),
                                                         budget_tokens: Some(budget),
-                                                        signature: None,
                                                     },
                                                 ));
                                                 println!("{}✓ Extended thinking enabled (budget: {})\x1b[0m", theme::c_ok(), budget);

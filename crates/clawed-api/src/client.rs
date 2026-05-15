@@ -136,6 +136,60 @@ impl ApiClient {
         crate::retry::RateLimitInfo::from_headers(&pairs)
     }
 
+    fn request_shape(request: &MessagesRequest) -> String {
+        let messages = request
+            .messages
+            .iter()
+            .enumerate()
+            .map(|(msg_idx, msg)| {
+                let blocks = msg
+                    .content
+                    .iter()
+                    .enumerate()
+                    .map(|(block_idx, block)| {
+                        let kind = match block {
+                            ApiContentBlock::Text { .. } => "text".to_string(),
+                            ApiContentBlock::ToolUse { id, name, .. } => {
+                                format!("tool_use:{name}:{id}")
+                            }
+                            ApiContentBlock::ToolResult { tool_use_id, .. } => {
+                                format!("tool_result:{tool_use_id}")
+                            }
+                            ApiContentBlock::Image { .. } => "image".to_string(),
+                            ApiContentBlock::Thinking {
+                                thinking,
+                                signature,
+                            } => format!(
+                                "thinking:text_len={},signature={}",
+                                thinking.len(),
+                                signature.as_ref().map_or("none", |sig| if sig.is_empty() {
+                                    "empty"
+                                } else {
+                                    "present"
+                                })
+                            ),
+                        };
+                        format!("{block_idx}:{kind}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("{msg_idx}:{}:[{blocks}]", msg.role)
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+        format!(
+            "model={}, thinking={}, messages={}",
+            request.model,
+            request
+                .thinking
+                .as_ref()
+                .map_or("none".to_string(), |thinking| thinking
+                    .thinking_type
+                    .clone()),
+            messages
+        )
+    }
+
     /// Quick connectivity check: send a minimal request to verify the API key
     /// and network. Returns `Ok(model_name)` on success, or an error describing
     /// the problem (auth, network, etc.).
@@ -205,9 +259,18 @@ impl ApiClient {
                         let retry_after = Self::parse_retry_after(response.headers());
                         let rate_limit_info = Self::extract_rate_limit(response.headers());
                         let body = response.text().await.unwrap_or_default();
+                        let request_shape = Self::request_shape(&request);
+                        if status == 400 {
+                            tracing::error!(
+                                status,
+                                body = %body,
+                                request_shape = %request_shape,
+                                "API 400"
+                            );
+                        }
                         return Err(ApiHttpError {
                             status,
-                            body,
+                            body: format!("{body}; request_shape: {request_shape}"),
                             retry_after,
                             rate_limit_info,
                         });
@@ -308,9 +371,18 @@ impl ApiClient {
                         let retry_after = Self::parse_retry_after(response.headers());
                         let rate_limit_info = Self::extract_rate_limit(response.headers());
                         let body = response.text().await.unwrap_or_default();
+                        let request_shape = Self::request_shape(&req);
+                        if status == 400 {
+                            tracing::error!(
+                                status,
+                                body = %body,
+                                request_shape = %request_shape,
+                                "Streaming API 400"
+                            );
+                        }
                         return Err(ApiHttpError {
                             status,
-                            body,
+                            body: format!("{body}; request_shape: {request_shape}"),
                             retry_after,
                             rate_limit_info,
                         });
