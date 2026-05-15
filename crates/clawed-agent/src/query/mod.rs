@@ -361,6 +361,7 @@ pub fn query_stream_with_injection(
             let mut assistant_text = String::new();
             let mut thinking_text = String::new();
             let mut thinking_signature: Option<String> = None;
+            let mut current_thinking_active = false;
             let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
             let mut tool_uses: Vec<(String, String, serde_json::Value)> = Vec::new();
             let mut tool_paths: Vec<String> = Vec::new();
@@ -400,18 +401,20 @@ pub fn query_stream_with_injection(
                                     yield AgentEvent::ToolUseStart { id: id.clone(), name: name.clone() };
                                 }
                                 ResponseContentBlock::Thinking { thinking, signature } => {
+                                    current_thinking_active = true;
+                                    thinking_text.clear();
                                     thinking_text = thinking.clone();
-                                    if thinking_signature.is_none() {
-                                        thinking_signature = signature
-                                            .clone()
-                                            .filter(|s| !s.is_empty());
-                                    }
+                                    thinking_signature = signature
+                                        .clone()
+                                        .filter(|s| !s.is_empty());
                                     yield AgentEvent::ThinkingDelta(thinking.clone());
                                 }
                                 ResponseContentBlock::RedactedThinking { data } => {
-                                    assistant_blocks.push(ContentBlock::RedactedThinking {
-                                        data: data.clone(),
-                                    });
+                                    if has_thinking {
+                                        assistant_blocks.push(ContentBlock::RedactedThinking {
+                                            data: data.clone(),
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -436,7 +439,31 @@ pub fn query_stream_with_injection(
                             if let Some(ref sig) = signature {
                                 if !sig.is_empty() { thinking_signature = Some(sig.clone()); }
                             }
-                            if !current_tool_id.is_empty() {
+                            if current_thinking_active {
+                                // Only persist thinking into history when we actually
+                                // requested thinking mode for this turn. Some
+                                // Anthropic-compatible proxies (DashScope/LiteLLM)
+                                // enable thinking server-side and return thinking
+                                // blocks even when our request had `thinking: null`;
+                                // storing them then trying to pass them back on the
+                                // next turn (or dropping them and breaking the
+                                // proxy's prefix cache) trips a 400
+                                // "content[].thinking in the thinking mode must be
+                                // passed back to the API". The cleanest cure is to
+                                // never store thinking we didn't ask for.
+                                if has_thinking
+                                    && (!thinking_text.is_empty() || thinking_signature.is_some())
+                                {
+                                    assistant_blocks.push(ContentBlock::Thinking {
+                                        thinking: std::mem::take(&mut thinking_text),
+                                        signature: thinking_signature.take(),
+                                    });
+                                } else {
+                                    thinking_text.clear();
+                                    thinking_signature = None;
+                                }
+                                current_thinking_active = false;
+                            } else if !current_tool_id.is_empty() {
                                 let input: serde_json::Value = match serde_json::from_str(&current_tool_input) {
                                     Ok(v) => v,
                                     Err(e) => {
@@ -575,17 +602,6 @@ pub fn query_stream_with_injection(
             // and go straight to the next outer-loop iteration (re-call API).
             if should_retry_turn {
                 continue;
-            }
-
-            // Preserve thinking blocks so the API doesn't reject the next request.
-            // With omitted-thinking mode, the thinking text can be empty and the
-            // signature is the only required payload to round-trip.
-            // Must come before text/tool_use in the content array per API schema.
-            if !thinking_text.is_empty() || thinking_signature.is_some() {
-                assistant_blocks.insert(0, ContentBlock::Thinking {
-                    thinking: std::mem::take(&mut thinking_text),
-                    signature: thinking_signature.take(),
-                });
             }
 
             // Ensure text block is present (after thinking, before tool_use)

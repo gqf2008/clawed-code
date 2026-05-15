@@ -352,8 +352,10 @@ fn test_block_to_api_thinking() {
     let api = block_to_api(&block, false);
     match api {
         ApiContentBlock::Text { text, .. } => {
-            assert!(text.contains("<thinking>"));
-            assert!(text.contains("let me think..."));
+            assert!(
+                text.is_empty(),
+                "unsigned thinking with has_thinking=false must drop to empty text, got: {text:?}"
+            );
         }
         _ => panic!("expected Text for thinking"),
     }
@@ -423,18 +425,19 @@ fn thinking_block_preserved_when_has_thinking_true() {
 }
 
 #[test]
-fn thinking_block_without_signature_becomes_text() {
-    // Anthropic only accepts signed thinking blocks in subsequent requests.
-    // Unsigned historical thinking is safer as regular text than as a typed
-    // thinking block that the API cannot verify.
+fn thinking_block_without_signature_is_dropped() {
+    // Anthropic and compatible proxies only accept signed thinking blocks
+    // in subsequent requests. Wrapping unsigned thinking as <thinking>...
+    // </thinking> text triggers a 400 from proxies that validate thinking
+    // mode. Safer to drop entirely; messages_to_api filters empty text.
     let block = ContentBlock::Thinking {
         thinking: "hmm".into(),
         signature: None,
     };
     let api = block_to_api(&block, true);
     assert!(
-        matches!(api, ApiContentBlock::Text { text, .. } if text == "<thinking>hmm</thinking>"),
-        "unsigned thinking block must be converted to text"
+        matches!(&api, ApiContentBlock::Text { text, .. } if text.is_empty()),
+        "unsigned thinking block must be dropped (empty text), got: {api:?}"
     );
 }
 

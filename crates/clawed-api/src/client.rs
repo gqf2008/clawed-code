@@ -193,6 +193,23 @@ impl ApiClient {
         )
     }
 
+    /// Dump the request body (pretty-printed JSON) to a side file so a 400
+    /// response can be inspected offline. Returns the path on success.
+    ///
+    /// The file lives at `~/.claude/last-400-request.json` (or, if HOME is
+    /// unavailable, in the system temp dir). Failures are swallowed because
+    /// this is a best-effort diagnostic.
+    fn dump_request_body(request: &MessagesRequest) -> Option<std::path::PathBuf> {
+        let body = serde_json::to_string_pretty(request).ok()?;
+        let dir = dirs::home_dir()
+            .map(|h| h.join(".claude"))
+            .unwrap_or_else(std::env::temp_dir);
+        std::fs::create_dir_all(&dir).ok()?;
+        let path = dir.join("last-400-request.json");
+        std::fs::write(&path, body).ok()?;
+        Some(path)
+    }
+
     /// Quick connectivity check: send a minimal request to verify the API key
     /// and network. Returns `Ok(model_name)` on success, or an error describing
     /// the problem (auth, network, etc.).
@@ -263,17 +280,23 @@ impl ApiClient {
                         let rate_limit_info = Self::extract_rate_limit(response.headers());
                         let body = response.text().await.unwrap_or_default();
                         let request_shape = Self::request_shape(&request);
-                        if status == 400 {
+                        let dump_note = if status == 400 {
+                            let dump = Self::dump_request_body(&request);
                             tracing::error!(
                                 status,
                                 body = %body,
                                 request_shape = %request_shape,
+                                dump = ?dump,
                                 "API 400"
                             );
-                        }
+                            dump.map(|p| format!("; request_body_dump={}", p.display()))
+                                .unwrap_or_default()
+                        } else {
+                            String::new()
+                        };
                         return Err(ApiHttpError {
                             status,
-                            body: format!("{body}; request_shape: {request_shape}"),
+                            body: format!("{body}; request_shape: {request_shape}{dump_note}"),
                             retry_after,
                             rate_limit_info,
                         });
@@ -375,17 +398,23 @@ impl ApiClient {
                         let rate_limit_info = Self::extract_rate_limit(response.headers());
                         let body = response.text().await.unwrap_or_default();
                         let request_shape = Self::request_shape(&req);
-                        if status == 400 {
+                        let dump_note = if status == 400 {
+                            let dump = Self::dump_request_body(&req);
                             tracing::error!(
                                 status,
                                 body = %body,
                                 request_shape = %request_shape,
+                                dump = ?dump,
                                 "Streaming API 400"
                             );
-                        }
+                            dump.map(|p| format!("; request_body_dump={}", p.display()))
+                                .unwrap_or_default()
+                        } else {
+                            String::new()
+                        };
                         return Err(ApiHttpError {
                             status,
-                            body: format!("{body}; request_shape: {request_shape}"),
+                            body: format!("{body}; request_shape: {request_shape}{dump_note}"),
                             retry_after,
                             rate_limit_info,
                         });

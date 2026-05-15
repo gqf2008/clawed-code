@@ -294,6 +294,7 @@ pub(super) fn block_to_api(block: &ContentBlock, has_thinking: bool) -> ApiConte
             thinking,
             signature,
         } => {
+            let _ = thinking;
             if has_thinking && signature.as_ref().is_some_and(|sig| !sig.is_empty()) {
                 // API requires thinking blocks to be passed back faithfully
                 // when extended thinking is enabled. Preserve both content
@@ -303,8 +304,14 @@ pub(super) fn block_to_api(block: &ContentBlock, has_thinking: bool) -> ApiConte
                     signature: signature.clone(),
                 }
             } else {
+                // Drop thinking entirely when we can't faithfully pass it back.
+                // Wrapping in <thinking>...</thinking> text causes some
+                // Anthropic-compatible proxies (DashScope/LiteLLM) to 400 with
+                // "content[].thinking in the thinking mode must be passed
+                // back to the API". Empty text is filtered out by
+                // `messages_to_api`.
                 ApiContentBlock::Text {
-                    text: format!("<thinking>{}</thinking>", thinking),
+                    text: String::new(),
                     cache_control: None,
                 }
             }
@@ -313,8 +320,10 @@ pub(super) fn block_to_api(block: &ContentBlock, has_thinking: bool) -> ApiConte
             if has_thinking {
                 ApiContentBlock::RedactedThinking { data: data.clone() }
             } else {
+                // Same rationale as above: do not surface redacted thinking
+                // as text on outbound requests.
                 ApiContentBlock::Text {
-                    text: "[redacted_thinking]".into(),
+                    text: String::new(),
                     cache_control: None,
                 }
             }

@@ -502,6 +502,29 @@ mod tests {
     }
 
     #[test]
+    fn stream_event_redacted_thinking_start() {
+        let json = json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {
+                "type": "redacted_thinking",
+                "data": "encrypted-thinking-data"
+            }
+        });
+        let event: StreamEvent = serde_json::from_value(json).unwrap();
+        match event {
+            StreamEvent::ContentBlockStart {
+                index,
+                content_block: ResponseContentBlock::RedactedThinking { data },
+            } => {
+                assert_eq!(index, 0);
+                assert_eq!(data, "encrypted-thinking-data");
+            }
+            _ => panic!("Expected redacted thinking content block start"),
+        }
+    }
+
+    #[test]
     fn stream_event_ping() {
         let json = json!({"type": "ping"});
         let event: StreamEvent = serde_json::from_value(json).unwrap();

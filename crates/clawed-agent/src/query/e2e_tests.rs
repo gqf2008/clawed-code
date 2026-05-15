@@ -1128,6 +1128,10 @@ async fn e2e_tool_loop_round_trips_redacted_thinking_in_next_request() {
             ResponseContentBlock::RedactedThinking {
                 data: "encrypted-redacted-thinking".into(),
             },
+            ResponseContentBlock::Thinking {
+                thinking: "visible-after-redacted".into(),
+                signature: Some("sig_after_redacted".into()),
+            },
             ResponseContentBlock::ToolUse {
                 id: "tool_1".into(),
                 name: "echo".into(),
@@ -1216,7 +1220,17 @@ async fn e2e_tool_loop_round_trips_redacted_thinking_in_next_request() {
             assistant.content.first(),
             Some(ApiContentBlock::RedactedThinking { data }) if data == "encrypted-redacted-thinking"
         ),
-        "second request must pass back redacted_thinking block unchanged: {assistant:?}"
+        "second request must preserve redacted_thinking as the first returned block: {assistant:?}"
+    );
+    assert!(
+        matches!(
+            assistant.content.get(1),
+            Some(ApiContentBlock::Thinking {
+                thinking,
+                signature: Some(signature),
+            }) if thinking == "visible-after-redacted" && signature == "sig_after_redacted"
+        ),
+        "second request must preserve thinking after redacted_thinking without reordering: {assistant:?}"
     );
     assert!(
         assistant
@@ -1224,6 +1238,229 @@ async fn e2e_tool_loop_round_trips_redacted_thinking_in_next_request() {
             .iter()
             .any(|block| matches!(block, ApiContentBlock::ToolUse { id, .. } if id == "tool_1")),
         "second request must preserve the tool_use after redacted_thinking: {assistant:?}"
+    );
+}
+
+#[tokio::test]
+async fn e2e_tool_loop_round_trips_thinking_with_multiple_tool_uses() {
+    // Real-world scenario: model returns thinking + 4 parallel tool_uses
+    // (matches the "审查核心架构模块" reproduction that 400'd repeatedly).
+    // The second outgoing request must preserve the thinking block AND all
+    // four tool_use blocks in original order, before the tool_result user
+    // message — otherwise Anthropic returns "content[].thinking ... must be
+    // passed back".
+    struct ReadTool;
+    #[async_trait::async_trait]
+    impl clawed_core::tool::Tool for ReadTool {
+        fn name(&self) -> &str {
+            "read_file"
+        }
+
+        fn description(&self) -> &str {
+            "Read a file"
+        }
+
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+            })
+        }
+
+        async fn call(
+            &self,
+            input: serde_json::Value,
+            _ctx: &clawed_core::tool::ToolContext,
+        ) -> anyhow::Result<clawed_core::tool::ToolResult> {
+            Ok(clawed_core::tool::ToolResult::text(format!(
+                "content of {}",
+                input["path"].as_str().unwrap_or("?")
+            )))
+        }
+
+        fn is_read_only(&self) -> bool {
+            true
+        }
+
+        fn category(&self) -> clawed_core::tool::ToolCategory {
+            clawed_core::tool::ToolCategory::Session
+        }
+    }
+
+    let first_response = MessagesResponse {
+        id: "msg_thinking_multi_tool".into(),
+        response_type: "message".into(),
+        role: "assistant".into(),
+        content: vec![
+            ResponseContentBlock::Thinking {
+                thinking: "I'll read all four files in parallel.".into(),
+                signature: Some("sig_multi_tool".into()),
+            },
+            ResponseContentBlock::ToolUse {
+                id: "tool_a".into(),
+                name: "read_file".into(),
+                input: serde_json::json!({"path": "a.rs"}),
+            },
+            ResponseContentBlock::ToolUse {
+                id: "tool_b".into(),
+                name: "read_file".into(),
+                input: serde_json::json!({"path": "b.rs"}),
+            },
+            ResponseContentBlock::ToolUse {
+                id: "tool_c".into(),
+                name: "read_file".into(),
+                input: serde_json::json!({"path": "c.rs"}),
+            },
+            ResponseContentBlock::ToolUse {
+                id: "tool_d".into(),
+                name: "read_file".into(),
+                input: serde_json::json!({"path": "d.rs"}),
+            },
+        ],
+        model: "claude-opus-4-7".into(),
+        stop_reason: Some("tool_use".into()),
+        usage: ApiUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        },
+    };
+    let final_response = mock_text_response("Reviewed.");
+
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let backend = CapturingStreamBackend::new(Arc::clone(&requests))
+        .with_stream_events(make_stream_events(first_response))
+        .with_stream_events(make_stream_events(final_response));
+    let client =
+        Arc::new(clawed_api::client::ApiClient::new("test-key").with_backend(Box::new(backend)));
+
+    let mut registry = clawed_tools::ToolRegistry::new();
+    registry.register(ReadTool);
+    let registry = Arc::new(registry);
+    let perm = Arc::new(crate::permissions::PermissionChecker::new(
+        clawed_core::permissions::PermissionMode::BypassAll,
+        vec![],
+    ));
+    let executor = Arc::new(crate::executor::ToolExecutor::new(registry, perm));
+    let state = crate::state::new_shared_state();
+    let tool_context = clawed_core::tool::ToolContext {
+        cwd: std::env::temp_dir(),
+        abort_signal: clawed_core::tool::AbortSignal::new(),
+        permission_mode: clawed_core::permissions::PermissionMode::BypassAll,
+        messages: vec![],
+        output_line: None,
+    };
+    let hooks = Arc::new(crate::hooks::HookRegistry::new());
+    let config = QueryConfig {
+        max_turns: 5,
+        thinking: Some(clawed_api::types::ThinkingConfig {
+            thinking_type: "enabled".into(),
+            budget_tokens: Some(10_000),
+        }),
+        ..QueryConfig::default()
+    };
+
+    let events = collect_events(
+        client,
+        executor,
+        state,
+        tool_context,
+        config,
+        user_msg("审查核心架构模块"),
+        hooks,
+    )
+    .await;
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::TurnComplete {
+                stop_reason: StopReason::EndTurn
+            }
+        )),
+        "expected tool loop to complete, got: {events:?}"
+    );
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(
+        requests.len(),
+        2,
+        "expected initial and tool-result requests"
+    );
+    let second_request = &requests[1];
+
+    // Locate the assistant message in the second request.
+    let assistant = second_request
+        .messages
+        .iter()
+        .find(|msg| msg.role == "assistant")
+        .expect("second request must include previous assistant tool-use message");
+
+    // First block MUST be the thinking block (matching original stream order).
+    assert!(
+        matches!(
+            assistant.content.first(),
+            Some(ApiContentBlock::Thinking {
+                thinking,
+                signature: Some(signature),
+            }) if thinking == "I'll read all four files in parallel." && signature == "sig_multi_tool"
+        ),
+        "first block must be thinking with original text+signature: {assistant:?}"
+    );
+
+    // All four tool_uses must follow, in order, before any tool_result.
+    let tool_ids: Vec<&str> = assistant
+        .content
+        .iter()
+        .filter_map(|b| match b {
+            ApiContentBlock::ToolUse { id, .. } => Some(id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        tool_ids,
+        vec!["tool_a", "tool_b", "tool_c", "tool_d"],
+        "all four tool_uses must be preserved in original order: {assistant:?}"
+    );
+
+    // The tool_results must live in the following user message (not mixed in).
+    let user_with_results = second_request
+        .messages
+        .iter()
+        .rev()
+        .find(|msg| msg.role == "user")
+        .expect("expected a user message carrying tool_result blocks");
+    let result_ids: Vec<&str> = user_with_results
+        .content
+        .iter()
+        .filter_map(|b| match b {
+            ApiContentBlock::ToolResult { tool_use_id, .. } => Some(tool_use_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        result_ids,
+        vec!["tool_a", "tool_b", "tool_c", "tool_d"],
+        "all four tool_results must follow in original order: {user_with_results:?}"
+    );
+
+    // Assistant must NOT carry any tool_result, and user must NOT carry any
+    // thinking — that mixing is the most common cause of the 400.
+    assert!(
+        !assistant
+            .content
+            .iter()
+            .any(|b| matches!(b, ApiContentBlock::ToolResult { .. })),
+        "assistant message must not contain tool_result blocks: {assistant:?}"
+    );
+    assert!(
+        !user_with_results
+            .content
+            .iter()
+            .any(|b| matches!(b, ApiContentBlock::Thinking { .. })),
+        "user message must not contain thinking blocks: {user_with_results:?}"
     );
 }
 
