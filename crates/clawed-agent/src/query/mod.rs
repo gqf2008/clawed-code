@@ -233,6 +233,9 @@ pub fn query_stream_with_injection(
         // Track last emitted warning level to avoid spamming the same warning every turn
         let mut last_warning_level: Option<crate::compact::TokenWarningState> = None;
 
+    // Track thinking signature from last response for chain continuation
+    let mut last_thinking_signature: Option<String> = None;
+
         // Look up model capabilities for smart max_tokens escalation
         let model_name = { state.read().await.model.clone() };
         let caps = clawed_core::model::model_capabilities(&model_name);
@@ -287,7 +290,10 @@ pub fn query_stream_with_injection(
                 stop_sequences: None,
                 temperature: config.temperature,
                 top_p: None,
-                thinking: config.thinking.clone(),
+                thinking: config.thinking.clone().map(|mut t| {
+                    if let Some(ref sig) = last_thinking_signature { t.signature = Some(sig.clone()); }
+                    t
+                }),
                 tool_choice: None,
             };
 
@@ -571,6 +577,8 @@ pub fn query_stream_with_injection(
             // Preserve thinking block so the API doesn't reject the next request.
             // Must come before text/tool_use in the content array per API schema.
             if !thinking_text.is_empty() {
+                last_thinking_signature = thinking_signature.clone()
+                    .filter(|s| !s.is_empty());
                 assistant_blocks.insert(0, ContentBlock::Thinking {
                     thinking: std::mem::take(&mut thinking_text),
                     signature: thinking_signature.take(),

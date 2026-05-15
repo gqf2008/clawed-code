@@ -698,6 +698,7 @@ async fn e2e_thinking_blocks_emitted() {
         thinking: Some(clawed_api::types::ThinkingConfig {
             thinking_type: "enabled".into(),
             budget_tokens: Some(10000),
+            signature: None,
         }),
         ..QueryConfig::default()
     };

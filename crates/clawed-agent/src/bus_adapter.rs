@@ -687,6 +687,7 @@ impl AgentCoreAdapter {
                 let cfg = clawed_api::types::ThinkingConfig {
                     thinking_type: "enabled".into(),
                     budget_tokens: Some(10_000),
+                                                signature: None,
                 };
                 (Some(cfg), true, Some(10_000))
             }
@@ -695,12 +696,14 @@ impl AgentCoreAdapter {
                     let cfg = clawed_api::types::ThinkingConfig {
                         thinking_type: "enabled".into(),
                         budget_tokens: Some(budget),
+                                                        signature: None,
                     };
                     (Some(cfg), true, Some(budget))
                 } else {
                     let cfg = clawed_api::types::ThinkingConfig {
                         thinking_type: "enabled".into(),
                         budget_tokens: Some(10_000),
+                                                signature: None,
                     };
                     (Some(cfg), true, Some(10_000))
                 }

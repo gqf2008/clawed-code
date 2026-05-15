@@ -53,6 +53,7 @@ fn test_builder_thinking_config() {
         QueryEngineBuilder::new("key", "/tmp").thinking(Some(clawed_api::types::ThinkingConfig {
             thinking_type: "enabled".into(),
             budget_tokens: Some(4096),
+            signature: None,
         }));
 
     let tc = b.thinking.as_ref().unwrap();
@@ -303,6 +304,7 @@ fn test_builder_thinking_config_propagated() {
         .load_memory(false)
         .thinking(Some(clawed_api::types::ThinkingConfig {
             thinking_type: "enabled".into(),
+            signature: None,
             budget_tokens: Some(20_000),
         }))
         .build();
