@@ -432,7 +432,10 @@ pub fn query_stream_with_injection(
                                     .filter(|s| !s.is_empty());
                             }
                         },
-                        StreamEvent::ContentBlockStop { .. } => {
+                        StreamEvent::ContentBlockStop { ref signature, .. } => {
+                            if let Some(ref sig) = signature {
+                                if !sig.is_empty() { thinking_signature = Some(sig.clone()); }
+                            }
                             if !current_tool_id.is_empty() {
                                 let input: serde_json::Value = match serde_json::from_str(&current_tool_input) {
                                     Ok(v) => v,

@@ -412,7 +412,7 @@ fn finish_reason_emits_block_stop_and_message_stop() {
     assert_eq!(events.len(), 3);
     assert!(matches!(
         events[0],
-        StreamEvent::ContentBlockStop { index: 0 }
+        StreamEvent::ContentBlockStop { signature: None, index: 0 }
     ));
     match &events[1] {
         StreamEvent::MessageDelta { delta, .. } => {
@@ -486,7 +486,7 @@ fn tool_call_stream_emits_start_delta_stop() {
     assert_eq!(events2.len(), 3);
     assert!(matches!(
         events2[0],
-        StreamEvent::ContentBlockStop { index: 0 }
+        StreamEvent::ContentBlockStop { signature: None, index: 0 }
     ));
     match &events2[1] {
         StreamEvent::MessageDelta { delta, .. } => {
@@ -524,7 +524,7 @@ fn finalize_synthesizes_closing_events() {
     assert_eq!(closing.len(), 3);
     assert!(matches!(
         closing[0],
-        StreamEvent::ContentBlockStop { index: 0 }
+        StreamEvent::ContentBlockStop { signature: None, index: 0 }
     ));
     assert!(matches!(closing[1], StreamEvent::MessageDelta { .. }));
     assert!(matches!(closing[2], StreamEvent::MessageStop));
@@ -601,11 +601,11 @@ fn mixed_text_and_tools_stream() {
     assert_eq!(events.len(), 4);
     assert!(matches!(
         events[0],
-        StreamEvent::ContentBlockStop { index: 0 }
+        StreamEvent::ContentBlockStop { signature: None, index: 0 }
     ));
     assert!(matches!(
         events[1],
-        StreamEvent::ContentBlockStop { index: 1 }
+        StreamEvent::ContentBlockStop { signature: None, index: 1 }
     ));
     assert!(matches!(events[2], StreamEvent::MessageDelta { .. }));
     assert!(matches!(events[3], StreamEvent::MessageStop));
@@ -669,7 +669,7 @@ fn reasoning_content_emits_thinking_events() {
     assert_eq!(events.len(), 3);
     assert!(matches!(
         events[0],
-        StreamEvent::ContentBlockStop { index: 0 }
+        StreamEvent::ContentBlockStop { signature: None, index: 0 }
     ));
     assert!(matches!(
         events[1],
@@ -703,7 +703,7 @@ fn reasoning_content_emits_thinking_events() {
     assert_eq!(events.len(), 3);
     assert!(matches!(
         events[0],
-        StreamEvent::ContentBlockStop { index: 1 }
+        StreamEvent::ContentBlockStop { signature: None, index: 1 }
     ));
     assert!(matches!(events[1], StreamEvent::MessageDelta { .. }));
     assert!(matches!(events[2], StreamEvent::MessageStop));

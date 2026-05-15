@@ -81,6 +81,7 @@ fn make_stream_events(
                     delta: clawed_api::types::DeltaBlock::TextDelta { text: text.clone() },
                 }));
                 events.push(Ok(clawed_api::types::StreamEvent::ContentBlockStop {
+                    signature: None,
                     index: idx,
                 }));
             }
@@ -100,6 +101,7 @@ fn make_stream_events(
                     },
                 }));
                 events.push(Ok(clawed_api::types::StreamEvent::ContentBlockStop {
+                    signature: None,
                     index: idx,
                 }));
             }
@@ -118,6 +120,7 @@ fn make_stream_events(
                     },
                 }));
                 events.push(Ok(clawed_api::types::StreamEvent::ContentBlockStop {
+                    signature: None,
                     index: idx,
                 }));
             }

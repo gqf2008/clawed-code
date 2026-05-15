@@ -259,7 +259,13 @@ pub enum StreamEvent {
     #[serde(rename = "content_block_delta")]
     ContentBlockDelta { index: usize, delta: DeltaBlock },
     #[serde(rename = "content_block_stop")]
-    ContentBlockStop { index: usize },
+    ContentBlockStop {
+        index: usize,
+        /// Signature for the thinking block when thinking is enabled.
+        /// Only present for thinking-type content blocks.
+        #[serde(default)]
+        signature: Option<String>,
+    },
     #[serde(rename = "message_delta")]
     MessageDelta {
         delta: MessageDeltaData,

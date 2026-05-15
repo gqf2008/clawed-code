@@ -495,7 +495,7 @@ fn synthesize_stream_events(response: MessagesResponse) -> Vec<StreamEvent> {
                     index: idx,
                     delta: DeltaBlock::TextDelta { text: text.clone() },
                 });
-                events.push(StreamEvent::ContentBlockStop { index: idx });
+                events.push(StreamEvent::ContentBlockStop { signature: None, index: idx });
             }
             ResponseContentBlock::ToolUse { id, name, input } => {
                 events.push(StreamEvent::ContentBlockStart {
@@ -513,7 +513,7 @@ fn synthesize_stream_events(response: MessagesResponse) -> Vec<StreamEvent> {
                         partial_json: json_str,
                     },
                 });
-                events.push(StreamEvent::ContentBlockStop { index: idx });
+                events.push(StreamEvent::ContentBlockStop { signature: None, index: idx });
             }
             ResponseContentBlock::Thinking {
                 thinking,
@@ -544,7 +544,7 @@ fn synthesize_stream_events(response: MessagesResponse) -> Vec<StreamEvent> {
                         });
                     }
                 }
-                events.push(StreamEvent::ContentBlockStop { index: idx });
+                events.push(StreamEvent::ContentBlockStop { signature: None, index: idx });
             }
         }
     }
@@ -699,7 +699,7 @@ mod tests {
         }
         assert!(matches!(
             &events[3],
-            StreamEvent::ContentBlockStop { index: 0 }
+            StreamEvent::ContentBlockStop { signature: None, index: 0 }
         ));
         match &events[4] {
             StreamEvent::MessageDelta { delta, .. } => {
