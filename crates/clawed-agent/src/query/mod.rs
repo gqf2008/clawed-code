@@ -286,6 +286,7 @@ pub fn query_stream_with_injection(
                                 ApiContentBlock::Thinking { .. } => "Thinking",
                                 ApiContentBlock::ToolUse { .. } => "ToolUse",
                                 ApiContentBlock::ToolResult { .. } => "ToolResult",
+                                _ => "Other",
                             }).collect::<Vec<_>>());
                         }
                     }
