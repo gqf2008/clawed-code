@@ -142,6 +142,11 @@ pub fn convert_anthropic_message(msg: &ApiMessage, out: &mut Vec<ChatMessage>) {
                         text: format!("<thinking>{thinking}</thinking>"),
                     });
                 }
+                ApiContentBlock::RedactedThinking { .. } => {
+                    text_parts.push(ChatContentPart::Text {
+                        text: "[redacted_thinking]".into(),
+                    });
+                }
             }
         }
 

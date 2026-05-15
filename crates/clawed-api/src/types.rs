@@ -161,6 +161,8 @@ pub enum ApiContentBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         signature: Option<String>,
     },
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking { data: String },
 }
 
 /// Content within a tool result — currently only text is supported.
@@ -223,6 +225,8 @@ pub enum ResponseContentBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         signature: Option<String>,
     },
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking { data: String },
 }
 
 /// Token usage counts returned by the API.

@@ -168,6 +168,9 @@ impl ApiClient {
                                     "present"
                                 })
                             ),
+                            ApiContentBlock::RedactedThinking { data } => {
+                                format!("redacted_thinking:data_len={}", data.len())
+                            }
                         };
                         format!("{block_idx}:{kind}")
                     })
@@ -622,6 +625,16 @@ fn synthesize_stream_events(response: MessagesResponse) -> Vec<StreamEvent> {
                         });
                     }
                 }
+                events.push(StreamEvent::ContentBlockStop {
+                    signature: None,
+                    index: idx,
+                });
+            }
+            ResponseContentBlock::RedactedThinking { data } => {
+                events.push(StreamEvent::ContentBlockStart {
+                    index: idx,
+                    content_block: ResponseContentBlock::RedactedThinking { data: data.clone() },
+                });
                 events.push(StreamEvent::ContentBlockStop {
                     signature: None,
                     index: idx,

@@ -408,6 +408,11 @@ pub fn query_stream_with_injection(
                                     }
                                     yield AgentEvent::ThinkingDelta(thinking.clone());
                                 }
+                                ResponseContentBlock::RedactedThinking { data } => {
+                                    assistant_blocks.push(ContentBlock::RedactedThinking {
+                                        data: data.clone(),
+                                    });
+                                }
                             }
                         }
                         StreamEvent::ContentBlockDelta { delta, .. } => match delta {
@@ -587,7 +592,7 @@ pub fn query_stream_with_injection(
             if !assistant_text.is_empty() && !assistant_blocks.iter().any(|b| matches!(b, ContentBlock::Text { .. })) {
                 let has_thinking = assistant_blocks
                     .first()
-                    .is_some_and(|b| matches!(b, ContentBlock::Thinking { .. }));
+                    .is_some_and(|b| matches!(b, ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. }));
                 let pos = usize::from(has_thinking);
                 assistant_blocks.insert(pos, ContentBlock::Text {
                     text: assistant_text.clone(),

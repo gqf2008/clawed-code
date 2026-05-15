@@ -290,6 +290,12 @@ fn messages_for_compact(messages: &[Message]) -> Vec<ApiMessage> {
                                 cache_control: None,
                             })
                         }
+                        clawed_core::message::ContentBlock::RedactedThinking { .. } => {
+                            Some(ApiContentBlock::Text {
+                                text: "[redacted_thinking]".into(),
+                                cache_control: None,
+                            })
+                        }
                         _ => None,
                     })
                     .collect();

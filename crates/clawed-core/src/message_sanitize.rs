@@ -134,10 +134,12 @@ fn filter_orphaned_thinking(messages: Vec<Message>, report: &mut SanitizeReport)
                 if a.content.is_empty() {
                     return true; // handled by Pass 3
                 }
-                let has_non_thinking = a
-                    .content
-                    .iter()
-                    .any(|b| !matches!(b, ContentBlock::Thinking { .. }));
+                let has_non_thinking = a.content.iter().any(|b| {
+                    !matches!(
+                        b,
+                        ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. }
+                    )
+                });
                 if !has_non_thinking {
                     report.orphaned_thinking_removed += 1;
                     return false;
@@ -426,8 +428,12 @@ fn merge_adjacent_users(messages: Vec<Message>, report: &mut SanitizeReport) -> 
 pub fn strip_thinking_blocks(messages: &mut [Message]) {
     for msg in messages.iter_mut() {
         if let Message::Assistant(a) = msg {
-            a.content
-                .retain(|b| !matches!(b, ContentBlock::Thinking { .. }));
+            a.content.retain(|b| {
+                !matches!(
+                    b,
+                    ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. }
+                )
+            });
         }
     }
 }

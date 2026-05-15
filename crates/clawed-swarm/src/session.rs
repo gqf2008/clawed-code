@@ -394,6 +394,10 @@ fn core_block_to_api(block: &ContentBlock) -> ApiContentBlock {
             text: format!("<thinking>{thinking}</thinking>"),
             cache_control: None,
         },
+        ContentBlock::RedactedThinking { .. } => ApiContentBlock::Text {
+            text: "[redacted_thinking]".into(),
+            cache_control: None,
+        },
     }
 }
 

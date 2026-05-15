@@ -309,6 +309,16 @@ pub(super) fn block_to_api(block: &ContentBlock, has_thinking: bool) -> ApiConte
                 }
             }
         }
+        ContentBlock::RedactedThinking { data } => {
+            if has_thinking {
+                ApiContentBlock::RedactedThinking { data: data.clone() }
+            } else {
+                ApiContentBlock::Text {
+                    text: "[redacted_thinking]".into(),
+                    cache_control: None,
+                }
+            }
+        }
         ContentBlock::Image { source } => ApiContentBlock::Image {
             source: clawed_api::types::ImageSource {
                 source_type: "base64".into(),

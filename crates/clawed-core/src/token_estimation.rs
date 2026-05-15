@@ -96,6 +96,7 @@ fn estimate_block_tokens(block: &ContentBlock) -> u64 {
             tokens
         }
         ContentBlock::Thinking { thinking, .. } => estimate_text_tokens(thinking),
+        ContentBlock::RedactedThinking { data } => estimate_text_tokens(data),
         ContentBlock::Image { .. } => IMAGE_FIXED_TOKENS,
     }
 }
