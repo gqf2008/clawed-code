@@ -1044,6 +1044,7 @@ impl App {
     fn invalidate_visible_lines(&mut self) {
         self.cached_visible_lines_dirty = true;
         self.cached_visible_line_count = None;
+        self.message_line_counts_width = 0; // force height cache rebuild
         self.request_redraw();
     }
 
@@ -1196,38 +1197,29 @@ impl App {
 
     /// Build the height cache by wrapping all cached lines and measuring.
     fn build_height_cache(&mut self, width: u16) {
-        if self.cached_visible_lines.is_empty() || self.messages.is_empty() {
+        if self.messages.is_empty() {
             return;
         }
-        // Measure exact total visual lines from the full pre-wrapped buffer.
-        let lines = self.cached_visible_lines.clone();
-        let total = Paragraph::new(lines).wrap(Wrap { trim: false }).line_count(width);
 
-        if total == 0 { return; }
+        self.message_line_counts.resize(self.messages.len(), None);
 
-        // Ensure vec length matches messages.
-        if self.message_line_counts.len() != self.messages.len() {
-            self.message_line_counts.resize(self.messages.len(), None);
-        }
+        for i in 0..self.messages.len() {
+            let msg_lines = self.visible_message_lines_at(i);
+            let base_h = if msg_lines.is_empty() {
+                1u16
+            } else {
+                Paragraph::new(msg_lines).wrap(Wrap { trim: false }).line_count(width).max(1) as u16
+            };
 
-        let total = total as u64;
+            let sep = if i > 0
+                && Self::needs_separator(&self.messages[i - 1].content, &self.messages[i].content)
+            {
+                1u16
+            } else {
+                0u16
+            };
 
-        // Use existing cached heights as raw distribution basis.
-        // When all entries are None (first frame), use uniform 1.
-        let raw_sum: u64 = self.message_line_counts.iter()
-            .map(|c| u64::from(c.unwrap_or(1))).sum::<u64>().max(1);
-
-        let mut distributed = 0u64;
-        for entry in self.message_line_counts.iter_mut() {
-            let raw = u64::from(entry.unwrap_or(1));
-            let share = (raw * total / raw_sum).max(1) as u16;
-            *entry = Some(share);
-            distributed += u64::from(share);
-        }
-
-        // Apply rounding remainder to last message
-        if let Some(last) = self.message_line_counts.last_mut() {
-            *last = Some(last.unwrap_or(1) + total.saturating_sub(distributed) as u16);
+            self.message_line_counts[i] = Some(base_h + sep);
         }
     }
 
@@ -2826,14 +2818,9 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
     let msg_viewport_height = msg_area.height as usize;
 
     // --- Virtual scroll: compute visible message range from height cache ---
-    // Invalidate height cache on resize
-    if app.message_line_counts_width != 0 && app.message_line_counts_width != area.width {
-        app.message_line_counts.iter_mut().for_each(|c| *c = None);
-        app.message_line_counts_width = 0;
-    }
-
-    // Build the full height cache via Paragraph::line_count if not yet measured
-    if app.message_line_counts_width == 0 {
+    if app.message_line_counts_width != area.width
+        || app.message_line_counts.iter().any(|c| c.is_none())
+    {
         app.build_height_cache(area.width);
         app.message_line_counts_width = area.width;
     }
@@ -2917,7 +2904,13 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Render partial first message if line_offset > 0
     if line_offset > 0 && idx < app.messages.len() {
-        let part_lines: Vec<Line<'static>> = app.visible_message_lines_at(idx);
+        let mut part_lines: Vec<Line<'static>> = Vec::new();
+        if idx > 0
+            && App::needs_separator(&app.messages[idx - 1].content, &app.messages[idx].content)
+        {
+            part_lines.push(Line::from(""));
+        }
+        part_lines.extend(app.visible_message_lines_at(idx));
         let skip = line_offset as usize;
         if skip < part_lines.len() {
             lines.extend(part_lines.iter().skip(skip).cloned());
