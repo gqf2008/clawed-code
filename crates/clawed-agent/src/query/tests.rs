@@ -388,3 +388,156 @@ fn test_query_config_defaults() {
     assert!(cfg.system_prompt.is_empty());
     assert_eq!(cfg.token_budget, 0);
 }
+
+// ── Thinking preservation tests ─────────────────────────────────────────
+
+#[test]
+fn thinking_block_preserved_when_has_thinking_true() {
+    // When has_thinking=true, ContentBlock::Thinking must become
+    // ApiContentBlock::Thinking with both thinking text AND signature.
+    let block = ContentBlock::Thinking {
+        thinking: "let me think...".into(),
+        signature: Some("sig_abc123".into()),
+    };
+    let api = block_to_api(&block, true);
+    match api {
+        ApiContentBlock::Thinking { thinking, signature } => {
+            assert_eq!(thinking, "let me think...");
+            assert_eq!(signature, Some("sig_abc123".into()),
+                "signature must be preserved for API chain continuation");
+        }
+        ApiContentBlock::Text { text, .. } => {
+            panic!("thinking block was converted to text: '{}' — API will reject", text);
+        }
+        other => panic!("unexpected block type: {:?}", other),
+    }
+}
+
+#[test]
+fn thinking_block_without_signature_still_kept() {
+    // Even without a signature, the thinking block type must be preserved.
+    // Converting it to empty text causes the API to reject the request.
+    let block = ContentBlock::Thinking {
+        thinking: "hmm".into(),
+        signature: None,
+    };
+    let api = block_to_api(&block, true);
+    assert!(
+        matches!(api, ApiContentBlock::Thinking { .. }),
+        "thinking block without signature must remain as Thinking type"
+    );
+}
+
+#[test]
+fn compact_preserves_thinking_blocks() {
+    // Compact must NOT convert thinking blocks to <thinking> XML text.
+    // They must remain as ApiContentBlock::Thinking with signature intact.
+    let messages = vec![Message::Assistant(AssistantMessage {
+        uuid: "a1".into(),
+        content: vec![
+            ContentBlock::Thinking {
+                thinking: "reason...".into(),
+                signature: Some("sig_xyz".into()),
+            },
+            ContentBlock::Text {
+                text: "answer".into(),
+            },
+        ],
+        stop_reason: Some(StopReason::EndTurn),
+        usage: None,
+    })];
+    let api = messages_to_api(&messages, false, true);
+    assert_eq!(api.len(), 1);
+    // First content block must be Thinking
+    assert!(
+        matches!(&api[0].content[0], ApiContentBlock::Thinking { signature, .. } if *signature == Some("sig_xyz".into())),
+        "compact must preserve thinking block with signature"
+    );
+}
+
+#[test]
+fn pre_thinking_assistant_gets_text_wrapped() {
+    // When has_thinking=true but an assistant message has no Thinking block
+    // (e.g. from before /think was toggled on), its text must be wrapped
+    // in a synthetic Thinking block to satisfy the API.
+    let messages = vec![Message::Assistant(AssistantMessage {
+        uuid: "a_old".into(),
+        content: vec![ContentBlock::Text {
+            text: "old response before thinking was enabled".into(),
+        }],
+        stop_reason: Some(StopReason::EndTurn),
+        usage: None,
+    })];
+    let api = messages_to_api(&messages, false, true);
+    assert_eq!(api.len(), 1);
+    let has_thinking = api[0].content.iter().any(|b| matches!(b, ApiContentBlock::Thinking { .. }));
+    assert!(has_thinking, "pre-thinking assistant message must have a thinking block injected");
+}
+
+#[test]
+fn content_block_stop_signature_parsed() {
+    // ContentBlockStop must parse the optional signature field.
+    // Without this, we lose the final thinking signature from the API.
+    let json = serde_json::json!({
+        "type": "content_block_stop",
+        "index": 0,
+        "signature": "final_sig_123"
+    });
+    let event: StreamEvent = serde_json::from_value(json).unwrap();
+    match event {
+        StreamEvent::ContentBlockStop { signature, index } => {
+            assert_eq!(index, 0);
+            assert_eq!(signature, Some("final_sig_123".into()),
+                "ContentBlockStop must capture the thinking signature");
+        }
+        other => panic!("expected ContentBlockStop, got: {:?}", other),
+    }
+}
+
+#[test]
+fn content_block_stop_without_signature_still_works() {
+    // ContentBlockStop for non-thinking blocks won't have a signature.
+    let json = serde_json::json!({
+        "type": "content_block_stop",
+        "index": 1
+    });
+    let event: StreamEvent = serde_json::from_value(json).unwrap();
+    match event {
+        StreamEvent::ContentBlockStop { signature, index } => {
+            assert_eq!(index, 1);
+            assert_eq!(signature, None,
+                "non-thinking ContentBlockStop should have None signature");
+        }
+        other => panic!("expected ContentBlockStop"),
+    }
+}
+
+#[test]
+fn thinking_config_includes_signature_for_chain() {
+    // When a signature is present (from previous turn), it must be
+    // included in the thinking config for the next request.
+    use clawed_api::types::ThinkingConfig;
+    let cfg = ThinkingConfig {
+        thinking_type: "enabled".into(),
+        budget_tokens: Some(10000),
+        signature: Some("prev_sig".into()),
+    };
+    let json = serde_json::to_value(&cfg).unwrap();
+    assert_eq!(json["type"], "enabled");
+    assert_eq!(json["signature"], "prev_sig",
+        "signature must be serialized in the thinking config");
+}
+
+#[test]
+fn thinking_config_without_signature_omits_field() {
+    // First turn: no signature yet, field should be absent from JSON.
+    use clawed_api::types::ThinkingConfig;
+    let cfg = ThinkingConfig {
+        thinking_type: "enabled".into(),
+        budget_tokens: Some(10000),
+        signature: None,
+    };
+    let json = serde_json::to_value(&cfg).unwrap();
+    assert!(json.get("signature").is_none(),
+        "first-turn thinking config must omit signature field");
+}
