@@ -578,11 +578,12 @@ pub fn query_stream_with_injection(
                 continue;
             }
 
-            // Preserve thinking block so the API doesn't reject the next request.
+            // Preserve thinking blocks so the API doesn't reject the next request.
+            // With omitted-thinking mode, the thinking text can be empty and the
+            // signature is the only required payload to round-trip.
             // Must come before text/tool_use in the content array per API schema.
-            if !thinking_text.is_empty() {
-                last_thinking_signature = thinking_signature.clone()
-                    .filter(|s| !s.is_empty());
+            if !thinking_text.is_empty() || thinking_signature.is_some() {
+                last_thinking_signature = thinking_signature.clone().filter(|s| !s.is_empty());
                 assistant_blocks.insert(0, ContentBlock::Thinking {
                     thinking: std::mem::take(&mut thinking_text),
                     signature: thinking_signature.take(),

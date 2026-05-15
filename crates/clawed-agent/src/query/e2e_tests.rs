@@ -3,10 +3,16 @@
 //! These tests verify the full agent loop: API call → stream processing →
 //! tool execution → multi-turn → error recovery → budget enforcement.
 
-use std::sync::Arc;
+use std::{
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
+use clawed_api::provider::ApiBackend;
 use clawed_api::provider::MockBackend;
-use clawed_api::types::{ApiUsage, MessagesResponse, ResponseContentBlock};
+use clawed_api::types::{
+    ApiContentBlock, ApiUsage, MessagesRequest, MessagesResponse, ResponseContentBlock, StreamEvent,
+};
 use clawed_core::message::{ContentBlock, Message, StopReason, UserMessage};
 
 use super::{query_stream, AgentEvent, QueryConfig};
@@ -114,7 +120,10 @@ fn make_stream_events(
                     index: idx,
                 }));
             }
-            ResponseContentBlock::Thinking { thinking, .. } => {
+            ResponseContentBlock::Thinking {
+                thinking,
+                signature,
+            } => {
                 events.push(Ok(clawed_api::types::StreamEvent::ContentBlockStart {
                     index: idx,
                     content_block: ResponseContentBlock::Thinking {
@@ -128,6 +137,14 @@ fn make_stream_events(
                         thinking: thinking.clone(),
                     },
                 }));
+                if let Some(signature) = signature {
+                    events.push(Ok(clawed_api::types::StreamEvent::ContentBlockDelta {
+                        index: idx,
+                        delta: clawed_api::types::DeltaBlock::SignatureDelta {
+                            signature: signature.clone(),
+                        },
+                    }));
+                }
                 events.push(Ok(clawed_api::types::StreamEvent::ContentBlockStop {
                     signature: None,
                     index: idx,
@@ -146,6 +163,69 @@ fn make_stream_events(
     }));
 
     events
+}
+
+struct CapturingStreamBackend {
+    stream_events: Mutex<Vec<anyhow::Result<Vec<anyhow::Result<StreamEvent>>>>>,
+    requests: Arc<Mutex<Vec<MessagesRequest>>>,
+}
+
+impl CapturingStreamBackend {
+    fn new(requests: Arc<Mutex<Vec<MessagesRequest>>>) -> Self {
+        Self {
+            stream_events: Mutex::new(Vec::new()),
+            requests,
+        }
+    }
+
+    fn with_stream_events(self, events: Vec<anyhow::Result<StreamEvent>>) -> Self {
+        self.stream_events.lock().unwrap().push(Ok(events));
+        self
+    }
+}
+
+#[async_trait::async_trait]
+impl ApiBackend for CapturingStreamBackend {
+    fn provider_name(&self) -> &str {
+        "capturing"
+    }
+
+    fn base_url(&self) -> &str {
+        "http://capturing.test"
+    }
+
+    fn headers(&self) -> anyhow::Result<reqwest::header::HeaderMap> {
+        Ok(reqwest::header::HeaderMap::new())
+    }
+
+    fn map_model_id(&self, canonical: &str) -> String {
+        canonical.to_string()
+    }
+
+    async fn send_messages(
+        &self,
+        _http: &reqwest::Client,
+        _request: &MessagesRequest,
+    ) -> anyhow::Result<MessagesResponse> {
+        anyhow::bail!("CapturingStreamBackend only supports streaming")
+    }
+
+    async fn send_messages_stream(
+        &self,
+        _http: &reqwest::Client,
+        request: &MessagesRequest,
+    ) -> anyhow::Result<Pin<Box<dyn futures::Stream<Item = anyhow::Result<StreamEvent>> + Send>>>
+    {
+        self.requests.lock().unwrap().push(request.clone());
+        let mut queues = self.stream_events.lock().unwrap();
+        if queues.is_empty() {
+            anyhow::bail!("CapturingStreamBackend: no stream events queued");
+        }
+        match queues.remove(0) {
+            Ok(events) => Ok(Box::pin(futures::stream::iter(events))),
+            Err(e) => Err(e),
+        }
+    }
 }
 
 /// Common test setup: client + executor + state + tool_context + hooks
@@ -744,6 +824,240 @@ async fn e2e_thinking_blocks_emitted() {
     assert!(has_thinking, "expected thinking delta, got: {:?}", events);
     assert!(has_text, "expected text delta");
     assert!(has_complete, "expected TurnComplete");
+}
+
+#[tokio::test]
+async fn e2e_omitted_thinking_signature_is_preserved() {
+    let response = MessagesResponse {
+        id: "msg_think_omitted".into(),
+        response_type: "message".into(),
+        role: "assistant".into(),
+        content: vec![
+            ResponseContentBlock::Thinking {
+                signature: Some("sig_omitted".into()),
+                thinking: String::new(),
+            },
+            ResponseContentBlock::Text {
+                text: "Done.".into(),
+            },
+        ],
+        model: "claude-opus-4-7".into(),
+        stop_reason: Some("end_turn".into()),
+        usage: ApiUsage {
+            input_tokens: 100,
+            output_tokens: 200,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        },
+    };
+
+    let mock = MockBackend::new().with_stream_events(make_stream_events(response));
+    let (client, executor, state, tool_context, hooks) = test_setup(mock);
+
+    let config = QueryConfig {
+        thinking: Some(clawed_api::types::ThinkingConfig {
+            thinking_type: "adaptive".into(),
+            budget_tokens: None,
+            signature: None,
+        }),
+        ..QueryConfig::default()
+    };
+
+    let events = collect_events(
+        client,
+        executor,
+        state.clone(),
+        tool_context,
+        config,
+        user_msg("Review the architecture"),
+        hooks,
+    )
+    .await;
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::TurnComplete {
+                stop_reason: StopReason::EndTurn
+            }
+        )),
+        "expected TurnComplete"
+    );
+
+    let state = state.read().await;
+    let assistant = state
+        .messages
+        .iter()
+        .find_map(|m| {
+            if let Message::Assistant(a) = m {
+                Some(a)
+            } else {
+                None
+            }
+        })
+        .expect("assistant message should be persisted");
+
+    assert!(matches!(
+        assistant.content.first(),
+        Some(ContentBlock::Thinking {
+            thinking,
+            signature: Some(signature),
+        }) if thinking.is_empty() && signature == "sig_omitted"
+    ));
+}
+
+#[tokio::test]
+async fn e2e_tool_loop_round_trips_omitted_thinking_signature_in_next_request() {
+    struct EchoTool;
+    #[async_trait::async_trait]
+    impl clawed_core::tool::Tool for EchoTool {
+        fn name(&self) -> &str {
+            "echo"
+        }
+
+        fn description(&self) -> &str {
+            "Echo the input text"
+        }
+
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": { "text": { "type": "string" } },
+                "required": ["text"]
+            })
+        }
+
+        async fn call(
+            &self,
+            input: serde_json::Value,
+            _ctx: &clawed_core::tool::ToolContext,
+        ) -> anyhow::Result<clawed_core::tool::ToolResult> {
+            Ok(clawed_core::tool::ToolResult::text(format!(
+                "Echo: {}",
+                input["text"].as_str().unwrap_or("")
+            )))
+        }
+
+        fn is_read_only(&self) -> bool {
+            true
+        }
+
+        fn category(&self) -> clawed_core::tool::ToolCategory {
+            clawed_core::tool::ToolCategory::Session
+        }
+    }
+
+    let first_response = MessagesResponse {
+        id: "msg_tool_with_omitted_thinking".into(),
+        response_type: "message".into(),
+        role: "assistant".into(),
+        content: vec![
+            ResponseContentBlock::Thinking {
+                signature: Some("sig_tool_loop".into()),
+                thinking: String::new(),
+            },
+            ResponseContentBlock::ToolUse {
+                id: "tool_1".into(),
+                name: "echo".into(),
+                input: serde_json::json!({"text": "hello"}),
+            },
+        ],
+        model: "claude-opus-4-7".into(),
+        stop_reason: Some("tool_use".into()),
+        usage: ApiUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        },
+    };
+    let final_response = mock_text_response("Done.");
+
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let backend = CapturingStreamBackend::new(Arc::clone(&requests))
+        .with_stream_events(make_stream_events(first_response))
+        .with_stream_events(make_stream_events(final_response));
+    let client =
+        Arc::new(clawed_api::client::ApiClient::new("test-key").with_backend(Box::new(backend)));
+
+    let mut registry = clawed_tools::ToolRegistry::new();
+    registry.register(EchoTool);
+    let registry = Arc::new(registry);
+    let perm = Arc::new(crate::permissions::PermissionChecker::new(
+        clawed_core::permissions::PermissionMode::BypassAll,
+        vec![],
+    ));
+    let executor = Arc::new(crate::executor::ToolExecutor::new(registry, perm));
+    let state = crate::state::new_shared_state();
+    let tool_context = clawed_core::tool::ToolContext {
+        cwd: std::env::temp_dir(),
+        abort_signal: clawed_core::tool::AbortSignal::new(),
+        permission_mode: clawed_core::permissions::PermissionMode::BypassAll,
+        messages: vec![],
+        output_line: None,
+    };
+    let hooks = Arc::new(crate::hooks::HookRegistry::new());
+    let config = QueryConfig {
+        max_turns: 5,
+        thinking: Some(clawed_api::types::ThinkingConfig {
+            thinking_type: "adaptive".into(),
+            budget_tokens: None,
+            signature: None,
+        }),
+        ..QueryConfig::default()
+    };
+
+    let events = collect_events(
+        client,
+        executor,
+        state,
+        tool_context,
+        config,
+        user_msg("Echo hello"),
+        hooks,
+    )
+    .await;
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::TurnComplete {
+                stop_reason: StopReason::EndTurn
+            }
+        )),
+        "expected tool loop to complete, got: {events:?}"
+    );
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(
+        requests.len(),
+        2,
+        "expected initial and tool-result requests"
+    );
+    let second_request = &requests[1];
+    let assistant = second_request
+        .messages
+        .iter()
+        .find(|msg| msg.role == "assistant")
+        .expect("second request must include previous assistant tool-use message");
+
+    assert!(
+        matches!(
+            assistant.content.first(),
+            Some(ApiContentBlock::Thinking {
+                thinking,
+                signature: Some(signature),
+            }) if thinking.is_empty() && signature == "sig_tool_loop"
+        ),
+        "second request must pass back omitted thinking block unchanged: {assistant:?}"
+    );
+    assert!(
+        assistant
+            .content
+            .iter()
+            .any(|block| matches!(block, ApiContentBlock::ToolUse { id, .. } if id == "tool_1")),
+        "second request must preserve the tool_use after thinking: {assistant:?}"
+    );
 }
 
 // ── P25 E2E Tests ────────────────────────────────────────────────────────────
