@@ -167,7 +167,7 @@ impl ApiBackend for FirstPartyBackend {
             let status = response.status().as_u16();
             let body = response.text().await.unwrap_or_default();
             if status == 400 {
-                if let Ok(req_json) = serde_json::to_string_pretty(req) {
+                if let Ok(req_json) = serde_json::to_string_pretty(&req) {
                     error!(status = 400, body = %body, request = %req_json, "API 400 error");
                 } else {
                     error!(status = 400, body = %body, "API 400 error");
