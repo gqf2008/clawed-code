@@ -202,6 +202,7 @@ pub fn query_stream_with_injection(
     inject_rx: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
 ) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>> {
     let stream = async_stream::stream! {
+        let mut config = config;
         let mut current_system_prompt = config.system_prompt.clone();
         let mut messages = initial_messages;
         let mut tool_context = tool_context;
@@ -227,6 +228,7 @@ pub fn query_stream_with_injection(
         const MAX_TOKENS_RECOVERY_LIMIT: u32 = 3;
         let mut effective_max_tokens = config.max_tokens;
         let mut has_attempted_reactive_compact = false;
+        let mut has_attempted_enable_thinking = false;
         let mut consecutive_errors: u32 = 0;
         let mut retry_delay_ms: u64 = 1_000; // exponential backoff: 1s → 2s → 4s → … → 32s max
 
@@ -299,7 +301,13 @@ pub fn query_stream_with_injection(
                     consecutive_errors += 1;
                     state.write().await.record_error(error_category(&err_str));
 
-                    match classify_api_error(&err_str, has_attempted_reactive_compact, consecutive_errors, retry_delay_ms) {
+                    match classify_api_error(
+                        &err_str,
+                        has_attempted_reactive_compact,
+                        has_attempted_enable_thinking,
+                        consecutive_errors,
+                        retry_delay_ms,
+                    ) {
                         ApiErrorAction::ReactiveCompact => {
                             has_attempted_reactive_compact = true;
                             yield AgentEvent::TextDelta(
@@ -327,6 +335,23 @@ pub fn query_stream_with_injection(
                                 ));
                             }
                             // Always retry after reactive compact attempt
+                            continue;
+                        }
+                        ApiErrorAction::EnableThinkingAndRetry => {
+                            has_attempted_enable_thinking = true;
+                            // Some Anthropic-compatible proxies require the
+                            // request to carry a top-level `thinking` field
+                            // once the model has produced any thinking. Enable
+                            // it for the rest of the session.
+                            config.thinking = Some(clawed_api::types::ThinkingConfig {
+                                thinking_type: "enabled".to_string(),
+                                budget_tokens: Some(10_000),
+                            });
+                            yield AgentEvent::TextDelta(
+                                "\n\x1b[33m[Proxy requires thinking mode — enabling and retrying]\x1b[0m\n".to_string()
+                            );
+                            // Reset consecutive_errors so this doesn't count against retry budget.
+                            consecutive_errors = consecutive_errors.saturating_sub(1);
                             continue;
                         }
                         ApiErrorAction::Retry { wait_ms } => {

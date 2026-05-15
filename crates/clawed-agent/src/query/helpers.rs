@@ -67,6 +67,12 @@ pub(super) enum ApiErrorAction {
     ReactiveCompact,
     /// Retry after a delay (transient error).
     Retry { wait_ms: u64 },
+    /// Some Anthropic-compatible proxies (DashScope/LiteLLM etc.) enable
+    /// extended thinking server-side and then return 400 if the request's
+    /// top-level `thinking` field is missing — with the misleading message
+    /// "content[].thinking in the thinking mode must be passed back to the
+    /// API". Enable thinking for the session and retry once.
+    EnableThinkingAndRetry,
     /// Fatal error — give up.
     Fatal,
 }
@@ -75,6 +81,7 @@ pub(super) enum ApiErrorAction {
 pub(super) fn classify_api_error(
     err_str: &str,
     has_attempted_reactive_compact: bool,
+    has_attempted_enable_thinking: bool,
     consecutive_errors: u32,
     retry_delay_ms: u64,
 ) -> ApiErrorAction {
@@ -83,6 +90,14 @@ pub(super) fn classify_api_error(
         || err_str.contains("too many tokens");
     if is_prompt_too_long && !has_attempted_reactive_compact {
         return ApiErrorAction::ReactiveCompact;
+    }
+
+    // Proxy quirk: thinking-mode-mismatch 400. Detect both the canonical
+    // upstream message and the slight variations we've observed in the wild.
+    let is_thinking_mode_required = err_str.contains("thinking in the thinking mode")
+        || err_str.contains("thinking mode must be passed back");
+    if is_thinking_mode_required && !has_attempted_enable_thinking {
+        return ApiErrorAction::EnableThinkingAndRetry;
     }
 
     let is_retryable = err_str.contains("rate")
@@ -377,25 +392,41 @@ mod tests {
 
     #[test]
     fn classify_rate_limit_retries() {
-        let action = classify_api_error("rate limit exceeded", false, 1, 1000);
+        let action = classify_api_error("rate limit exceeded", false, false, 1, 1000);
         assert!(matches!(action, ApiErrorAction::Retry { .. }));
     }
 
     #[test]
     fn classify_prompt_too_long_compacts() {
-        let action = classify_api_error("prompt is too long", false, 1, 1000);
+        let action = classify_api_error("prompt is too long", false, false, 1, 1000);
         assert!(matches!(action, ApiErrorAction::ReactiveCompact));
     }
 
     #[test]
     fn classify_prompt_too_long_after_compact_is_fatal() {
-        let action = classify_api_error("prompt is too long", true, 1, 1000);
+        let action = classify_api_error("prompt is too long", true, false, 1, 1000);
         assert!(matches!(action, ApiErrorAction::Fatal));
     }
 
     #[test]
     fn classify_too_many_errors_is_fatal() {
-        let action = classify_api_error("rate limit", false, 6, 1000);
+        let action = classify_api_error("rate limit", false, false, 6, 1000);
+        assert!(matches!(action, ApiErrorAction::Fatal));
+    }
+
+    #[test]
+    fn classify_thinking_mode_required_enables_thinking() {
+        let err =
+            "API error (400): The content[].thinking in the thinking mode must be passed back";
+        let action = classify_api_error(err, false, false, 1, 1000);
+        assert!(matches!(action, ApiErrorAction::EnableThinkingAndRetry));
+    }
+
+    #[test]
+    fn classify_thinking_mode_already_attempted_is_fatal() {
+        let err =
+            "API error (400): The content[].thinking in the thinking mode must be passed back";
+        let action = classify_api_error(err, false, true, 1, 1000);
         assert!(matches!(action, ApiErrorAction::Fatal));
     }
 

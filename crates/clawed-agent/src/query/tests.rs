@@ -10,67 +10,67 @@ use super::*;
 
 #[test]
 fn test_classify_prompt_too_long_triggers_compact() {
-    let action = classify_api_error("prompt is too long", false, 0, 1000);
+    let action = classify_api_error("prompt is too long", false, false, 0, 1000);
     assert!(matches!(action, ApiErrorAction::ReactiveCompact));
 }
 
 #[test]
 fn test_classify_prompt_too_long_already_compacted() {
-    let action = classify_api_error("prompt is too long", true, 0, 1000);
+    let action = classify_api_error("prompt is too long", true, false, 0, 1000);
     assert!(matches!(action, ApiErrorAction::Fatal));
 }
 
 #[test]
 fn test_classify_413_status() {
-    let action = classify_api_error("HTTP 413 payload too large", false, 0, 1000);
+    let action = classify_api_error("HTTP 413 payload too large", false, false, 0, 1000);
     assert!(matches!(action, ApiErrorAction::ReactiveCompact));
 }
 
 #[test]
 fn test_classify_too_many_tokens() {
-    let action = classify_api_error("too many tokens in request", false, 0, 1000);
+    let action = classify_api_error("too many tokens in request", false, false, 0, 1000);
     assert!(matches!(action, ApiErrorAction::ReactiveCompact));
 }
 
 #[test]
 fn test_classify_rate_limit_retryable() {
-    let action = classify_api_error("rate limit exceeded", false, 1, 2000);
+    let action = classify_api_error("rate limit exceeded", false, false, 1, 2000);
     assert!(matches!(action, ApiErrorAction::Retry { wait_ms: 2000 }));
 }
 
 #[test]
 fn test_classify_529_overloaded() {
-    let action = classify_api_error("529 service overloaded", false, 2, 5000);
+    let action = classify_api_error("529 service overloaded", false, false, 2, 5000);
     assert!(matches!(action, ApiErrorAction::Retry { wait_ms: 5000 }));
 }
 
 #[test]
 fn test_classify_500_server_error() {
-    let action = classify_api_error("500 internal server error", false, 0, 1000);
+    let action = classify_api_error("500 internal server error", false, false, 0, 1000);
     assert!(matches!(action, ApiErrorAction::Retry { wait_ms: 1000 }));
 }
 
 #[test]
 fn test_classify_503_service_unavailable() {
-    let action = classify_api_error("503 service unavailable", false, 3, 3000);
+    let action = classify_api_error("503 service unavailable", false, false, 3, 3000);
     assert!(matches!(action, ApiErrorAction::Retry { wait_ms: 3000 }));
 }
 
 #[test]
 fn test_classify_retry_after_header() {
-    let action = classify_api_error("rate limited retry-after: 10", false, 1, 2000);
+    let action = classify_api_error("rate limited retry-after: 10", false, false, 1, 2000);
     assert!(matches!(action, ApiErrorAction::Retry { wait_ms: 10000 }));
 }
 
 #[test]
 fn test_classify_max_consecutive_errors_exceeded() {
-    let action = classify_api_error("rate limit", false, 6, 1000);
+    let action = classify_api_error("rate limit", false, false, 6, 1000);
     assert!(matches!(action, ApiErrorAction::Fatal));
 }
 
 #[test]
 fn test_classify_unknown_error_fatal() {
-    let action = classify_api_error("something unexpected happened", false, 0, 1000);
+    let action = classify_api_error("something unexpected happened", false, false, 0, 1000);
     assert!(matches!(action, ApiErrorAction::Fatal));
 }
 
