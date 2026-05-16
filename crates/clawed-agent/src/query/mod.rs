@@ -311,9 +311,7 @@ pub fn query_stream_with_injection(
                     None
                 },
                 metadata: Some(serde_json::json!({
-                    "user_id": serde_json::json!({
-                        "session_id": config.session_id,
-                    }).to_string(),
+                    "user_id": format!("clawed_session_{}", config.session_id),
                 })),
                 tool_choice: None,
             };
