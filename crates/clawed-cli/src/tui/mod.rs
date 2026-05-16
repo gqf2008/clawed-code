@@ -949,7 +949,7 @@ impl App {
         if self.panel_width > 0 {
             self.panel_width
         } else {
-            40
+            (self.term_width / 6).max(30).min(60)
         }
     }
 
