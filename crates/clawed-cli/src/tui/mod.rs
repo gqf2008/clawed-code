@@ -932,6 +932,14 @@ impl App {
         self.needs_redraw = true;
     }
 
+    fn effective_panel_width(&self) -> u16 {
+        if self.panel_width > 0 {
+            self.panel_width
+        } else {
+            (self.term_width / 6).max(30).min(60)
+        }
+    }
+
     fn set_footer_picker(&mut self, picker: FooterPicker) {
         self.footer_picker = Some(picker);
         self.request_redraw();
@@ -2752,11 +2760,7 @@ fn render(frame: &mut Frame, app: &mut App) {
     let status_bar_area = top_chunks[2];
 
     // ── Content area: horizontal split ──
-    let effective_width = if app.panel_width > 0 {
-        app.panel_width
-    } else {
-        (area.width / 6).max(30).min(60)
-    };
+    let effective_width = app.effective_panel_width();
     let task_panel_width = app.task_list.panel_width(effective_width);
     let h_chunks = Layout::horizontal([
         Constraint::Min(1),                   // left column
@@ -2926,63 +2930,48 @@ fn render_stats_panel(frame: &mut Frame, area: Rect, app: &App) {
 
     let short_model = shorten_model_name(&app.model);
     if !short_model.is_empty() {
-        lines.push(Line::from(vec![
-            Span::styled(short_model, bold),
-        ]));
+        lines.push(Line::from(vec![Span::styled(short_model, bold)]));
     }
 
-    if app.total_turns > 0 {
-        lines.push(Line::from(vec![
-            Span::styled(format!("turn {}", app.total_turns), dim),
-        ]));
-    }
+    lines.push(Line::from(vec![Span::styled(
+        format!("turn {}", app.total_turns),
+        dim,
+    )]));
 
-    if app.context_tokens > 0 || app.total_output_tokens > 0 {
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!(
-                    "{}\u{2191} {}\u{2193}",
-                    fmt_tokens(app.context_tokens),
-                    fmt_tokens(app.total_output_tokens),
-                ),
-                dim,
-            ),
-        ]));
-    }
+    lines.push(Line::from(vec![Span::styled(
+        format!(
+            "{}\u{2191} {}\u{2193}",
+            fmt_tokens(app.context_tokens),
+            fmt_tokens(app.total_output_tokens),
+        ),
+        dim,
+    )]));
 
     if app.total_cost_usd > 0.0 {
-        lines.push(Line::from(vec![
-            Span::styled(clawed_core::model::format_cost(app.total_cost_usd), dim),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            clawed_core::model::format_cost(app.total_cost_usd),
+            dim,
+        )]));
     }
 
-    if app.status.context_pct > 0.0 {
-        let ctx_pct = app.status.context_pct;
-        let ctx_style = if ctx_pct >= 80.0 {
-            danger
-        } else if ctx_pct >= 60.0 {
-            warn
-        } else {
-            dim
-        };
-        // Header: percentage + max context
-        let max_str = if app.max_context_tokens > 0 {
-            format!(" · max {}", fmt_tokens(app.max_context_tokens))
-        } else {
-            String::new()
-        };
-        lines.push(Line::from(vec![
-            Span::styled(format!("{:.0}% ctx", ctx_pct), ctx_style),
-            Span::styled(max_str, dim),
-        ]));
-        // Visual bar: 10-segment colored bar
-        let bar = build_context_bar_10(ctx_pct, ctx_style);
-        lines.push(bar);
-    }
-
-    if lines.is_empty() {
-        lines.push(Line::styled("  (no data)", dim));
-    }
+    let ctx_pct = app.status.context_pct;
+    let ctx_style = if ctx_pct >= 80.0 {
+        danger
+    } else if ctx_pct >= 60.0 {
+        warn
+    } else {
+        dim
+    };
+    let max_str = if app.max_context_tokens > 0 {
+        format!(" · max {}", fmt_tokens(app.max_context_tokens))
+    } else {
+        String::new()
+    };
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:.0}% ctx", ctx_pct), ctx_style),
+        Span::styled(max_str, dim),
+    ]));
+    lines.push(build_context_bar_5(ctx_pct, ctx_style));
 
     let block = Block::bordered()
         .border_set(ratatui::symbols::border::PLAIN)
@@ -3737,7 +3726,7 @@ fn context_bar(pct: f64) -> &'static str {
 }
 
 /// Build a 5-segment colored context bar as a Line for the stats panel.
-fn build_context_bar_10(pct: f64, style: Style) -> Line<'static> {
+fn build_context_bar_5(pct: f64, style: Style) -> Line<'static> {
     const SEGMENTS: usize = 5;
     let filled = ((pct / 100.0 * SEGMENTS as f64).round() as usize).clamp(0, SEGMENTS);
     let empty = SEGMENTS - filled;
@@ -4529,11 +4518,7 @@ pub async fn run_tui(
                         }
                         (KeyCode::Left, KeyModifiers::ALT) => {
                             if app.task_list.is_expanded() {
-                                let base = if app.panel_width > 0 {
-                                    app.panel_width
-                                } else {
-                                    (app.term_width / 6).max(30).min(60)
-                                };
+                                let base = app.effective_panel_width();
                                 app.panel_width = (base + 5).min(60);
                                 app.request_redraw();
                             }
@@ -4541,11 +4526,7 @@ pub async fn run_tui(
                         }
                         (KeyCode::Right, KeyModifiers::ALT) => {
                             if app.task_list.is_expanded() {
-                                let base = if app.panel_width > 0 {
-                                    app.panel_width
-                                } else {
-                                    (app.term_width / 6).max(30).min(60)
-                                };
+                                let base = app.effective_panel_width();
                                 app.panel_width = base.saturating_sub(5).max(30);
                                 app.request_redraw();
                             }
