@@ -334,6 +334,9 @@ pub(crate) fn likely_markdown(text: &str) -> bool {
         if at_line_start {
             match b {
                 b'#' | b'-' | b'*' | b'+' | b'>' | b'|' => {
+                    if b == b'|' && i + 2 < bytes.len() && (bytes[i + 1] == b' ' || bytes[i + 1] == b'-' || bytes[i + 1] == b':'){
+                        return true;
+                    }
                     if i + 1 < bytes.len() && bytes[i + 1] == b' ' {
                         return true;
                     }

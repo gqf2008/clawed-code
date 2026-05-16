@@ -832,6 +832,10 @@ struct App {
     /// X coordinate of the right panel boundary from last render. Used to
     /// determine which panel the mouse wheel scrolls. 0 when panel hidden.
     last_right_panel_x: u16,
+    /// Y ranges of the right sub-panels from last render.
+    right_tasks_rect: Rect,
+    right_tools_rect: Rect,
+    right_stats_rect: Rect,
     /// Scrollbar interaction state.
     scrollbar_rect: Rect,
     scrollbar_total: usize,
@@ -929,6 +933,9 @@ impl App {
             tool_monitor_cache: tool_monitor::ToolMonitorCache::new(),
             max_context_tokens: 0,
             last_right_panel_x: 0,
+            right_tasks_rect: Rect::default(),
+            right_tools_rect: Rect::default(),
+            right_stats_rect: Rect::default(),
             scrollbar_rect: Rect::default(),
             scrollbar_total: 0,
             scrollbar_viewport: 0,
@@ -2821,6 +2828,10 @@ fn render(frame: &mut Frame, app: &mut App) {
 
         tasklist::render(frame, r_chunks[0], &mut app.task_list);
 
+        app.right_tasks_rect = r_chunks[0];
+        app.right_tools_rect = r_chunks[1];
+        app.right_stats_rect = r_chunks[2];
+
         let active_names: Vec<String> = app.status.active_tools.keys().cloned().collect();
         let is_focused = app.right_panel_focus == Some(RightPanelFocus::ToolHistory);
         tool_monitor::render(
@@ -3014,11 +3025,11 @@ fn scroll_to_row(app: &mut App, row: u16) {
     app.request_redraw();
 }
 
-/// Scroll the focused sub-panel of the right panel. Positive delta scrolls
+/// Scroll a specific sub-panel of the right panel. Positive delta scrolls
 /// up (back in history), negative scrolls down.
-fn scroll_right_panel(app: &mut App, delta: i32) {
+fn scroll_right_sub(app: &mut App, sub: RightPanelFocus, delta: i32) {
     let step = delta.unsigned_abs() as usize;
-    match app.right_panel_focus.unwrap_or(RightPanelFocus::Tasks) {
+    match sub {
         RightPanelFocus::Tasks => {
             if delta > 0 {
                 app.task_list.scroll_offset = app.task_list.scroll_offset.saturating_add(step);
@@ -4955,8 +4966,24 @@ pub async fn run_tui(
                     }
                 }
                 Event::Mouse(mouse) => {
+                    // Determine which panel the mouse is over.
                     let in_right_panel = app.last_right_panel_x > 0
                         && mouse.column >= app.last_right_panel_x;
+                    let right_sub = if in_right_panel {
+                        if mouse.row >= app.right_tasks_rect.y
+                            && mouse.row < app.right_tasks_rect.y + app.right_tasks_rect.height
+                        {
+                            Some(RightPanelFocus::Tasks)
+                        } else if mouse.row >= app.right_tools_rect.y
+                            && mouse.row < app.right_tools_rect.y + app.right_tools_rect.height
+                        {
+                            Some(RightPanelFocus::ToolHistory)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
                     let on_scrollbar = app.scrollbar_rect.width > 0
                         && mouse.column >= app.scrollbar_rect.x
                         && mouse.column < app.scrollbar_rect.x + app.scrollbar_rect.width
@@ -4964,8 +4991,8 @@ pub async fn run_tui(
                         && mouse.row < app.scrollbar_rect.y + app.scrollbar_rect.height;
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
-                            if in_right_panel {
-                                scroll_right_panel(&mut app, 3);
+                            if let Some(sub) = right_sub {
+                                scroll_right_sub(&mut app, sub, 3);
                             } else {
                                 app.scroll_offset = app.scroll_offset.saturating_add(3);
                                 app.auto_scroll = false;
@@ -4973,8 +5000,8 @@ pub async fn run_tui(
                             app.request_redraw();
                         }
                         MouseEventKind::ScrollDown => {
-                            if in_right_panel {
-                                scroll_right_panel(&mut app, -3i32);
+                            if let Some(sub) = right_sub {
+                                scroll_right_sub(&mut app, sub, -3i32);
                             } else if app.scroll_offset > 0 {
                                 app.scroll_offset = app.scroll_offset.saturating_sub(3);
                                 if app.scroll_offset == 0 {
@@ -6832,12 +6859,12 @@ mod tests {
         app.tool_history_scroll = 3;
         app.right_panel_focus = Some(RightPanelFocus::Tasks);
 
-        scroll_right_panel(&mut app, 3); // scroll up in Tasks
+        scroll_right_sub(&mut app, RightPanelFocus::Tasks, 3); // scroll up in Tasks
         assert_eq!(app.task_list.scroll_offset, 8);
         assert_eq!(app.tool_history_scroll, 3); // unchanged
 
         app.right_panel_focus = Some(RightPanelFocus::ToolHistory);
-        scroll_right_panel(&mut app, -3i32); // scroll down in ToolHistory
+        scroll_right_sub(&mut app, RightPanelFocus::ToolHistory, -3i32); // scroll down in ToolHistory
         assert_eq!(app.tool_history_scroll, 0);
         assert_eq!(app.task_list.scroll_offset, 8); // unchanged
     }
@@ -6848,7 +6875,7 @@ mod tests {
         app.task_list.scroll_offset = 0;
         app.right_panel_focus = None;
 
-        scroll_right_panel(&mut app, 3);
+        scroll_right_sub(&mut app, RightPanelFocus::Tasks, 3);
         assert_eq!(app.task_list.scroll_offset, 3);
     }
 

@@ -1,38 +1,62 @@
 [
   {
-    "id": "1",
-    "content": "审查 clawed-core 模块（基础类型、Tool trait、权限、配置）",
-    "status": "completed",
-    "priority": "high"
-  },
-  {
-    "id": "2",
-    "content": "审查 clawed-agent 模块（引擎编排、会话、hooks、compaction）",
-    "status": "completed",
-    "priority": "high"
-  },
-  {
-    "id": "3",
-    "content": "审查 clawed-bus 模块（事件总线模式）",
-    "status": "completed",
-    "priority": "high"
-  },
-  {
-    "id": "4",
-    "content": "审查 clawed-api 模块（HTTP 客户端、SSE 流）",
-    "status": "completed",
-    "priority": "high"
-  },
-  {
-    "id": "5",
-    "content": "审查 clawed-tools 模块（工具系统）",
-    "status": "completed",
-    "priority": "high"
-  },
-  {
-    "id": "6",
-    "content": "总结发现的问题和建议",
+    "id": "explore-structure",
+    "content": "Explore project structure and key files",
     "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "id": "review-core",
+    "content": "Review clawed-core crate (base types, Tool trait, config)",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "id": "review-agent",
+    "content": "Review clawed-agent crate (engine, sessions, hooks)",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "id": "review-tools",
+    "content": "Review clawed-tools crate (40+ tool implementations)",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "id": "review-cli",
+    "content": "Review clawed-cli crate (TUI, themes)",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "id": "review-api",
+    "content": "Review clawed-api crate (HTTP client, SSE)",
+    "status": "pending",
     "priority": "medium"
+  },
+  {
+    "id": "review-mcp",
+    "content": "Review clawed-mcp crate (MCP server registry)",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "id": "review-other",
+    "content": "Review remaining crates (swarm, bus, rpc, bridge, computer-use)",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "id": "review-security",
+    "content": "Security review (command injection, input validation, etc.)",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "id": "generate-report",
+    "content": "Generate comprehensive review report",
+    "status": "pending",
+    "priority": "high"
   }
 ]
