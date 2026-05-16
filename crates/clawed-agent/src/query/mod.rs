@@ -297,7 +297,10 @@ pub fn query_stream_with_injection(
                 stop_sequences: None,
                 temperature: config.temperature,
                 top_p: None,
-                thinking: config.thinking.clone(),
+                thinking: Some(clawed_api::types::ThinkingConfig {
+                    thinking_type: "enabled".into(),
+                    budget_tokens: Some(10_000),
+                }),
                 tool_choice: None,
             };
 
