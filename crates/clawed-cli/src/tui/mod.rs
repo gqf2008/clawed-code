@@ -48,8 +48,8 @@ use clawed_bus::events::{
     UserQuestionResponse,
 };
 use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
-    MouseEventKind,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste,
+    EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind,
 };
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -663,6 +663,7 @@ fn build_resume_picker() -> Option<FooterPicker> {
 fn restore_terminal_after_tui() {
     clawed_tools::diff_ui::set_tui_mode(false);
     let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
+    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     let _ = crossterm::execute!(
         std::io::stdout(),
         crossterm::event::PopKeyboardEnhancementFlags
@@ -4202,9 +4203,11 @@ pub async fn run_tui(
     // Enable bracketed paste so multi-line paste arrives as Event::Paste(String)
     // instead of individual Key events (which would submit on Enter).
     crossterm::execute!(std::io::stdout(), EnableBracketedPaste)?;
-    // NOTE: Mouse capture is intentionally disabled to allow free text selection
-    // with the mouse, matching official Claude Code behavior. Wheel scrolling is
-    // handled via keyboard (Shift+↑/Shift+↓, PgUp/PgDown).
+    // Enable mouse capture so the terminal does not handle scroll natively.
+    // Without alternate screen, the terminal's viewport would scroll on mouse
+    // wheel, conflicting with the TUI's internal scroll. Text selection remains
+    // available via Shift+click.
+    crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
 
     // Always push keyboard enhancement flags so modifiers for keys like Enter
     // are disambiguated (matching codex-rs behavior). Terminals that don't support
