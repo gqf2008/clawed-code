@@ -527,7 +527,7 @@ fn content_block_stop_without_signature_still_works() {
                 "non-thinking ContentBlockStop should have None signature"
             );
         }
-        other => panic!("expected ContentBlockStop"),
+        _other => panic!("expected ContentBlockStop"),
     }
 }
 
