@@ -349,6 +349,8 @@ struct LayoutSignature {
     input_rows: u16,
     queue_rows: u16,
     task_plan_rows: u16,
+    /// Width of the right-side task panel (0 when hidden).
+    task_panel_width: u16,
     has_tip: bool,
     /// Terminal width — changes cause word-wrap differences that can leave
     /// ghost cells if not cleared.
@@ -1333,6 +1335,7 @@ impl App {
             input_rows: self.input.visible_rows(),
             queue_rows,
             task_plan_rows: self.task_plan.render_height(),
+            task_panel_width: self.task_list.panel_width(),
             has_tip: self.status.has_tip(),
             term_width: self.term_width,
             term_height: self.term_height,
@@ -2725,6 +2728,8 @@ fn render(frame: &mut Frame, app: &mut App) {
 
     // ── Render task side panel (right column) ──
     if task_panel_width > 0 {
+        // Clear to prevent ghost cells when panel toggles between visible/hidden.
+        frame.render_widget(Clear, task_panel_area);
         tasklist::render(frame, task_panel_area, &mut app.task_list);
     }
 
@@ -3871,6 +3876,12 @@ pub async fn run_tui(
     let loaded = clawed_core::config::Settings::load_merged(&cwd);
     if let Some(ref cfg) = loaded.settings.status_line {
         app.status_line = statusline::StatusLineState::new(Some(cfg.command.clone()));
+    }
+
+    // Refresh task list on startup and auto-show side panel if tasks exist.
+    app.task_list.refresh(&cwd);
+    if app.task_list.task_count() > 0 {
+        app.task_list.side_panel_visible = true;
     }
 
     // On first start (no CLI flag and no settings.json permission_mode),
