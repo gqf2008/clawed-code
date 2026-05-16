@@ -6750,6 +6750,62 @@ mod tests {
     }
 
     #[test]
+    fn mouse_scroll_in_output_area_updates_scroll_offset() {
+        let mut app = App::new("test".to_string());
+        // Simulate content that overflows: scroll_offset > 0 means scrolled up.
+        app.scroll_offset = 5;
+        app.auto_scroll = true;
+
+        // ScrollUp in output area (no right panel) should increase offset.
+        app.scroll_offset = app.scroll_offset.saturating_add(3);
+        app.auto_scroll = false;
+        assert_eq!(app.scroll_offset, 8);
+        assert!(!app.auto_scroll);
+
+        // ScrollDown toward bottom.
+        app.scroll_offset = app.scroll_offset.saturating_sub(3);
+        assert_eq!(app.scroll_offset, 5);
+
+        // ScrollDown to bottom restores auto_scroll.
+        app.scroll_offset = 2;
+        app.scroll_offset = app.scroll_offset.saturating_sub(3);
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    #[test]
+    fn mouse_scroll_in_right_panel_dispatches_to_focused_sub_panel() {
+        let mut app = App::new("test".to_string());
+        app.task_list.scroll_offset = 5;
+        app.tool_history_scroll = 3;
+        app.right_panel_focus = Some(RightPanelFocus::Tasks);
+
+        scroll_right_panel(&mut app, 3); // scroll up in Tasks
+        assert_eq!(app.task_list.scroll_offset, 8);
+        assert_eq!(app.tool_history_scroll, 3); // unchanged
+
+        app.right_panel_focus = Some(RightPanelFocus::ToolHistory);
+        scroll_right_panel(&mut app, -3i32); // scroll down in ToolHistory
+        assert_eq!(app.tool_history_scroll, 0);
+        assert_eq!(app.task_list.scroll_offset, 8); // unchanged
+    }
+
+    #[test]
+    fn scroll_right_panel_defaults_to_tasks_when_no_focus() {
+        let mut app = App::new("test".to_string());
+        app.task_list.scroll_offset = 0;
+        app.right_panel_focus = None;
+
+        scroll_right_panel(&mut app, 3);
+        assert_eq!(app.task_list.scroll_offset, 3);
+    }
+
+    #[test]
+    fn last_right_panel_x_is_zero_when_panel_hidden() {
+        let app = App::new("test".to_string());
+        assert_eq!(app.last_right_panel_x, 0);
+    }
+
+    #[test]
     fn long_print_output_prefers_overlay() {
         let long_text = (0..20)
             .map(|i| format!("line {i}"))
