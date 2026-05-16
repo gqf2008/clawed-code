@@ -1,44 +1,38 @@
 [
   {
     "id": "1",
-    "content": "Review clawed-core (base types, Tool trait, permissions, config)",
-    "status": "in_progress",
+    "content": "审查 clawed-core 模块（基础类型、Tool trait、权限、配置）",
+    "status": "completed",
     "priority": "high"
   },
   {
     "id": "2",
-    "content": "Review clawed-bus (event bus, AgentRequest/AgentNotification)",
-    "status": "pending",
+    "content": "审查 clawed-agent 模块（引擎编排、会话、hooks、compaction）",
+    "status": "completed",
     "priority": "high"
   },
   {
     "id": "3",
-    "content": "Review clawed-agent (engine orchestration, sessions, hooks, compaction)",
-    "status": "pending",
+    "content": "审查 clawed-bus 模块（事件总线模式）",
+    "status": "completed",
     "priority": "high"
   },
   {
     "id": "4",
-    "content": "Review clawed-tools (ToolRegistry, tool implementations)",
-    "status": "pending",
+    "content": "审查 clawed-api 模块（HTTP 客户端、SSE 流）",
+    "status": "completed",
     "priority": "high"
   },
   {
     "id": "5",
-    "content": "Review clawed-api (HTTP client, SSE streaming, OAuth)",
-    "status": "pending",
-    "priority": "medium"
+    "content": "审查 clawed-tools 模块（工具系统）",
+    "status": "completed",
+    "priority": "high"
   },
   {
     "id": "6",
-    "content": "Review clawed-swarm (multi-agent network)",
-    "status": "pending",
+    "content": "总结发现的问题和建议",
+    "status": "in_progress",
     "priority": "medium"
-  },
-  {
-    "id": "7",
-    "content": "Summarize findings and architectural concerns",
-    "status": "pending",
-    "priority": "high"
   }
 ]
