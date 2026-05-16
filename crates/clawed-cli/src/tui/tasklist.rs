@@ -207,10 +207,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut TaskListState) {
             Span::raw("  "),
             Span::styled(&task.content, content_style),
         ];
-        if area.width >= 60 {
-            if let Some(ref owner) = task.owner {
-                task_spans.push(Span::styled(format!(" (@{owner})"), accent));
-            }
+        if let Some(ref owner) = task.owner {
+            task_spans.push(Span::styled(format!(" @{owner}"), accent));
         }
         lines.push(Line::from(task_spans));
         if !task.depends_on.is_empty() {
@@ -230,11 +228,18 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut TaskListState) {
         if w <= inner_width {
             wrapped.push(line.clone());
         } else {
+            let default_style = line.spans.iter()
+                .find(|s| !s.content.trim().is_empty())
+                .map(|s| s.style)
+                .unwrap_or_default();
             let mut remaining = text.as_str();
+            let mut first = true;
             while !remaining.is_empty() {
                 let (chunk, rest) = split_at_display_width(remaining, inner_width);
-                wrapped.push(Line::styled(chunk.to_string(), line.spans.first().map(|s| s.style).unwrap_or_default()));
+                let style = if first { default_style } else { muted() };
+                wrapped.push(Line::styled(chunk.to_string(), style));
                 remaining = rest;
+                first = false;
             }
         }
     }
