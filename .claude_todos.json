@@ -1,61 +1,43 @@
 [
   {
-    "id": "core",
-    "content": "Review clawed-core (base types, Tool trait, permissions, config)",
+    "id": "1",
+    "content": "Review clawed-core (base types, Tool trait, permissions, config, file watching)",
     "status": "in_progress",
     "priority": "high"
   },
   {
-    "id": "bus",
-    "content": "Review clawed-bus (event bus, ClientHandle, notifications)",
+    "id": "2",
+    "content": "Review clawed-agent (engine orchestration, sessions, hooks, permissions, compaction)",
     "status": "pending",
     "priority": "high"
   },
   {
-    "id": "api",
-    "content": "Review clawed-api (HTTP client, SSE streaming, OAuth)",
+    "id": "3",
+    "content": "Review clawed-tools (40+ tool implementations, ToolRegistry, LSP)",
     "status": "pending",
     "priority": "high"
   },
   {
-    "id": "tools",
-    "content": "Review clawed-tools (tool implementations, ToolRegistry, LSP)",
+    "id": "4",
+    "content": "Review clawed-bus (event bus, ClientHandle, broadcast notifications)",
     "status": "pending",
     "priority": "high"
   },
   {
-    "id": "agent",
-    "content": "Review clawed-agent (engine, sessions, hooks, permissions, compaction)",
-    "status": "pending",
-    "priority": "high"
-  },
-  {
-    "id": "mcp",
-    "content": "Review clawed-mcp (MCP server registry, health)",
+    "id": "5",
+    "content": "Review clawed-api (HTTP client, SSE streaming, OAuth PKCE)",
     "status": "pending",
     "priority": "medium"
   },
   {
-    "id": "swarm",
-    "content": "Review clawed-swarm (multi-agent network)",
+    "id": "6",
+    "content": "Review clawed-mcp, clawed-swarm, clawed-computer-use",
     "status": "pending",
     "priority": "medium"
   },
   {
-    "id": "computer",
-    "content": "Review clawed-computer-use",
-    "status": "pending",
-    "priority": "medium"
-  },
-  {
-    "id": "cli",
-    "content": "Review clawed-cli and clawed-rpc (entry points)",
-    "status": "pending",
-    "priority": "medium"
-  },
-  {
-    "id": "summary",
-    "content": "Summarize architectural findings",
+    "id": "7",
+    "content": "Summarize findings and provide overall architecture review",
     "status": "pending",
     "priority": "high"
   }

@@ -280,6 +280,13 @@ pub fn query_stream_with_injection(
             };
             let system = build_system_blocks(&effective_system, config.break_cache);
 
+            tracing::info!(
+                turn = turn_count,
+                thinking = ?config.thinking,
+                msg_count = api_messages.len(),
+                "Sending request"
+            );
+
             let request = MessagesRequest {
                 model: { state.read().await.model.clone() },
                 max_tokens: effective_max_tokens,
