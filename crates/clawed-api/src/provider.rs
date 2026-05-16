@@ -108,7 +108,9 @@ impl ApiBackend for FirstPartyBackend {
         headers.insert("anthropic-version", HeaderValue::from_static(API_VERSION));
         headers.insert(
             "anthropic-beta",
-            HeaderValue::from_static("prompt-caching-2024-07-31,thinking-2024-12-04"),
+            HeaderValue::from_static(
+                "prompt-caching-2024-07-31,thinking-2024-12-04,context-management-2025-06-27",
+            ),
         );
         Ok(headers)
     }
