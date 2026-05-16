@@ -309,7 +309,9 @@ pub(super) fn block_to_api(block: &ContentBlock) -> ApiContentBlock {
             signature,
         } => ApiContentBlock::Thinking {
             thinking: thinking.clone(),
-            signature: signature.clone(),
+            // DeepSeek and some proxies require signature to be present even if empty.
+            // The original CC always initializes `signature: ''` on thinking blocks.
+            signature: Some(signature.clone().unwrap_or_default()),
         },
         ContentBlock::RedactedThinking { data } => {
             ApiContentBlock::RedactedThinking { data: data.clone() }
