@@ -215,26 +215,11 @@ pub(super) fn make_continuation_message(attempt: u32, limit: u32) -> UserMessage
 pub(super) fn messages_to_api(
     messages: &[Message],
     skip_cache: bool,
-    has_thinking: bool,
 ) -> Vec<ApiMessage> {
-    // Count thinking blocks in the conversation for debug logging.
-    let (total_thinking, total_redacted) = count_thinking_blocks(messages);
-    if total_thinking + total_redacted > 0 {
-        tracing::info!(
-            total_thinking,
-            total_redacted,
-            has_thinking,
-            "messages_to_api: {} thinking / {} redacted in conversation, has_thinking={}",
-            total_thinking,
-            total_redacted,
-            has_thinking
-        );
-    }
-
     let to_api_content = |content: &[ContentBlock]| {
         content
             .iter()
-            .map(|b| block_to_api(b, has_thinking))
+            .map(block_to_api)
             .filter(|b| !matches!(b, ApiContentBlock::Text { text, .. } if text.is_empty()))
             .collect()
     };
@@ -278,24 +263,6 @@ pub(super) fn messages_to_api(
     api_msgs
 }
 
-/// Count thinking and redacted_thinking blocks across all messages.
-fn count_thinking_blocks(messages: &[Message]) -> (usize, usize) {
-    let mut thinking = 0usize;
-    let mut redacted = 0usize;
-    for msg in messages {
-        if let Message::Assistant(a) = msg {
-            for block in &a.content {
-                match block {
-                    ContentBlock::Thinking { .. } => thinking += 1,
-                    ContentBlock::RedactedThinking { .. } => redacted += 1,
-                    _ => {}
-                }
-            }
-        }
-    }
-    (thinking, redacted)
-}
-
 /// Convert a single content block to API format.
 ///
 /// When `has_thinking` is true, signed thinking blocks are passed through as
@@ -304,7 +271,7 @@ fn count_thinking_blocks(messages: &[Message]) -> (usize, usize) {
 /// Anthropic only accepts thinking blocks that can be verified as API-returned.
 /// When `has_thinking` is false, all thinking blocks are wrapped in XML text
 /// for compatibility with non-thinking models.
-pub(super) fn block_to_api(block: &ContentBlock, has_thinking: bool) -> ApiContentBlock {
+pub(super) fn block_to_api(block: &ContentBlock) -> ApiContentBlock {
     match block {
         ContentBlock::Text { text } => ApiContentBlock::Text {
             text: text.clone(),
@@ -340,30 +307,12 @@ pub(super) fn block_to_api(block: &ContentBlock, has_thinking: bool) -> ApiConte
         ContentBlock::Thinking {
             thinking,
             signature,
-        } => {
-            if has_thinking {
-                ApiContentBlock::Thinking {
-                    thinking: thinking.clone(),
-                    signature: signature.clone(),
-                }
-            } else {
-                ApiContentBlock::Text {
-                    text: String::new(),
-                    cache_control: None,
-                }
-            }
-        }
+        } => ApiContentBlock::Thinking {
+            thinking: thinking.clone(),
+            signature: signature.clone(),
+        },
         ContentBlock::RedactedThinking { data } => {
-            if has_thinking {
-                ApiContentBlock::RedactedThinking { data: data.clone() }
-            } else {
-                // Same rationale as above: do not surface redacted thinking
-                // as text on outbound requests.
-                ApiContentBlock::Text {
-                    text: String::new(),
-                    cache_control: None,
-                }
-            }
+            ApiContentBlock::RedactedThinking { data: data.clone() }
         }
         ContentBlock::Image { source } => ApiContentBlock::Image {
             source: clawed_api::types::ImageSource {

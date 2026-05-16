@@ -243,7 +243,7 @@ fn test_messages_to_api_converts_user_and_assistant() {
             usage: None,
         }),
     ];
-    let api = messages_to_api(&messages, false, false);
+    let api = messages_to_api(&messages, false);
     assert_eq!(api.len(), 2);
     assert_eq!(api[0].role, "user");
     assert_eq!(api[1].role, "assistant");
@@ -263,7 +263,7 @@ fn test_messages_to_api_skips_system() {
             }],
         }),
     ];
-    let api = messages_to_api(&messages, false, false);
+    let api = messages_to_api(&messages, false);
     assert_eq!(api.len(), 1);
     assert_eq!(api[0].role, "user");
 }
@@ -276,7 +276,7 @@ fn test_messages_to_api_cache_control_on_last_block() {
             text: "hello".into(),
         }],
     })];
-    let api = messages_to_api(&messages, false, false);
+    let api = messages_to_api(&messages, false);
     match &api[0].content[0] {
         ApiContentBlock::Text { cache_control, .. } => {
             assert!(cache_control.is_some());
@@ -293,7 +293,7 @@ fn test_messages_to_api_skip_cache() {
             text: "hello".into(),
         }],
     })];
-    let api = messages_to_api(&messages, true, false);
+    let api = messages_to_api(&messages, true);
     match &api[0].content[0] {
         ApiContentBlock::Text { cache_control, .. } => {
             assert!(
@@ -312,7 +312,7 @@ fn test_block_to_api_text() {
     let block = ContentBlock::Text {
         text: "hello".into(),
     };
-    let api = block_to_api(&block, false);
+    let api = block_to_api(&block);
     match api {
         ApiContentBlock::Text {
             text,
@@ -332,7 +332,7 @@ fn test_block_to_api_tool_use() {
         name: "Bash".into(),
         input: serde_json::json!({"command": "ls"}),
     };
-    let api = block_to_api(&block, false);
+    let api = block_to_api(&block);
     match api {
         ApiContentBlock::ToolUse { id, name, input } => {
             assert_eq!(id, "t1");
@@ -344,20 +344,19 @@ fn test_block_to_api_tool_use() {
 }
 
 #[test]
-fn test_block_to_api_thinking() {
+fn test_block_to_api_thinking_always_preserved() {
+    // Thinking blocks must ALWAYS be passed through, regardless of has_thinking.
+    // Dropping them causes 400: "content[].thinking must be passed back to the API".
     let block = ContentBlock::Thinking {
         signature: None,
         thinking: "let me think...".into(),
     };
-    let api = block_to_api(&block, false);
+    let api = block_to_api(&block);
     match api {
-        ApiContentBlock::Text { text, .. } => {
-            assert!(
-                text.is_empty(),
-                "unsigned thinking with has_thinking=false must drop to empty text, got: {text:?}"
-            );
+        ApiContentBlock::Thinking { thinking, .. } => {
+            assert_eq!(thinking, "let me think...");
         }
-        _ => panic!("expected Text for thinking"),
+        _ => panic!("expected Thinking, got: {api:?}"),
     }
 }
 
@@ -369,7 +368,7 @@ fn test_block_to_api_image() {
             data: "iVBORw0KGgo=".into(),
         },
     };
-    let api = block_to_api(&block, false);
+    let api = block_to_api(&block);
     match api {
         ApiContentBlock::Image { source, .. } => {
             assert_eq!(source.source_type, "base64");
@@ -401,7 +400,7 @@ fn thinking_block_preserved_when_has_thinking_true() {
         thinking: "let me think...".into(),
         signature: Some("sig_abc123".into()),
     };
-    let api = block_to_api(&block, true);
+    let api = block_to_api(&block);
     match api {
         ApiContentBlock::Thinking {
             thinking,
@@ -433,7 +432,7 @@ fn thinking_block_without_signature_passed_through_when_thinking_enabled() {
         thinking: "hmm".into(),
         signature: None,
     };
-    let api = block_to_api(&block, true);
+    let api = block_to_api(&block);
     assert!(
         matches!(&api, ApiContentBlock::Thinking { signature, .. } if signature.is_none()),
         "unsigned thinking block must be passed through as Thinking, got: {api:?}"
@@ -458,7 +457,7 @@ fn compact_preserves_thinking_blocks() {
         stop_reason: Some(StopReason::EndTurn),
         usage: None,
     })];
-    let api = messages_to_api(&messages, false, true);
+    let api = messages_to_api(&messages, false);
     assert_eq!(api.len(), 1);
     // First content block must be Thinking
     assert!(
@@ -480,7 +479,7 @@ fn pre_thinking_assistant_stays_text_when_thinking_enabled() {
         stop_reason: Some(StopReason::EndTurn),
         usage: None,
     })];
-    let api = messages_to_api(&messages, false, true);
+    let api = messages_to_api(&messages, false);
     assert_eq!(api.len(), 1);
     assert!(
         matches!(&api[0].content[0], ApiContentBlock::Text { text, .. } if text == "old response before thinking was enabled"),
