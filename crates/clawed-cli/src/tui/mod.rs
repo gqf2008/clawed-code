@@ -4160,6 +4160,7 @@ pub async fn run_tui(
 ) -> anyhow::Result<()> {
     let model = { engine.state().read().await.model.clone() };
     let mut app = App::new(model);
+    app.task_list.side_panel_visible = true; // Auto-show the right panel
     app.max_context_tokens = engine.context_window();
     app.permission_mode =
         crate::config::format_permission_mode(engine.state().read().await.permission_mode)
