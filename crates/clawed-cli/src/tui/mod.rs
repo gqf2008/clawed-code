@@ -1875,14 +1875,16 @@ impl App {
             }
             AgentNotification::CompactStart => {
                 self.push_message(MessageContent::System(format!(
-                    "{marker} Compacting context\u{2026}",
-                    marker = verbs::THINKING_MARKER
+                    "{marker} Compacting context\u{2026}\n{bar} 0%",
+                    marker = verbs::THINKING_MARKER,
+                    bar = "\u{25B1}".repeat(40),
                 )));
             }
             AgentNotification::CompactComplete { .. } => {
                 self.push_message(MessageContent::System(format!(
-                    "{marker} Conversation compacted (Ctrl+O for history)",
-                    marker = verbs::TURN_COMPLETION_MARKER
+                    "{marker} Conversation compacted (Ctrl+O for history)\n{bar} 100%",
+                    marker = verbs::TURN_COMPLETION_MARKER,
+                    bar = "\u{25B0}".repeat(40),
                 )));
             }
             AgentNotification::Error { code, message } => {
@@ -3352,7 +3354,15 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
     if should_clear_message_area(app.last_rendered_message_visual_count, total_visual) {
         frame.render_widget(Clear, msg_area);
     }
-    frame.render_widget(paragraph, msg_area);
+    // Bottom-align messages: pad the top with empty space when content is shorter
+    // than the viewport so the newest message sits near the separator (chat-style).
+    let render_area = if total_visual < msg_viewport_height && app.scroll_offset == 0 {
+        let pad = (msg_viewport_height - total_visual) as u16;
+        Rect::new(msg_area.x, msg_area.y + pad, msg_area.width, msg_area.height.saturating_sub(pad))
+    } else {
+        msg_area
+    };
+    frame.render_widget(paragraph, render_area);
     app.last_rendered_message_visual_count = Some(total_visual);
 
     // Render sticky header overlay at the top of the message area.
@@ -3850,14 +3860,14 @@ static COLORED_CONTEXT_BARS: std::sync::LazyLock<[Line<'static>; 6]> =
             Color::Rgb(255, 165, 0),
             Color::Red,
         ];
-        const EMPTY: Color = Color::Rgb(80, 80, 80);
+        const EMPTY: Color = Color::Rgb(100, 100, 100);
         std::array::from_fn(|filled| {
             let spans: Vec<Span<'static>> = (0..5)
                 .map(|i| {
                     let (ch, style) = if i < filled {
-                        ("\u{2588}", Style::default().fg(COLORS[i]))
+                        ("\u{25B0}", Style::default().fg(COLORS[i]))
                     } else {
-                        ("\u{2592}", Style::default().fg(EMPTY))
+                        ("\u{25B1}", Style::default().fg(EMPTY))
                     };
                     Span::styled(ch, style)
                 })
