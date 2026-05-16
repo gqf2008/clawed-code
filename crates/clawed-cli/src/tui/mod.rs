@@ -949,7 +949,7 @@ impl App {
         if self.panel_width > 0 {
             self.panel_width
         } else {
-            (self.term_width / 6).max(30).min(60)
+            (self.term_width / 4).max(30).min(80)
         }
     }
 
@@ -4964,18 +4964,6 @@ pub async fn run_tui(
                     }
                 }
                 Event::Mouse(mouse) => {
-                    // Debug: log all mouse events.
-                    let _ = std::fs::write(
-                        "mouse-debug.log",
-                        format!(
-                            "kind={:?} col={} row={} panel_x={} tasks=({},{}) tools=({},{})\n",
-                            mouse.kind,
-                            mouse.column, mouse.row,
-                            app.last_right_panel_x,
-                            app.right_tasks_rect.y, app.right_tasks_rect.y + app.right_tasks_rect.height,
-                            app.right_tools_rect.y, app.right_tools_rect.y + app.right_tools_rect.height,
-                        ),
-                    );
                     // Determine which panel the mouse is over.
                     let in_right_panel = app.last_right_panel_x > 0
                         && mouse.column >= app.last_right_panel_x;
