@@ -273,7 +273,6 @@ pub fn query_stream_with_injection(
                 break;
             }
 
-            let has_thinking = config.thinking.is_some();
             let api_messages = messages_to_api(&messages, config.break_cache);
 
             let effective_system = if tool_context.permission_mode == clawed_core::permissions::PermissionMode::Plan {
@@ -290,6 +289,28 @@ pub fn query_stream_with_injection(
                 "Sending request"
             );
 
+            // Auto-detect: enable thinking if any assistant message contains
+            // thinking blocks. Required by DeepSeek and other providers that
+            // track thinking state per API key / conversation.
+            let has_thinking_blocks = messages.iter().any(|msg| {
+                if let Message::Assistant(a) = msg {
+                    a.content.iter().any(|b| {
+                        matches!(b, ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. })
+                    })
+                } else {
+                    false
+                }
+            });
+            let effective_thinking = if has_thinking_blocks || config.thinking.is_some() {
+                config.thinking.clone().or_else(|| Some(clawed_api::types::ThinkingConfig {
+                    thinking_type: "enabled".into(),
+                    budget_tokens: Some(10_000),
+                }))
+            } else {
+                None
+            };
+
+            let has_thinking = effective_thinking.is_some();
             let request = MessagesRequest {
                 model: { state.read().await.model.clone() },
                 max_tokens: effective_max_tokens,
@@ -300,8 +321,8 @@ pub fn query_stream_with_injection(
                 stop_sequences: None,
                 temperature: config.temperature,
                 top_p: None,
-                thinking: config.thinking.clone(),
-                context_management: if config.thinking.is_some() {
+                thinking: effective_thinking.clone(),
+                context_management: if effective_thinking.is_some() {
                     Some(clawed_api::types::ContextManagementConfig {
                         edits: vec![clawed_api::types::ContextEditStrategy::ClearThinking20251015 {
                             keep: clawed_api::types::ThinkingKeepStrategy::All("all".into()),
