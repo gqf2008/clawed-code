@@ -47,7 +47,7 @@ impl ChromiumBrowser {
 
     /// Native Messaging host directory for this browser.
     pub fn native_messaging_dir(&self) -> Option<PathBuf> {
-        let home = dirs::home_dir()?;
+        let _home = dirs::home_dir()?;
         #[cfg(target_os = "macos")]
         {
             let base = home.join("Library/Application Support");

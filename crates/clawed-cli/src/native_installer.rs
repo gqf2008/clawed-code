@@ -71,7 +71,7 @@ pub fn install() -> Result<InstallReport> {
     }
 
     // Atomic symlink update
-    let tmp_link = bin_dir.join(format!("{}.tmp", BINARY_NAME));
+    let _tmp_link = bin_dir.join(format!("{}.tmp", BINARY_NAME));
     #[cfg(unix)]
     {
         if tmp_link.exists() {
@@ -250,11 +250,11 @@ fn acquire_lock(lock_path: &Path, version: &str) -> Result<LockGuard> {
     })
 }
 
-fn is_process_running(pid: u32) -> bool {
+fn is_process_running(_pid: u32) -> bool {
     #[cfg(unix)]
     {
         // Signal 0 is a no-op that checks process existence.
-        unsafe { libc::kill(pid as i32, 0) == 0 }
+        unsafe { libc::kill(_pid as i32, 0) == 0 }
     }
     #[cfg(not(unix))]
     {

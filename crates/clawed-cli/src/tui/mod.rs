@@ -2796,7 +2796,7 @@ fn render(frame: &mut Frame, app: &mut App) {
 
     // ── Render right panel (tasks + tool history + stats) ──
     if task_panel_width > 0 {
-        let stats_rows = 3u16.min(right_panel.height);
+        let stats_rows = 8u16.min(right_panel.height);
         let remaining = right_panel.height.saturating_sub(stats_rows);
         let tool_rows = remaining / 2;
         let task_rows = remaining - tool_rows;
@@ -4527,7 +4527,7 @@ pub async fn run_tui(
                             app.request_redraw();
                             continue;
                         }
-                        (KeyCode::Right, KeyModifiers::ALT) => {
+                        (KeyCode::Left, KeyModifiers::ALT) => {
                             if app.task_list.is_expanded() {
                                 let base = if app.panel_width > 0 {
                                     app.panel_width
@@ -4539,7 +4539,7 @@ pub async fn run_tui(
                             }
                             continue;
                         }
-                        (KeyCode::Left, KeyModifiers::ALT) => {
+                        (KeyCode::Right, KeyModifiers::ALT) => {
                             if app.task_list.is_expanded() {
                                 let base = if app.panel_width > 0 {
                                     app.panel_width
