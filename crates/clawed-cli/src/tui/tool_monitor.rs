@@ -22,6 +22,21 @@ pub struct ToolHistoryEntry {
     pub timestamp: Instant,
 }
 
+/// Cached render state for the tool monitor panel.
+pub struct ToolMonitorCache {
+    pub lines: Vec<Line<'static>>,
+    pub dirty: bool,
+}
+
+impl ToolMonitorCache {
+    pub fn new() -> Self {
+        Self {
+            lines: Vec::new(),
+            dirty: true,
+        }
+    }
+}
+
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -29,6 +44,7 @@ pub fn render(
     active_tool_names: &[String],
     scroll_offset: &mut usize,
     is_focused: bool,
+    cache: &mut ToolMonitorCache,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -46,55 +62,59 @@ pub fn render(
         return;
     }
 
-    let mut lines: Vec<Line> = Vec::new();
-
-    if entries.is_empty() && active_tool_names.is_empty() {
-        lines.push(Line::styled("  (no tool calls yet)", dim));
-    } else {
-        // Active tools first
-        for name in active_tool_names {
-            let short = shorten(name, inner_width.saturating_sub(4));
-            lines.push(Line::from(vec![
-                Span::styled("\u{25B6} ", active_style),
-                Span::styled(short, active_style),
-                Span::styled(" running", dim),
-            ]));
-        }
-        // Then completed history (most recent last = at bottom)
-        for entry in entries.iter().rev().take(inner_height.saturating_sub(lines.len())) {
-            let (icon, style) = if entry.is_error {
-                ("\u{2717}", error_style)
-            } else {
-                ("\u{2713}", ok_style)
-            };
-            let dur = format_duration(entry.duration_ms);
-            let label = if entry.input_summary.is_empty() {
-                format!("{} {}", entry.tool_name, dur)
-            } else {
-                let summary = &entry.input_summary;
-                let max_name = inner_width.saturating_sub(dur.len() + summary.len() + 5);
-                if max_name > 4 {
-                    format!(
-                        "{} {} {}",
-                        shorten(&entry.tool_name, max_name),
-                        summary,
-                        dur
-                    )
+    if cache.dirty {
+        cache.lines.clear();
+        if entries.is_empty() && active_tool_names.is_empty() {
+            cache.lines.push(Line::styled("  (no tool calls yet)", dim));
+        } else {
+            for name in active_tool_names {
+                let short = shorten(name, inner_width.saturating_sub(4));
+                cache.lines.push(Line::from(vec![
+                    Span::styled("\u{25B6} ", active_style),
+                    Span::styled(short, active_style),
+                    Span::styled(" running", dim),
+                ]));
+            }
+            for entry in entries.iter().rev().take(inner_height.saturating_sub(cache.lines.len())) {
+                let (icon, style) = if entry.is_error {
+                    ("\u{2717}", error_style)
                 } else {
-                    format!("{} {}", shorten(&entry.tool_name, inner_width - dur.len() - 4), dur)
-                }
-            };
-            lines.push(Line::from(vec![
-                Span::styled(format!("{} ", icon), style),
-                Span::styled(label, dim),
-            ]));
+                    ("\u{2713}", ok_style)
+                };
+                let dur = super::verbs::format_duration(entry.duration_ms);
+                let label = if entry.input_summary.is_empty() {
+                    format!("{} {}", entry.tool_name, dur)
+                } else {
+                    let summary = &entry.input_summary;
+                    let max_name = inner_width.saturating_sub(dur.len() + summary.len() + 5);
+                    if max_name > 4 {
+                        format!(
+                            "{} {} {}",
+                            shorten(&entry.tool_name, max_name),
+                            summary,
+                            dur
+                        )
+                    } else {
+                        format!(
+                            "{} {}",
+                            shorten(&entry.tool_name, inner_width - dur.len() - 4),
+                            dur
+                        )
+                    }
+                };
+                cache.lines.push(Line::from(vec![
+                    Span::styled(format!("{} ", icon), style),
+                    Span::styled(label, dim),
+                ]));
+            }
         }
+        cache.dirty = false;
     }
 
     // Scroll
-    let max_scroll = lines.len().saturating_sub(inner_height);
+    let max_scroll = cache.lines.len().saturating_sub(inner_height);
     *scroll_offset = (*scroll_offset).min(max_scroll);
-    let visible: Vec<Line> = lines
+    let visible: Vec<Line> = cache.lines
         .iter()
         .skip(*scroll_offset)
         .take(inner_height)
@@ -141,13 +161,4 @@ fn shorten(name: &str, max: usize) -> String {
         cur += cw;
     }
     result
-}
-
-fn format_duration(ms: u64) -> String {
-    let secs = ms / 1000;
-    if secs < 60 {
-        format!("{}s", secs)
-    } else {
-        format!("{}m{}s", secs / 60, secs % 60)
-    }
 }

@@ -832,9 +832,8 @@ struct App {
     bash_mode: bash_mode::BashModeState,
     /// Latest progress text per active agent, rendered ephemerally (not in message history).
     agent_progress: HashMap<String, String>,
-    /// Pending tool input summaries keyed by tool_name. Populated by ToolUseReady,
-    /// consumed by ToolUseComplete to build ToolHistoryEntry.
-    pending_tool_inputs: HashMap<String, String>,
+    /// Cached render state for the tool monitor panel.
+    tool_monitor_cache: tool_monitor::ToolMonitorCache,
 }
 
 /// A single context suggestion (file, MCP resource, or agent).
@@ -925,7 +924,7 @@ impl App {
             teammate_selection: None,
             bash_mode: bash_mode::BashModeState::new(),
             agent_progress: HashMap::new(),
-            pending_tool_inputs: HashMap::new(),
+            tool_monitor_cache: tool_monitor::ToolMonitorCache::new(),
         }
     }
 
@@ -1425,6 +1424,7 @@ impl App {
         self.status.active_tools.clear();
         self.status.active_shells = 0;
         self.task_plan.set_shells(0);
+        self.tool_monitor_cache.dirty = true;
     }
 
     fn take_queued_inputs(&mut self) -> Option<String> {
@@ -1545,6 +1545,7 @@ impl App {
                         started: Instant::now(),
                     },
                 );
+                self.tool_monitor_cache.dirty = true;
                 // Depth = 1 when running inside an agent context, 0 otherwise.
                 let depth = u32::from(!self.status.active_agents.is_empty());
                 // Create message immediately so ToolOutputLine streaming has
@@ -1578,11 +1579,6 @@ impl App {
                     }
                     msg.invalidate_cache();
                     self.invalidate_visible_lines();
-                }
-                // Store input for tool history entry on completion.
-                if let Some(ref inp) = input_str {
-                    self.pending_tool_inputs
-                        .insert(tool_name.clone(), inp.clone());
                 }
                 // Start BashModeProgress panel for shell commands.
                 if is_shell_tool(&tool_name) {
@@ -1628,10 +1624,22 @@ impl App {
                     msg.update_tool_result(is_error, duration_ms, &result);
                     self.invalidate_visible_lines();
                 }
-                // Push to tool history.
+                // Push to tool history. Extract input summary from the ToolExecution
+                // message; avoids a separate HashMap that must stay in sync.
                 let input_summary = self
-                    .pending_tool_inputs
-                    .remove(&tool_name)
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| {
+                        matches!(
+                            &m.content,
+                            MessageContent::ToolExecution { name, .. } if *name == tool_name
+                        )
+                    })
+                    .and_then(|m| match &m.content {
+                        MessageContent::ToolExecution { input, .. } => input.clone(),
+                        _ => None,
+                    })
                     .unwrap_or_default();
                 self.tool_history.push(ToolHistoryEntry {
                     tool_name: tool_name.clone(),
@@ -1643,6 +1651,7 @@ impl App {
                 if self.tool_history.len() > 50 {
                     self.tool_history.remove(0);
                 }
+                self.tool_monitor_cache.dirty = true;
             }
             AgentNotification::ToolOutputLine {
                 tool_name, line, ..
@@ -2811,6 +2820,7 @@ fn render(frame: &mut Frame, app: &mut App) {
             &active_names,
             &mut app.tool_history_scroll,
             is_focused,
+            &mut app.tool_monitor_cache,
         );
 
         render_stats_panel(frame, r_chunks[2], app);
@@ -2915,7 +2925,6 @@ fn render_stats_panel(frame: &mut Frame, area: Rect, app: &App) {
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Model
     let short_model = shorten_model_name(&app.model);
     if !short_model.is_empty() {
         lines.push(Line::from(vec![
@@ -2923,14 +2932,12 @@ fn render_stats_panel(frame: &mut Frame, area: Rect, app: &App) {
         ]));
     }
 
-    // Turn
     if app.total_turns > 0 {
         lines.push(Line::from(vec![
             Span::styled(format!("turn {}", app.total_turns), dim),
         ]));
     }
 
-    // Tokens
     if app.context_tokens > 0 || app.total_output_tokens > 0 {
         lines.push(Line::from(vec![
             Span::styled(
@@ -2944,14 +2951,12 @@ fn render_stats_panel(frame: &mut Frame, area: Rect, app: &App) {
         ]));
     }
 
-    // Cost
     if app.total_cost_usd > 0.0 {
         lines.push(Line::from(vec![
             Span::styled(clawed_core::model::format_cost(app.total_cost_usd), dim),
         ]));
     }
 
-    // Context %
     if app.status.context_pct > 0.0 {
         let ctx_pct = app.status.context_pct;
         let ctx_style = if ctx_pct >= 80.0 {

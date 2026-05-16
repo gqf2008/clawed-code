@@ -151,9 +151,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut TaskListState) {
         let block = Block::bordered()
             .border_set(border::PLAIN)
             .title(" Tasks ")
-            .title_style(muted());
+            .title_style(super::muted());
         let text = Paragraph::new(vec![
-            Line::styled("  (empty)", muted()),
+            Line::styled("  (empty)", super::muted()),
         ]);
         frame.render_widget(text.block(block), area);
         return;
@@ -237,7 +237,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut TaskListState) {
             let mut first = true;
             while !remaining.is_empty() {
                 let (chunk, rest) = split_at_display_width(remaining, inner_width);
-                let style = if first { default_style } else { muted() };
+                let style = if first { default_style } else { super::muted() };
                 wrapped.push(Line::styled(chunk.to_string(), style));
                 remaining = rest;
                 first = false;
@@ -258,7 +258,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut TaskListState) {
     let block = Block::bordered()
         .border_set(border::PLAIN)
         .title(title)
-        .title_style(muted());
+        .title_style(super::muted());
 
     let para = Paragraph::new(visible).block(block).wrap(Wrap { trim: false });
     frame.render_widget(para, area);
@@ -272,10 +272,6 @@ fn split_at_display_width(s: &str, max_width: usize) -> (&str, &str) {
         w += cw;
     }
     (s, "")
-}
-
-fn muted() -> Style {
-    Style::default().fg(MUTED)
 }
 
 #[cfg(test)]
