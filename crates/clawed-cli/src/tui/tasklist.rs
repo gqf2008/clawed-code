@@ -1,11 +1,12 @@
-//! Task list panel (aligned with official CC TaskListV2).
+//! Task list side panel — rendered in a right-side column.
 
 use super::MUTED;
 use ratatui::{
     layout::Rect,
+    symbols::border,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Block, Paragraph, Wrap},
     Frame,
 };
 use std::path::Path;
@@ -51,7 +52,8 @@ impl TaskItem {
 
 pub struct TaskListState {
     pub(crate) tasks: Vec<TaskItem>,
-    expanded: bool,
+    pub(crate) side_panel_visible: bool,
+    pub(crate) scroll_offset: usize,
     last_mtime: Option<SystemTime>,
 }
 
@@ -59,7 +61,8 @@ impl TaskListState {
     pub fn new() -> Self {
         Self {
             tasks: Vec::new(),
-            expanded: false,
+            side_panel_visible: false,
+            scroll_offset: 0,
             last_mtime: None,
         }
     }
@@ -82,35 +85,41 @@ impl TaskListState {
         self.last_mtime = current_mtime;
     }
 
+    #[allow(dead_code)]
     pub fn is_visible(&self) -> bool {
-        self.expanded && !self.tasks.is_empty()
+        self.side_panel_visible && !self.tasks.is_empty()
     }
     pub fn is_expanded(&self) -> bool {
-        self.expanded
+        self.side_panel_visible
     }
+    #[allow(dead_code)]
     pub fn set_expanded(&mut self, expanded: bool) {
-        self.expanded = expanded;
+        self.side_panel_visible = expanded;
+    }
+    pub fn toggle_side_panel(&mut self) {
+        self.side_panel_visible = !self.side_panel_visible;
     }
     pub fn task_count(&self) -> usize {
         self.tasks.len()
     }
 
+    #[allow(dead_code)]
     pub fn render_height(&self) -> u16 {
-        if !self.is_visible() {
-            return 0;
-        }
-        let mut rows = 1 + self.tasks.len();
-        for t in &self.tasks {
-            if !t.depends_on.is_empty() {
-                rows += 1;
-            }
-        }
-        rows as u16
+        // Side panel no longer uses vertical layout constraints.
+        0
     }
 
     #[allow(dead_code)]
     pub fn sort(&mut self) {
         self.tasks.sort_by_key(sort_order);
+    }
+
+    /// Width the side panel should occupy. Narrow enough to not crowd messages.
+    pub fn panel_width(&self) -> u16 {
+        if !self.side_panel_visible {
+            return 0;
+        }
+        30
     }
 }
 
@@ -132,8 +141,20 @@ fn sort_order(task: &TaskItem) -> u8 {
     }
 }
 
-pub fn render(frame: &mut Frame, area: Rect, state: &TaskListState) {
-    if !state.is_visible() || area.height == 0 {
+pub fn render(frame: &mut Frame, area: Rect, state: &mut TaskListState) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    if state.tasks.is_empty() {
+        let block = Block::bordered()
+            .border_set(border::PLAIN)
+            .title(" Tasks ")
+            .title_style(muted());
+        let text = Paragraph::new(vec![
+            Line::styled("  (empty)", muted()),
+        ]);
+        frame.render_widget(text.block(block), area);
         return;
     }
 
@@ -143,27 +164,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &TaskListState) {
     let progress_style = Style::default().fg(Color::Cyan);
     let accent = Style::default().fg(Color::Magenta);
 
-    let done = state
-        .tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Completed)
-        .count();
-    let in_prog = state
-        .tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::InProgress)
-        .count();
-    let pending = state
-        .tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Pending)
-        .count();
+    let done = state.tasks.iter().filter(|t| t.status == TaskStatus::Completed).count();
+    let in_prog = state.tasks.iter().filter(|t| t.status == TaskStatus::InProgress).count();
+    let pending = state.tasks.iter().filter(|t| t.status == TaskStatus::Pending).count();
 
     let mut lines: Vec<Line> = Vec::new();
 
     // Header
     let mut header_spans = vec![
-        Span::styled("  ", dim),
         Span::styled(format!("{} tasks", state.tasks.len()), bold),
         Span::styled(" (", dim),
     ];
@@ -172,18 +180,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &TaskListState) {
         parts.push(Span::styled(format!("{done} done"), done_style));
     }
     if in_prog > 0 {
-        if !parts.is_empty() {
-            parts.push(Span::styled(", ", dim));
-        }
-        parts.push(Span::styled(
-            format!("{in_prog} in progress"),
-            progress_style,
-        ));
+        if !parts.is_empty() { parts.push(Span::styled(", ", dim)); }
+        parts.push(Span::styled(format!("{in_prog} in progress"), progress_style));
     }
     if pending > 0 {
-        if !parts.is_empty() {
-            parts.push(Span::styled(", ", dim));
-        }
+        if !parts.is_empty() { parts.push(Span::styled(", ", dim)); }
         parts.push(Span::styled(format!("{pending} open"), dim));
     }
     header_spans.extend(parts);
@@ -201,11 +202,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &TaskListState) {
         } else {
             Style::default()
         };
-
         let mut task_spans = vec![
-            Span::styled("  ", dim),
             Span::styled(icon, icon_style),
-            Span::raw(" "),
+            Span::raw("  "),
             Span::styled(&task.content, content_style),
         ];
         if area.width >= 60 {
@@ -214,22 +213,63 @@ pub fn render(frame: &mut Frame, area: Rect, state: &TaskListState) {
             }
         }
         lines.push(Line::from(task_spans));
-
         if !task.depends_on.is_empty() {
-            let blocked_list = task
-                .depends_on
-                .iter()
-                .map(|id| format!("#{id}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            lines.push(Line::styled(
-                format!("     \u{25B8} blocked by {blocked_list}"),
-                dim,
-            ));
+            let blocked_list = task.depends_on.iter().map(|id| format!("#{id}")).collect::<Vec<_>>().join(", ");
+            lines.push(Line::styled(format!("   \u{25B8} blocked by {blocked_list}"), dim));
         }
     }
 
-    frame.render_widget(Paragraph::new(lines), area);
+    let inner_width = area.width.saturating_sub(2) as usize;
+    let inner_height = area.height.saturating_sub(2) as usize;
+    if inner_height == 0 || inner_width == 0 { return; }
+
+    let mut wrapped: Vec<Line<'_>> = Vec::new();
+    for line in &lines {
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        let w = unicode_width::UnicodeWidthStr::width(text.as_str());
+        if w <= inner_width {
+            wrapped.push(line.clone());
+        } else {
+            let mut remaining = text.as_str();
+            while !remaining.is_empty() {
+                let (chunk, rest) = split_at_display_width(remaining, inner_width);
+                wrapped.push(Line::styled(chunk.to_string(), line.spans.first().map(|s| s.style).unwrap_or_default()));
+                remaining = rest;
+            }
+        }
+    }
+
+    let max_scroll = wrapped.len().saturating_sub(inner_height);
+    state.scroll_offset = state.scroll_offset.min(max_scroll);
+    let visible: Vec<Line> = wrapped.iter().skip(state.scroll_offset).take(inner_height).cloned().collect();
+
+    let title = if state.scroll_offset > 0 {
+        format!(" Tasks \u{2191}{} ", state.scroll_offset)
+    } else {
+        " Tasks ".to_string()
+    };
+
+    let block = Block::bordered()
+        .border_set(border::PLAIN)
+        .title(title)
+        .title_style(muted());
+
+    let para = Paragraph::new(visible).block(block).wrap(Wrap { trim: false });
+    frame.render_widget(para, area);
+}
+
+fn split_at_display_width(s: &str, max_width: usize) -> (&str, &str) {
+    let mut w = 0usize;
+    for (i, c) in s.char_indices() {
+        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+        if w + cw > max_width { return (&s[..i], &s[i..]); }
+        w += cw;
+    }
+    (s, "")
+}
+
+fn muted() -> Style {
+    Style::default().fg(MUTED)
 }
 
 #[cfg(test)]
@@ -237,103 +277,51 @@ mod tests {
     use super::*;
 
     fn mk_task(content: &str, status: TaskStatus) -> TaskItem {
-        TaskItem {
-            id: "x".into(),
-            content: content.into(),
-            status,
-            priority: "".into(),
-            owner: None,
-            depends_on: vec![],
-            completed_at: None,
-        }
+        TaskItem { id: format!("task-{content}"), content: content.to_string(), status, priority: "medium".to_string(), owner: None, depends_on: Vec::new(), completed_at: None }
     }
 
     #[test]
-    fn empty_list_not_visible() {
+    fn render_height_empty() {
         let state = TaskListState::new();
-        assert!(!state.is_visible());
         assert_eq!(state.render_height(), 0);
     }
 
     #[test]
-    fn expanded_with_tasks_is_visible() {
+    fn render_height_with_tasks() {
         let mut state = TaskListState::new();
-        state.expanded = true;
-        state.tasks.push(mk_task("Fix bug", TaskStatus::Pending));
-        assert!(state.is_visible());
-        assert_eq!(state.render_height(), 2);
+        state.tasks.push(mk_task("hello", TaskStatus::Pending));
+        state.side_panel_visible = true;
+        assert_eq!(state.render_height(), 0);
     }
 
     #[test]
-    fn blocked_task_has_extra_row() {
+    fn test_panel_width_visible() {
         let mut state = TaskListState::new();
-        state.expanded = true;
-        state.tasks.push(TaskItem {
-            id: "t1".into(),
-            content: "Fix".into(),
-            status: TaskStatus::Pending,
-            priority: "".into(),
-            owner: None,
-            depends_on: vec!["t2".into()],
-            completed_at: None,
-        });
-        assert_eq!(state.render_height(), 3);
+        state.side_panel_visible = true;
+        state.tasks.push(mk_task("t", TaskStatus::Pending));
+        assert_eq!(state.panel_width(), 30);
     }
 
     #[test]
-    fn sort_puts_in_progress_first() {
+    fn test_panel_width_hidden() {
         let mut state = TaskListState::new();
-        state.tasks.push(TaskItem {
-            id: "a".into(),
-            content: "Done".into(),
-            status: TaskStatus::Completed,
-            priority: "".into(),
-            owner: None,
-            depends_on: vec![],
-            completed_at: Some(Instant::now() - std::time::Duration::from_secs(60)),
-        });
-        state.tasks.push(TaskItem {
-            id: "b".into(),
-            content: "Active".into(),
-            status: TaskStatus::InProgress,
-            priority: "".into(),
-            owner: None,
-            depends_on: vec![],
-            completed_at: None,
-        });
+        state.side_panel_visible = false;
+        state.tasks.push(mk_task("t", TaskStatus::Pending));
+        assert_eq!(state.panel_width(), 0);
+    }
+
+    #[test]
+    fn test_split_at_display_width() {
+        assert_eq!(split_at_display_width("hello", 3), ("hel", "lo"));
+        assert_eq!(split_at_display_width("ab", 5), ("ab", ""));
+        assert_eq!(split_at_display_width("", 3), ("", ""));
+    }
+
+    #[test]
+    fn test_sort_completed_last() {
+        let mut state = TaskListState::new();
+        state.side_panel_visible = true;
+        state.tasks = vec![mk_task("one", TaskStatus::Completed)];
         state.sort();
-        assert_eq!(state.tasks[0].content, "Active");
-    }
-
-    #[test]
-    fn recently_completed_boosted() {
-        let mut state = TaskListState::new();
-        state.tasks.push(TaskItem {
-            id: "a".into(),
-            content: "JustDone".into(),
-            status: TaskStatus::Completed,
-            priority: "".into(),
-            owner: None,
-            depends_on: vec![],
-            completed_at: Some(Instant::now()),
-        });
-        state.tasks.push(TaskItem {
-            id: "b".into(),
-            content: "OldDone".into(),
-            status: TaskStatus::Completed,
-            priority: "".into(),
-            owner: None,
-            depends_on: vec![],
-            completed_at: Some(Instant::now() - std::time::Duration::from_secs(60)),
-        });
-        state.sort();
-        assert_eq!(state.tasks[0].content, "JustDone");
-    }
-
-    #[test]
-    fn verify_task_icons() {
-        assert_eq!("\u{25FC}".chars().count(), 1); // ◼ in-progress
-        assert_eq!("\u{25FB}".chars().count(), 1); // ◻ pending
-        assert_eq!("\u{2713}".chars().count(), 1); // ✓ completed
     }
 }

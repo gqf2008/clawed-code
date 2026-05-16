@@ -1675,7 +1675,7 @@ impl App {
                 let cwd = std::env::current_dir().unwrap_or_default();
                 self.task_list.refresh(&cwd);
                 if self.task_list.task_count() > 0 && !self.task_list.is_expanded() {
-                    self.task_list.set_expanded(true);
+                    self.task_list.side_panel_visible = true;
                 }
 
                 if !self.expecting_turn_start
@@ -2641,14 +2641,23 @@ fn render(frame: &mut Frame, app: &mut App) {
         .map(|perm| permission::layout_for(area.width, perm));
     let has_permission = perm_layout.is_some();
 
-    // Build vertical layout constraints
+    // ── Top-level horizontal split: left message column, right task panel ──
+    let task_panel_width = app.task_list.panel_width();
+    let h_chunks = Layout::horizontal([
+        Constraint::Min(1),                         // messages (left)
+        Constraint::Length(task_panel_width),       // task side panel (right, 0 if hidden)
+    ]).split(area);
+    let left_col = h_chunks[0];
+    let task_panel_area = if task_panel_width > 0 { h_chunks[1] } else { Rect::default() };
+
+    // Build vertical layout constraints (inside left column only)
     let bottom_bar_rows = if has_permission {
         0
     } else {
         u16::from(!app.bottom_bar_hidden)
     };
     let task_plan_rows = app.task_plan.render_height();
-    let task_list_rows = app.task_list.render_height();
+    // task_list no longer consumes vertical rows — it lives in the right side panel.
     let bash_mode_rows = app.bash_mode.render_height();
 
     let input_rows = if app.footer_picker.is_some() || app.input.has_completion() {
@@ -2669,7 +2678,6 @@ fn render(frame: &mut Frame, app: &mut App) {
     };
 
     // Queue items: 1 row per queued message (capped at 5), no header row.
-    // Queue count is shown inside the info line instead.
     let queue_rows = if has_permission || app.queued_inputs.is_empty() {
         0
     } else {
@@ -2696,7 +2704,6 @@ fn render(frame: &mut Frame, app: &mut App) {
 
     let constraints = [
         Constraint::Min(1),                  // messages
-        Constraint::Length(task_list_rows),  // task list (0 if empty/collapsed)
         Constraint::Length(task_plan_rows),  // task plan (0 if empty)
         Constraint::Length(bash_mode_rows),  // BashModeProgress panel (0 if inactive)
         Constraint::Length(1 + tip_rows),    // info line + optional tip
@@ -2706,16 +2713,20 @@ fn render(frame: &mut Frame, app: &mut App) {
         Constraint::Length(footer_rows),     // input/permission footer
     ];
 
-    let chunks = Layout::vertical(constraints).split(area);
+    let chunks = Layout::vertical(constraints).split(left_col);
     let msg_area = chunks[0];
-    let task_list_area = chunks[1];
-    let task_area = chunks[2];
-    let bash_area = chunks[3];
-    let sep_area = chunks[4];
-    let queue_area = chunks[5];
-    let suggestion_area = chunks[6];
-    let search_area = chunks[7];
-    let footer_area = chunks[8];
+    let task_area = chunks[1];
+    let bash_area = chunks[2];
+    let sep_area = chunks[3];
+    let queue_area = chunks[4];
+    let suggestion_area = chunks[5];
+    let search_area = chunks[6];
+    let footer_area = chunks[7];
+
+    // ── Render task side panel (right column) ──
+    if task_panel_width > 0 {
+        tasklist::render(frame, task_panel_area, &mut app.task_list);
+    }
 
     // Teammate view header: fixed 1 row above messages when viewing a teammate.
     let teammate_header_rows = u16::from(app.viewed_teammate.is_some());
@@ -2726,10 +2737,6 @@ fn render(frame: &mut Frame, app: &mut App) {
         render_teammate_view_header(frame, msg_chunks[0], app);
     }
     render_messages(frame, msg_chunks[1], app);
-
-    if task_list_rows > 0 {
-        tasklist::render(frame, task_list_area, &app.task_list);
-    }
 
     if task_plan_rows > 0 {
         taskplan::render(frame, task_area, &app.task_plan);
@@ -4258,7 +4265,7 @@ pub async fn run_tui(
                             continue;
                         }
                         (KeyCode::Char('t'), KeyModifiers::CONTROL) => {
-                            app.bottom_bar_hidden = !app.bottom_bar_hidden;
+                            app.task_list.toggle_side_panel();
                             app.request_redraw();
                             continue;
                         }
