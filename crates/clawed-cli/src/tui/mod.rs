@@ -96,10 +96,6 @@ const SPINNER_TICK_INTERVAL: Duration = Duration::from_millis(verbs::SPINNER_TIC
 /// Minimum time between renders during active streaming. Prevents the event loop
 /// from spending all its CPU on rendering, leaving no time for input processing.
 const MIN_RENDER_INTERVAL: Duration = Duration::from_millis(50);
-/// Periodic full-clear interval to self-heal screen corruption caused by
-/// external output (eprintln, third-party crates, sub-process leaks) that
-/// invalidates ratatui's diff-based rendering when not using alternate screen.
-const PERIODIC_CLEAR_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_COMPLETION_POPUP_ITEMS: usize = 10;
 
 fn plain_text_lines(text: &str) -> Vec<Line<'static>> {
@@ -669,6 +665,7 @@ fn restore_terminal_after_tui() {
         crossterm::event::PopKeyboardEnhancementFlags
     );
     let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen);
     let _ = crossterm::terminal::disable_raw_mode();
 }
 
@@ -803,10 +800,6 @@ struct App {
     /// Instant of the last render. Used to throttle render rate during
     /// active streaming so the event loop has time to process input events.
     last_render_at: Instant,
-    /// Instant of the last periodic full clear. Without alternate screen,
-    /// any external output to the terminal corrupts ratatui's diff buffer;
-    /// a periodic clear self-heals this.
-    last_periodic_clear: Instant,
     /// Cached terminal dimensions from the last frame. Used to detect resize
     /// in the layout signature so ghost cells are cleared after resize.
     term_width: u16,
@@ -835,6 +828,8 @@ struct App {
     agent_progress: HashMap<String, String>,
     /// Cached render state for the tool monitor panel.
     tool_monitor_cache: tool_monitor::ToolMonitorCache,
+    /// Maximum context window size for the current model.
+    max_context_tokens: u64,
     /// X coordinate of the right panel boundary from last render. Used to
     /// determine which panel the mouse wheel scrolls. 0 when panel hidden.
     last_right_panel_x: u16,
@@ -885,7 +880,7 @@ impl App {
             task_list: tasklist::TaskListState::new(),
             tool_history: Vec::new(),
             tool_history_scroll: 0,
-            panel_width: 30,
+            panel_width: 0, // 0 = auto (1/6 of terminal width)
             right_panel_focus: None,
             permission: None,
             user_question: None,
@@ -915,7 +910,6 @@ impl App {
             last_rendered_message_visual_count: None,
             last_spinner_tick: Instant::now(),
             last_render_at: Instant::now() - Duration::from_secs(1),
-            last_periodic_clear: Instant::now(),
             status_line: statusline::StatusLineState::new(None),
             sticky_anchor: None,
             term_width: 0,
@@ -929,6 +923,7 @@ impl App {
             bash_mode: bash_mode::BashModeState::new(),
             agent_progress: HashMap::new(),
             tool_monitor_cache: tool_monitor::ToolMonitorCache::new(),
+            max_context_tokens: 0,
             last_right_panel_x: 0,
         }
     }
@@ -2757,7 +2752,12 @@ fn render(frame: &mut Frame, app: &mut App) {
     let status_bar_area = top_chunks[2];
 
     // ── Content area: horizontal split ──
-    let task_panel_width = app.task_list.panel_width(app.panel_width);
+    let effective_width = if app.panel_width > 0 {
+        app.panel_width
+    } else {
+        (area.width / 6).max(30).min(60)
+    };
+    let task_panel_width = app.task_list.panel_width(effective_width);
     let h_chunks = Layout::horizontal([
         Constraint::Min(1),                   // left column
         Constraint::Length(task_panel_width), // right panel (0 if hidden)
@@ -2900,6 +2900,7 @@ fn render(frame: &mut Frame, app: &mut App) {
             status_bar_area,
             app.is_generating,
             &app.permission_mode,
+            app.task_list.is_expanded(),
         );
     }
 
@@ -2964,10 +2965,19 @@ fn render_stats_panel(frame: &mut Frame, area: Rect, app: &App) {
         } else {
             dim
         };
-        let bar = context_bar(ctx_pct);
+        // Header: percentage + max context
+        let max_str = if app.max_context_tokens > 0 {
+            format!(" · max {}", fmt_tokens(app.max_context_tokens))
+        } else {
+            String::new()
+        };
         lines.push(Line::from(vec![
-            Span::styled(format!("{:.0}% ctx {}", ctx_pct, bar), ctx_style),
+            Span::styled(format!("{:.0}% ctx", ctx_pct), ctx_style),
+            Span::styled(max_str, dim),
         ]));
+        // Visual bar: 10-segment colored bar
+        let bar = build_context_bar_10(ctx_pct, ctx_style);
+        lines.push(bar);
     }
 
     if lines.is_empty() {
@@ -3171,8 +3181,8 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
         msg_start = block_start;
     }
 
-    // Render only the visible range
-    let overscan = msg_viewport_height; // render extra above/below for smooth scroll
+    // Render only the visible range with generous overscan for smooth scroll.
+    let overscan = 1000usize;
     let mut lines = Vec::new();
     let mut idx = msg_start;
     let mut rendered = 0usize;
@@ -3726,6 +3736,19 @@ fn context_bar(pct: f64) -> &'static str {
     &CONTEXT_BARS[filled]
 }
 
+/// Build a 10-segment colored context bar as a Line for the stats panel.
+fn build_context_bar_10(pct: f64, style: Style) -> Line<'static> {
+    const SEGMENTS: usize = 10;
+    let filled = ((pct / 100.0 * SEGMENTS as f64).round() as usize).clamp(0, SEGMENTS);
+    let empty = SEGMENTS - filled;
+    let text = format!(
+        "{}{}",
+        "\u{2588}".repeat(filled),
+        "\u{2591}".repeat(empty),
+    );
+    Line::from(Span::styled(text, style))
+}
+
 /// Shorten a model identifier for display in the separator.
 /// e.g. "claude-3-5-sonnet-20241022" → "claude-3.5-sonnet"
 ///      "gpt-4o-mini"               → "gpt-4o-mini"
@@ -4099,6 +4122,7 @@ pub async fn run_tui(
 ) -> anyhow::Result<()> {
     let model = { engine.state().read().await.model.clone() };
     let mut app = App::new(model);
+    app.max_context_tokens = engine.context_window();
     app.permission_mode =
         crate::config::format_permission_mode(engine.state().read().await.permission_mode)
             .to_string();
@@ -4194,10 +4218,11 @@ pub async fn run_tui(
         }
     });
 
-    // Initialize terminal: raw mode + NO alternate screen (matches codex-rs).
-    // Skipping alternate screen improves Chinese IME compatibility on macOS
-    // and lets output persist after exit.
+    // Initialize terminal: raw mode + alternate screen.
+    // Alternate screen hides the terminal's native scrollbar and isolates
+    // TUI output from the scrollback buffer.
     crossterm::terminal::enable_raw_mode()?;
+    crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
     let _terminal_guard = TuiTerminalGuard;
 
     // Enable bracketed paste so multi-line paste arrives as Event::Paste(String)
@@ -4319,24 +4344,10 @@ pub async fn run_tui(
             app.request_redraw();
         }
 
-        // If layout changed, fully clear the terminal before drawing to eliminate
-        // ghost cells left from prior frames (no alternate screen = ratatui diffs
-        // only changed cells, leaving stale cells where layout shrank).
+        // Ghost cells from layout changes are handled by ratatui's diff-based
+        // rendering on the alternate screen; no terminal-level clear needed.
         if app.needs_full_clear {
-            terminal.clear()?;
             app.needs_full_clear = false;
-            app.last_periodic_clear = Instant::now();
-            app.request_redraw();
-        }
-
-        // Periodic full clear: without alternate screen, any external output
-        // (eprintln from third-party crates, sub-process leaks, etc.) corrupts
-        // ratatui's diff buffer. Force a full clear + redraw every few seconds
-        // to self-heal. Skip when idle (no generation, no active tools) since
-        // corruption is far less likely then.
-        if app.last_periodic_clear.elapsed() >= PERIODIC_CLEAR_INTERVAL && app.spinner_active() {
-            terminal.clear()?;
-            app.last_periodic_clear = Instant::now();
             app.request_redraw();
         }
 
@@ -4518,14 +4529,24 @@ pub async fn run_tui(
                         }
                         (KeyCode::Right, KeyModifiers::ALT) => {
                             if app.task_list.is_expanded() {
-                                app.panel_width = (app.panel_width + 5).min(50);
+                                let base = if app.panel_width > 0 {
+                                    app.panel_width
+                                } else {
+                                    (app.term_width / 6).max(30).min(60)
+                                };
+                                app.panel_width = (base + 5).min(60);
                                 app.request_redraw();
                             }
                             continue;
                         }
                         (KeyCode::Left, KeyModifiers::ALT) => {
                             if app.task_list.is_expanded() {
-                                app.panel_width = (app.panel_width.saturating_sub(5)).max(20);
+                                let base = if app.panel_width > 0 {
+                                    app.panel_width
+                                } else {
+                                    (app.term_width / 6).max(30).min(60)
+                                };
+                                app.panel_width = base.saturating_sub(5).max(30);
                                 app.request_redraw();
                             }
                             continue;

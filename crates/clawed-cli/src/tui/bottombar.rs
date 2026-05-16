@@ -55,7 +55,13 @@ pub fn render_agent_pills(
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-pub fn render(frame: &mut Frame, area: Rect, is_generating: bool, permission_mode: &str) {
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    is_generating: bool,
+    permission_mode: &str,
+    panel_visible: bool,
+) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -77,7 +83,6 @@ pub fn render(frame: &mut Frame, area: Rect, is_generating: bool, permission_mod
         left_spans.push(Span::styled("Ctrl+C", key_style));
         left_spans.push(Span::styled(" abort", dim));
     } else {
-        // Permission mode indicator (primary left content in idle state)
         if !permission_mode.is_empty() && permission_mode != "default" {
             let mode_color = permission_mode_color(permission_mode);
             left_spans.push(Span::styled(
@@ -90,8 +95,12 @@ pub fn render(frame: &mut Frame, area: Rect, is_generating: bool, permission_mod
             ));
             left_spans.push(Span::styled(" (shift+tab) · ", dim));
         }
+        if panel_visible {
+            left_spans.push(Span::styled("alt+\u{2190}\u{2192}", key_style));
+            left_spans.push(Span::styled(" resize  ", dim));
+        }
         left_spans.push(Span::styled("ctrl+t", key_style));
-        left_spans.push(Span::styled(" to hide tasks  ", dim));
+        left_spans.push(Span::styled(if panel_visible { " hide  " } else { " tasks  " }, dim));
         left_spans.push(Span::styled("ctrl+p", key_style));
         left_spans.push(Span::styled(" model", dim));
     }
