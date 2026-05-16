@@ -18,6 +18,15 @@ use std::path::{Path, PathBuf};
 
 use crate::message::Message;
 
+/// Extended thinking configuration persisted in session snapshots.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionThinkingConfig {
+    pub thinking_type: String,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_tokens: Option<u32>,
+}
+
 // ── Data types ───────────────────────────────────────────────────────────────
 
 /// Per-model usage entry for session persistence.
@@ -82,6 +91,9 @@ pub struct SessionSnapshot {
     /// Total cost in USD.
     #[serde(default)]
     pub total_cost_usd: f64,
+    /// Extended thinking config persisted across sessions.
+    #[serde(default)]
+    pub thinking: Option<SessionThinkingConfig>,
     /// Full conversation history.
     pub messages: Vec<Message>,
     /// Git branch at time of session (for resume picker).
@@ -647,6 +659,7 @@ pub fn rebuild_from_transcript(id: &str, model: &str) -> anyhow::Result<SessionS
         output_tokens: 0,
         model_usage: HashMap::new(),
         total_cost_usd: 0.0,
+        thinking: None,
         messages,
         git_branch,
         custom_title,
@@ -1456,6 +1469,7 @@ mod tests {
             output_tokens: 200,
             model_usage: HashMap::new(),
             total_cost_usd: 0.05,
+            thinking: None,
             messages: vec![user_msg("Hi")],
             git_branch: Some("main".to_string()),
             custom_title: None,

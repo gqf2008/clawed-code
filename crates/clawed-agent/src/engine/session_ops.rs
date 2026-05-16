@@ -7,6 +7,10 @@ impl QueryEngine {
     pub async fn save_session(&self) -> anyhow::Result<()> {
         use clawed_core::session::*;
         let s = self.state.read().await;
+        let thinking = self.thinking_config().map(|tc| clawed_core::session::SessionThinkingConfig {
+            thinking_type: tc.thinking_type,
+            budget_tokens: tc.budget_tokens,
+        });
         let snapshot = SessionSnapshot {
             id: self.session_id.clone(),
             title: title_from_messages(&s.messages),
@@ -42,6 +46,7 @@ impl QueryEngine {
             summary: None,
             last_prompt: None,
             insights: None,
+            thinking,
         };
         save_session(&snapshot)
     }
@@ -50,6 +55,10 @@ impl QueryEngine {
     pub async fn rename_session(&self, name: &str) -> anyhow::Result<()> {
         use clawed_core::session::*;
         let s = self.state.read().await;
+        let thinking = self.thinking_config().map(|tc| clawed_core::session::SessionThinkingConfig {
+            thinking_type: tc.thinking_type,
+            budget_tokens: tc.budget_tokens,
+        });
         let snapshot = SessionSnapshot {
             id: self.session_id.clone(),
             title: name.to_string(),
@@ -85,6 +94,7 @@ impl QueryEngine {
             summary: None,
             last_prompt: None,
             insights: None,
+            thinking,
         };
         save_session(&snapshot)
     }
@@ -108,6 +118,14 @@ impl QueryEngine {
             s.turn_count = snap.turn_count;
             s.total_input_tokens = snap.input_tokens;
             s.total_output_tokens = snap.output_tokens;
+        }
+        // Restore thinking config if it was persisted in the session.
+        if let Some(ref tc) = snap.thinking {
+            let config = clawed_api::types::ThinkingConfig {
+                thinking_type: tc.thinking_type.clone(),
+                budget_tokens: tc.budget_tokens,
+            };
+            self.set_thinking(Some(config));
         }
         // Reset abort signal for new session
         self.abort_signal.reset();

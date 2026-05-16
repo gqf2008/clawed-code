@@ -191,6 +191,7 @@ impl AppState {
             summary: None,
             last_prompt: self.last_user_prompt(),
             insights: Some(self.to_insights()),
+            thinking: None,
         }
     }
 

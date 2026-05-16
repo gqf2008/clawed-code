@@ -1,44 +1,62 @@
 [
   {
-    "id": "1",
-    "content": "Explore project structure and crate layout",
+    "id": "core",
+    "content": "Review clawed-core (base types, Tool trait, permissions, config)",
     "status": "in_progress",
     "priority": "high"
   },
   {
-    "id": "2",
-    "content": "Review clawed-core (base types, traits, config)",
+    "id": "bus",
+    "content": "Review clawed-bus (event bus, ClientHandle, notifications)",
     "status": "pending",
     "priority": "high"
   },
   {
-    "id": "3",
-    "content": "Review clawed-bus (event bus)",
+    "id": "api",
+    "content": "Review clawed-api (HTTP client, SSE streaming, OAuth)",
     "status": "pending",
     "priority": "high"
   },
   {
-    "id": "4",
-    "content": "Review clawed-agent (engine, sessions, hooks, permissions)",
+    "id": "tools",
+    "content": "Review clawed-tools (tool implementations, ToolRegistry, LSP)",
     "status": "pending",
     "priority": "high"
   },
   {
-    "id": "5",
-    "content": "Review clawed-tools (tool system, registry)",
+    "id": "agent",
+    "content": "Review clawed-agent (engine, sessions, hooks, permissions, compaction)",
     "status": "pending",
     "priority": "high"
   },
   {
-    "id": "6",
-    "content": "Review clawed-api (HTTP client, SSE, OAuth)",
+    "id": "mcp",
+    "content": "Review clawed-mcp (MCP server registry, health)",
     "status": "pending",
     "priority": "medium"
   },
   {
-    "id": "7",
-    "content": "Summarize findings and architectural assessment",
+    "id": "swarm",
+    "content": "Review clawed-swarm (multi-agent network)",
     "status": "pending",
     "priority": "medium"
+  },
+  {
+    "id": "computer",
+    "content": "Review clawed-computer-use",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "id": "cli",
+    "content": "Review clawed-cli and clawed-rpc (entry points)",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "id": "summary",
+    "content": "Summarize architectural findings",
+    "status": "pending",
+    "priority": "high"
   }
 ]
