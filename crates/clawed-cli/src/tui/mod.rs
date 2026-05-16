@@ -3736,9 +3736,9 @@ fn context_bar(pct: f64) -> &'static str {
     &CONTEXT_BARS[filled]
 }
 
-/// Build a 10-segment colored context bar as a Line for the stats panel.
+/// Build a 5-segment colored context bar as a Line for the stats panel.
 fn build_context_bar_10(pct: f64, style: Style) -> Line<'static> {
-    const SEGMENTS: usize = 10;
+    const SEGMENTS: usize = 5;
     let filled = ((pct / 100.0 * SEGMENTS as f64).round() as usize).clamp(0, SEGMENTS);
     let empty = SEGMENTS - filled;
     let text = format!(
