@@ -349,8 +349,6 @@ struct LayoutSignature {
     input_rows: u16,
     queue_rows: u16,
     task_plan_rows: u16,
-    /// Width of the right-side task panel (0 when hidden).
-    task_panel_width: u16,
     has_tip: bool,
     /// Terminal width — changes cause word-wrap differences that can leave
     /// ghost cells if not cleared.
@@ -766,6 +764,8 @@ struct App {
     /// Layout state from the previous frame, used to detect geometry changes
     /// that need a full terminal clear to avoid ghost cells.
     last_layout_sig: LayoutSignature,
+    /// Tracks task panel width to detect toggles between visible/hidden.
+    last_task_panel_width: u16,
     pending_workflow: Option<PendingWorkflow>,
     cached_visible_lines: Vec<Line<'static>>,
     cached_visible_lines_dirty: bool,
@@ -876,6 +876,7 @@ impl App {
             is_generating: false,
             expecting_turn_start: false,
             last_layout_sig: LayoutSignature::default(),
+            last_task_panel_width: 0,
             pending_workflow: None,
             cached_visible_lines: Vec::new(),
             cached_visible_lines_dirty: false,
@@ -1335,7 +1336,6 @@ impl App {
             input_rows: self.input.visible_rows(),
             queue_rows,
             task_plan_rows: self.task_plan.render_height(),
-            task_panel_width: self.task_list.panel_width(),
             has_tip: self.status.has_tip(),
             term_width: self.term_width,
             term_height: self.term_height,
@@ -2728,8 +2728,6 @@ fn render(frame: &mut Frame, app: &mut App) {
 
     // ── Render task side panel (right column) ──
     if task_panel_width > 0 {
-        // Clear to prevent ghost cells when panel toggles between visible/hidden.
-        frame.render_widget(Clear, task_panel_area);
         tasklist::render(frame, task_panel_area, &mut app.task_list);
     }
 
@@ -2817,6 +2815,15 @@ fn render(frame: &mut Frame, app: &mut App) {
     // Overlay renders last (on top of everything in message area)
     if let Some(ref ov) = app.overlay {
         overlay::render(frame, msg_area, ov);
+    }
+
+    // Detect task panel visibility toggle — needs full clear to eliminate ghost cells
+    // in the right column when panel appears/disappears.
+    let new_panel_width = app.task_list.panel_width();
+    if new_panel_width != app.last_task_panel_width {
+        app.needs_full_clear = true;
+        app.last_task_panel_width = new_panel_width;
+        app.request_redraw();
     }
 }
 
