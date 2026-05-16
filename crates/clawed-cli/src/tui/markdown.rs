@@ -90,6 +90,16 @@ fn make_skin() -> MadSkin {
     skin
 }
 
+use std::sync::atomic::{AtomicU16, Ordering};
+
+static RENDER_WIDTH: AtomicU16 = AtomicU16::new(0);
+
+/// Set the width that `render_markdown` should use for wrapping.
+/// A value of 0 means "use terminal size" (fallback).
+pub fn set_render_width(width: u16) {
+    RENDER_WIDTH.store(width, Ordering::Relaxed);
+}
+
 /// Convert a markdown string into styled ratatui lines.
 pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
     // Fast path: if no markdown syntax, return plain lines
@@ -98,7 +108,12 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
     }
 
     let skin = skin();
-    let width = crossterm::terminal::size().ok().map(|(w, _)| w as usize);
+    let w = RENDER_WIDTH.load(Ordering::Relaxed);
+    let width = if w > 0 {
+        Some(w as usize)
+    } else {
+        crossterm::terminal::size().ok().map(|(w, _)| w as usize)
+    };
     let fmt_text = skin.text(text, width);
     let mut buf = Vec::new();
     // termimad's Display writes ANSI SGR sequences via crossterm's queue! macro.

@@ -48,7 +48,8 @@ use clawed_bus::events::{
     UserQuestionResponse,
 };
 use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, EnableMouseCapture, Event, KeyCode,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste,
+    EnableMouseCapture, Event, KeyCode,
     KeyEventKind, KeyModifiers, MouseEventKind,
 };
 use ratatui::{
@@ -104,9 +105,8 @@ fn plain_text_lines(text: &str) -> Vec<Line<'static>> {
     }
 
     let dim = Style::default().fg(MUTED);
-    let prefix_text = "\u{25CF} ";
-    let prefix = Span::styled(prefix_text.to_string(), dim);
-    let blank_prefix = Span::raw(" ".repeat(prefix_text.width()));
+    let prefix = Span::styled("\u{25CF} ", dim);
+    let blank_prefix = Span::raw("   ");
     text.lines()
         .enumerate()
         .map(|(i, line)| {
@@ -658,6 +658,8 @@ fn build_resume_picker() -> Option<FooterPicker> {
 
 fn restore_terminal_after_tui() {
     clawed_tools::diff_ui::set_tui_mode(false);
+    let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1b[?1002l");
+    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
     let _ = crossterm::execute!(
         std::io::stdout(),
@@ -670,6 +672,8 @@ fn restore_terminal_after_tui() {
 
 fn reenter_tui_terminal(terminal: &mut TuiTerminal) -> io::Result<()> {
     crossterm::terminal::enable_raw_mode()?;
+    crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
+    let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1b[?1002h");
     crossterm::execute!(std::io::stdout(), EnableBracketedPaste)?;
     let _ = crossterm::execute!(
         std::io::stdout(),
@@ -723,6 +727,17 @@ struct PendingUserQuestion {
 enum RightPanelFocus {
     Tasks,
     ToolHistory,
+    Stats,
+}
+
+impl RightPanelFocus {
+    fn next(self) -> Option<Self> {
+        match self {
+            Self::Tasks => Some(Self::ToolHistory),
+            Self::ToolHistory => Some(Self::Stats),
+            Self::Stats => None,
+        }
+    }
 }
 
 struct App {
@@ -835,6 +850,9 @@ struct App {
     /// Y ranges of the right sub-panels from last render.
     right_tasks_rect: Rect,
     right_tools_rect: Rect,
+    right_stats_rect: Rect,
+    /// Scroll offset for the stats panel.
+    stats_scroll_offset: usize,
     /// Scrollbar interaction state.
     scrollbar_rect: Rect,
     scrollbar_total: usize,
@@ -934,6 +952,8 @@ impl App {
             last_right_panel_x: 0,
             right_tasks_rect: Rect::default(),
             right_tools_rect: Rect::default(),
+            right_stats_rect: Rect::default(),
+            stats_scroll_offset: 0,
             scrollbar_rect: Rect::default(),
             scrollbar_total: 0,
             scrollbar_viewport: 0,
@@ -1064,6 +1084,30 @@ impl App {
 
         if self.is_generating && index + 1 == self.messages.len() {
             if let MessageContent::AssistantText(text) = &msg.content {
+                if markdown::likely_markdown(text) {
+                    let rendered = markdown::render_markdown(text);
+                    // Safety: if termimad left raw ANSI escapes in output, fall back to plain text.
+                    let has_ansi = rendered.iter().any(|line| {
+                        line.spans.iter().any(|s| s.content.contains('\x1b'))
+                    });
+                    if !has_ansi {
+                        let dim = muted();
+                        let prefix = Span::styled("\u{25CF} ", dim);
+                        let blank_prefix = Span::raw("   ");
+                        return rendered
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, mut line)| {
+                                if i == 0 {
+                                    line.spans.insert(0, prefix.clone());
+                                } else {
+                                    line.spans.insert(0, blank_prefix.clone());
+                                }
+                                line
+                            })
+                            .collect();
+                    }
+                }
                 return plain_text_lines(text);
             }
         }
@@ -1258,6 +1302,7 @@ impl App {
         if self.messages.is_empty() {
             return;
         }
+        markdown::set_render_width(width);
 
         self.message_line_counts.resize(self.messages.len(), None);
 
@@ -1437,6 +1482,10 @@ impl App {
         // and may outlive the API stream. Clearing them on TurnComplete would
         // make spinner_active() return false while tools are still running,
         // breaking Esc abort.
+        // Reset scroll so the completed content is visible at the bottom.
+        self.auto_scroll = true;
+        self.scroll_offset = 0;
+        self.new_messages_count = 0;
     }
 
     /// Hard-reset tool state. Called on error / abort / timeout when the normal
@@ -2828,6 +2877,7 @@ fn render(frame: &mut Frame, app: &mut App) {
 
         app.right_tasks_rect = r_chunks[0];
         app.right_tools_rect = r_chunks[1];
+        app.right_stats_rect = r_chunks[2];
 
         let active_names: Vec<String> = app.status.active_tools.keys().cloned().collect();
         let is_focused = app.right_panel_focus == Some(RightPanelFocus::ToolHistory);
@@ -2932,7 +2982,7 @@ fn render(frame: &mut Frame, app: &mut App) {
 }
 
 /// Render the stats panel in the right column (model, turn, tokens, cost, ctx%).
-fn render_stats_panel(frame: &mut Frame, area: Rect, app: &App) {
+fn render_stats_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -2970,7 +3020,13 @@ fn render_stats_panel(frame: &mut Frame, area: Rect, app: &App) {
         )]));
     }
 
-    let ctx_pct = app.status.context_pct;
+    let ctx_pct = if app.status.context_pct > 0.0 {
+        app.status.context_pct
+    } else if app.max_context_tokens > 0 && app.context_tokens > 0 {
+        (app.context_tokens as f64 / app.max_context_tokens as f64 * 100.0).min(100.0)
+    } else {
+        0.0
+    };
     let ctx_style = if ctx_pct >= 80.0 {
         danger
     } else if ctx_pct >= 60.0 {
@@ -2987,14 +3043,31 @@ fn render_stats_panel(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(format!("{:.0}% ctx", ctx_pct), ctx_style),
         Span::styled(max_str, dim),
     ]));
-    lines.push(build_context_bar_5(ctx_pct, ctx_style));
+    lines.push(build_context_bar_5(ctx_pct));
+
+    let inner_height = area.height.saturating_sub(2) as usize;
+    let max_scroll = lines.len().saturating_sub(inner_height);
+    app.stats_scroll_offset = app.stats_scroll_offset.min(max_scroll);
+    let visible: Vec<Line> = if app.stats_scroll_offset == 0 {
+        // Unscrolled: show the bottom content so the progress bar is always visible.
+        let skip = lines.len().saturating_sub(inner_height);
+        lines.into_iter().skip(skip).take(inner_height).collect()
+    } else {
+        lines.into_iter().skip(app.stats_scroll_offset).take(inner_height).collect()
+    };
+
+    let title = if app.stats_scroll_offset > 0 {
+        format!(" Stats \u{2191}{} ", app.stats_scroll_offset)
+    } else {
+        " Stats ".to_string()
+    };
 
     let block = Block::bordered()
         .border_set(ratatui::symbols::border::PLAIN)
-        .title(" Stats ")
+        .title(title)
         .title_style(dim);
 
-    let para = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+    let para = Paragraph::new(visible).block(block).wrap(Wrap { trim: false });
     frame.render_widget(para, area);
 }
 
@@ -3026,21 +3099,15 @@ fn scroll_to_row(app: &mut App, row: u16) {
 /// up (back in history), negative scrolls down.
 fn scroll_right_sub(app: &mut App, sub: RightPanelFocus, delta: i32) {
     let step = delta.unsigned_abs() as usize;
-    match sub {
-        RightPanelFocus::Tasks => {
-            if delta > 0 {
-                app.task_list.scroll_offset = app.task_list.scroll_offset.saturating_add(step);
-            } else {
-                app.task_list.scroll_offset = app.task_list.scroll_offset.saturating_sub(step);
-            }
-        }
-        RightPanelFocus::ToolHistory => {
-            if delta > 0 {
-                app.tool_history_scroll = app.tool_history_scroll.saturating_add(step);
-            } else {
-                app.tool_history_scroll = app.tool_history_scroll.saturating_sub(step);
-            }
-        }
+    let field: &mut usize = match sub {
+        RightPanelFocus::Tasks => &mut app.task_list.scroll_offset,
+        RightPanelFocus::ToolHistory => &mut app.tool_history_scroll,
+        RightPanelFocus::Stats => &mut app.stats_scroll_offset,
+    };
+    if delta > 0 {
+        *field = field.saturating_add(step);
+    } else {
+        *field = field.saturating_sub(step);
     }
 }
 
@@ -3103,6 +3170,7 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
     // cache at the narrower width so message wrap does not overlap the bar.
     let sb_width: u16 = 1;
     let msg_width = area.width.saturating_sub(sb_width);
+    markdown::set_render_width(msg_width);
     if app.message_line_counts_width != msg_width
         || app.message_line_counts.iter().any(|c| c.is_none())
     {
@@ -3772,16 +3840,36 @@ fn context_bar(pct: f64) -> &'static str {
     &CONTEXT_BARS[filled]
 }
 
-fn build_context_bar_5(pct: f64, style: Style) -> Line<'static> {
-    const SEGMENTS: usize = 3;
+/// Pre-computed colored context bars for each fill level (0–5).
+static COLORED_CONTEXT_BARS: std::sync::LazyLock<[Line<'static>; 6]> =
+    std::sync::LazyLock::new(|| {
+        const COLORS: [Color; 5] = [
+            Color::Green,
+            Color::Cyan,
+            Color::Yellow,
+            Color::Rgb(255, 165, 0),
+            Color::Red,
+        ];
+        const EMPTY: Color = Color::Rgb(80, 80, 80);
+        std::array::from_fn(|filled| {
+            let spans: Vec<Span<'static>> = (0..5)
+                .map(|i| {
+                    let (ch, style) = if i < filled {
+                        ("\u{2588}", Style::default().fg(COLORS[i]))
+                    } else {
+                        ("\u{2592}", Style::default().fg(EMPTY))
+                    };
+                    Span::styled(ch, style)
+                })
+                .collect();
+            Line::from(spans)
+        })
+    });
+
+fn build_context_bar_5(pct: f64) -> Line<'static> {
+    const SEGMENTS: usize = 5;
     let filled = ((pct / 100.0 * SEGMENTS as f64).round() as usize).clamp(0, SEGMENTS);
-    let empty = SEGMENTS - filled;
-    let text = format!(
-        "{}{}",
-        "\u{2588}".repeat(filled),
-        "\u{2591}".repeat(empty),
-    );
-    Line::from(Span::styled(text, style))
+    COLORED_CONTEXT_BARS[filled].clone()
 }
 
 /// Shorten a model identifier for display in the separator.
@@ -4259,6 +4347,10 @@ pub async fn run_tui(
     // TUI output from the scrollback buffer.
     crossterm::terminal::enable_raw_mode()?;
     crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
+    crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
+    // Enable button-event tracking (1002) so wheel events are reported
+    // reliably on terminals that need it (e.g. Windows Terminal).
+    let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1b[?1002h");
     let _terminal_guard = TuiTerminalGuard;
 
     // Enable bracketed paste so multi-line paste arrives as Event::Paste(String)
@@ -4577,8 +4669,7 @@ pub async fn run_tui(
                         (KeyCode::Tab, KeyModifiers::NONE) if app.task_list.is_expanded() => {
                             app.right_panel_focus = match app.right_panel_focus {
                                 None => Some(RightPanelFocus::Tasks),
-                                Some(RightPanelFocus::Tasks) => Some(RightPanelFocus::ToolHistory),
-                                Some(RightPanelFocus::ToolHistory) => None,
+                                Some(f) => f.next(),
                             };
                             app.request_redraw();
                             continue;
@@ -4621,43 +4712,25 @@ pub async fn run_tui(
                         }
                         // Scroll back
                         (KeyCode::PageUp, _) | (KeyCode::Up, KeyModifiers::SHIFT) => {
-                            let step = if key.code == KeyCode::PageUp { 10 } else { 1 };
-                            match app.right_panel_focus {
-                                Some(RightPanelFocus::Tasks) => {
-                                    app.task_list.scroll_offset =
-                                        app.task_list.scroll_offset.saturating_add(step);
-                                }
-                                Some(RightPanelFocus::ToolHistory) => {
-                                    app.tool_history_scroll =
-                                        app.tool_history_scroll.saturating_add(step);
-                                }
-                                None => {
-                                    app.scroll_offset = app.scroll_offset.saturating_add(step);
-                                    app.auto_scroll = false;
-                                }
+                            let step = if key.code == KeyCode::PageUp { 10usize } else { 1usize };
+                            if let Some(sub) = app.right_panel_focus {
+                                scroll_right_sub(&mut app, sub, step as i32);
+                            } else {
+                                app.scroll_offset = app.scroll_offset.saturating_add(step);
+                                app.auto_scroll = false;
                             }
                             app.request_redraw();
                             continue;
                         }
                         (KeyCode::PageDown, _) | (KeyCode::Down, KeyModifiers::SHIFT) => {
-                            let step = if key.code == KeyCode::PageDown { 10 } else { 1 };
-                            match app.right_panel_focus {
-                                Some(RightPanelFocus::Tasks) => {
-                                    app.task_list.scroll_offset =
-                                        app.task_list.scroll_offset.saturating_sub(step);
-                                }
-                                Some(RightPanelFocus::ToolHistory) => {
-                                    app.tool_history_scroll =
-                                        app.tool_history_scroll.saturating_sub(step);
-                                }
-                                None => {
-                                    if app.scroll_offset > 0 {
-                                        app.scroll_offset = app.scroll_offset.saturating_sub(step);
-                                        if app.scroll_offset == 0 {
-                                            app.auto_scroll = true;
-                                            app.new_messages_count = 0;
-                                        }
-                                    }
+                            let step = if key.code == KeyCode::PageDown { 10usize } else { 1usize };
+                            if let Some(sub) = app.right_panel_focus {
+                                scroll_right_sub(&mut app, sub, -(step as i32));
+                            } else if app.scroll_offset > 0 {
+                                app.scroll_offset = app.scroll_offset.saturating_sub(step);
+                                if app.scroll_offset == 0 {
+                                    app.auto_scroll = true;
+                                    app.new_messages_count = 0;
                                 }
                             }
                             app.request_redraw();
@@ -4976,6 +5049,10 @@ pub async fn run_tui(
                             && mouse.row < app.right_tools_rect.y + app.right_tools_rect.height
                         {
                             Some(RightPanelFocus::ToolHistory)
+                        } else if mouse.row >= app.right_stats_rect.y
+                            && mouse.row < app.right_stats_rect.y + app.right_stats_rect.height
+                        {
+                            Some(RightPanelFocus::Stats)
                         } else {
                             None
                         }

@@ -1,62 +1,32 @@
 [
   {
     "id": "explore-structure",
-    "content": "Explore project structure and key files",
-    "status": "in_progress",
+    "content": "探索项目结构和关键文件",
+    "status": "completed",
     "priority": "high"
   },
   {
-    "id": "review-core",
-    "content": "Review clawed-core crate (base types, Tool trait, config)",
-    "status": "pending",
+    "id": "build-check",
+    "content": "检查构建状态",
+    "status": "completed",
     "priority": "high"
   },
   {
-    "id": "review-agent",
-    "content": "Review clawed-agent crate (engine, sessions, hooks)",
-    "status": "pending",
+    "id": "test-check",
+    "content": "运行测试并分析结果",
+    "status": "completed",
     "priority": "high"
   },
   {
-    "id": "review-tools",
-    "content": "Review clawed-tools crate (40+ tool implementations)",
-    "status": "pending",
-    "priority": "high"
-  },
-  {
-    "id": "review-cli",
-    "content": "Review clawed-cli crate (TUI, themes)",
-    "status": "pending",
-    "priority": "high"
-  },
-  {
-    "id": "review-api",
-    "content": "Review clawed-api crate (HTTP client, SSE)",
-    "status": "pending",
-    "priority": "medium"
-  },
-  {
-    "id": "review-mcp",
-    "content": "Review clawed-mcp crate (MCP server registry)",
-    "status": "pending",
-    "priority": "medium"
-  },
-  {
-    "id": "review-other",
-    "content": "Review remaining crates (swarm, bus, rpc, bridge, computer-use)",
-    "status": "pending",
-    "priority": "medium"
-  },
-  {
-    "id": "review-security",
-    "content": "Security review (command injection, input validation, etc.)",
-    "status": "pending",
+    "id": "code-quality",
+    "content": "代码质量分析(clippy/fmt/安全)",
+    "status": "completed",
     "priority": "high"
   },
   {
     "id": "generate-report",
-    "content": "Generate comprehensive review report",
-    "status": "pending",
+    "content": "生成完整审查报告",
+    "status": "completed",
     "priority": "high"
   }
 ]

@@ -121,8 +121,12 @@ pub fn render(
         .cloned()
         .collect();
 
-    let title = if *scroll_offset > 0 {
-        format!(" Tools \u{2191}{} ", scroll_offset)
+    let title = if max_scroll > 0 {
+        format!(
+            " Tools {}/{}\u{2195} ",
+            *scroll_offset + visible.len(),
+            cache.lines.len()
+        )
     } else {
         " Tools ".to_string()
     };
