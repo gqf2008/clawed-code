@@ -359,6 +359,7 @@ pub async fn compact_conversation(
         top_p: None,
         thinking: None,
         tool_choice: None,
+            context_management: None,
     };
 
     let response = client.messages(&request).await.map_err(|e| {

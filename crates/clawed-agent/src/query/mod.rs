@@ -301,6 +301,11 @@ pub fn query_stream_with_injection(
                     thinking_type: "enabled".into(),
                     budget_tokens: Some(10_000),
                 }),
+                context_management: Some(clawed_api::types::ContextManagementConfig {
+                    edits: vec![clawed_api::types::ContextEditStrategy::ClearThinking20251015 {
+                        keep: clawed_api::types::ThinkingKeepStrategy::All("all".into()),
+                    }],
+                }),
                 tool_choice: None,
             };
 

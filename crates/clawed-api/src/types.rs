@@ -25,6 +25,10 @@ pub struct MessagesRequest {
     /// Extended thinking (chain of thought) configuration.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<ThinkingConfig>,
+    /// API context management — native thinking/tool-use clearing strategies.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<ContextManagementConfig>,
     /// Tool choice override — controls how the model selects tools.
     ///
     /// Anthropic values: `{"type":"auto"}`, `{"type":"any"}`, `{"type":"tool","name":"…"}`.
@@ -46,6 +50,7 @@ impl Default for MessagesRequest {
             temperature: None,
             top_p: None,
             thinking: None,
+            context_management: None,
             tool_choice: None,
         }
     }
@@ -115,6 +120,31 @@ pub struct ThinkingConfig {
     /// Token budget for thinking (e.g. 10000).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget_tokens: Option<u32>,
+}
+
+/// API context management configuration — native Anthropic strategy for
+/// clearing thinking blocks and tool uses across conversation turns.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextManagementConfig {
+    pub edits: Vec<ContextEditStrategy>,
+}
+
+/// A single context management strategy (e.g. clear_thinking_20251015).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ContextEditStrategy {
+    #[serde(rename = "clear_thinking_20251015")]
+    ClearThinking20251015 {
+        keep: ThinkingKeepStrategy,
+    },
+}
+
+/// How many thinking turns to preserve: "all" or { type: "thinking_turns", value: N }.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ThinkingKeepStrategy {
+    All(String),  // "all"
+    Turns { #[serde(rename = "type")] keep_type: String, value: u32 },
 }
 
 /// A single message in the API conversation (user or assistant role).

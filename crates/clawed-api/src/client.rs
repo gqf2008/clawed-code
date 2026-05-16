@@ -502,6 +502,7 @@ impl ApiClient {
             top_p: None,
             thinking: None,
             tool_choice: None,
+            context_management: None,
         }
     }
 
