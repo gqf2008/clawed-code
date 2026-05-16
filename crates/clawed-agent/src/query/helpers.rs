@@ -309,22 +309,12 @@ pub(super) fn block_to_api(block: &ContentBlock, has_thinking: bool) -> ApiConte
             thinking,
             signature,
         } => {
-            let _ = thinking;
-            if has_thinking && signature.as_ref().is_some_and(|sig| !sig.is_empty()) {
-                // API requires thinking blocks to be passed back faithfully
-                // when extended thinking is enabled. Preserve both content
-                // and signature as returned by the API.
+            if has_thinking {
                 ApiContentBlock::Thinking {
                     thinking: thinking.clone(),
                     signature: signature.clone(),
                 }
             } else {
-                // Drop thinking entirely when we can't faithfully pass it back.
-                // Wrapping in <thinking>...</thinking> text causes some
-                // Anthropic-compatible proxies (DashScope/LiteLLM) to 400 with
-                // "content[].thinking in the thinking mode must be passed
-                // back to the API". Empty text is filtered out by
-                // `messages_to_api`.
                 ApiContentBlock::Text {
                     text: String::new(),
                     cache_control: None,

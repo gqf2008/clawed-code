@@ -1,49 +1,43 @@
 [
   {
     "id": "1",
-    "content": "探索项目整体结构",
+    "content": "Explore project structure and identify core modules",
     "status": "in_progress",
     "priority": "high"
   },
   {
     "id": "2",
-    "content": "审查 clawed-core 基础类型与抽象",
+    "content": "Review clawed-core: base types, Tool trait, permissions, config",
     "status": "pending",
     "priority": "high"
   },
   {
     "id": "3",
-    "content": "审查 clawed-agent 引擎编排",
+    "content": "Review clawed-bus: event bus pattern and ClientHandle",
     "status": "pending",
     "priority": "high"
   },
   {
     "id": "4",
-    "content": "审查 clawed-tools 工具系统",
+    "content": "Review clawed-agent: engine orchestration, query loop",
     "status": "pending",
     "priority": "high"
   },
   {
     "id": "5",
-    "content": "审查 clawed-bus 事件总线",
+    "content": "Review clawed-tools: ToolRegistry and tool implementations",
     "status": "pending",
     "priority": "high"
   },
   {
     "id": "6",
-    "content": "审查 clawed-api HTTP/SSE 客户端",
+    "content": "Review clawed-api: HTTP client and SSE streaming",
     "status": "pending",
     "priority": "medium"
   },
   {
     "id": "7",
-    "content": "审查并发与取消机制",
-    "status": "pending",
-    "priority": "high"
-  },
-  {
-    "id": "8",
-    "content": "输出审查报告",
+    "content": "Summarize findings: architecture strengths, issues, risks",
     "status": "pending",
     "priority": "high"
   }

@@ -425,19 +425,18 @@ fn thinking_block_preserved_when_has_thinking_true() {
 }
 
 #[test]
-fn thinking_block_without_signature_is_dropped() {
-    // Anthropic and compatible proxies only accept signed thinking blocks
-    // in subsequent requests. Wrapping unsigned thinking as <thinking>...
-    // </thinking> text triggers a 400 from proxies that validate thinking
-    // mode. Safer to drop entirely; messages_to_api filters empty text.
+fn thinking_block_without_signature_passed_through_when_thinking_enabled() {
+    // Unsigned thinking blocks must still be passed back when thinking
+    // mode is enabled — dropping them causes a 400 from the API:
+    // "content[].thinking in the thinking mode must be passed back".
     let block = ContentBlock::Thinking {
         thinking: "hmm".into(),
         signature: None,
     };
     let api = block_to_api(&block, true);
     assert!(
-        matches!(&api, ApiContentBlock::Text { text, .. } if text.is_empty()),
-        "unsigned thinking block must be dropped (empty text), got: {api:?}"
+        matches!(&api, ApiContentBlock::Thinking { signature, .. } if signature.is_none()),
+        "unsigned thinking block must be passed through as Thinking, got: {api:?}"
     );
 }
 

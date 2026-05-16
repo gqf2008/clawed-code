@@ -284,8 +284,18 @@ fn messages_for_compact(messages: &[Message]) -> Vec<ApiMessage> {
                                 input: input.clone(),
                             })
                         }
-                        clawed_core::message::ContentBlock::Thinking { .. } => None,
-                        clawed_core::message::ContentBlock::RedactedThinking { .. } => None,
+                        clawed_core::message::ContentBlock::Thinking {
+                            thinking,
+                            signature,
+                        } => Some(ApiContentBlock::Thinking {
+                            thinking: thinking.clone(),
+                            signature: signature.clone(),
+                        }),
+                        clawed_core::message::ContentBlock::RedactedThinking { data } => {
+                            Some(ApiContentBlock::RedactedThinking {
+                                data: data.clone(),
+                            })
+                        }
                         _ => None,
                     })
                     .collect();
@@ -315,34 +325,10 @@ pub async fn compact_conversation(
     model: &str,
     custom_instructions: Option<&str>,
 ) -> anyhow::Result<String> {
-    let mut api_messages = messages_for_compact(messages);
+    let api_messages = messages_for_compact(messages);
 
     if api_messages.is_empty() {
         anyhow::bail!("No messages to compact");
-    }
-
-    // Defense-in-depth: compaction runs with `thinking: None`, so the Anthropic
-    // API will 400 with "content[].thinking in the thinking mode must be passed
-    // back to the API" if any `Thinking` block leaks into the request. Drop
-    // them as a final safety net in case `messages_for_compact` is bypassed by
-    // a future refactor or a new ContentBlock variant.
-    let mut leaked_thinking = 0usize;
-    for msg in &mut api_messages {
-        let before = msg.content.len();
-        msg.content.retain(|block| {
-            !matches!(
-                block,
-                ApiContentBlock::Thinking { .. } | ApiContentBlock::RedactedThinking { .. }
-            )
-        });
-        leaked_thinking += before - msg.content.len();
-    }
-    api_messages.retain(|msg| !msg.content.is_empty());
-    if leaked_thinking > 0 {
-        tracing::warn!(
-            count = leaked_thinking,
-            "Dropped leaked Thinking blocks from compact request"
-        );
     }
 
     // Build the compact prompt
@@ -898,7 +884,7 @@ mod tests {
     }
 
     #[test]
-    fn test_messages_for_compact_drops_thinking() {
+    fn test_messages_for_compact_preserves_thinking() {
         let messages = vec![Message::Assistant(AssistantMessage {
             uuid: "a1".into(),
             content: vec![
@@ -918,47 +904,16 @@ mod tests {
         assert_eq!(api_messages.len(), 1);
         assert_eq!(
             api_messages[0].content.len(),
-            1,
-            "thinking block must be dropped, not wrapped"
+            2,
+            "thinking block must be preserved for API continuity"
         );
         assert!(matches!(
             &api_messages[0].content[0],
-            ApiContentBlock::Text { text, .. } if text == "answer"
+            ApiContentBlock::Thinking { signature, .. } if *signature == Some("sig_123".into())
         ));
-    }
-
-    #[test]
-    fn test_compact_safety_net_drops_leaked_thinking() {
-        // Simulate a future regression where a Thinking block survives
-        // messages_for_compact. The safety net inside compact_conversation
-        // must drop it before the request is sent.
-        let mut api_messages = vec![ApiMessage {
-            role: "assistant".into(),
-            content: vec![
-                ApiContentBlock::Thinking {
-                    thinking: "leaked".into(),
-                    signature: Some("sig".into()),
-                },
-                ApiContentBlock::Text {
-                    text: "hi".into(),
-                    cache_control: None,
-                },
-            ],
-        }];
-
-        for msg in &mut api_messages {
-            msg.content.retain(|block| {
-                !matches!(
-                    block,
-                    ApiContentBlock::Thinking { .. } | ApiContentBlock::RedactedThinking { .. }
-                )
-            });
-        }
-
-        assert_eq!(api_messages[0].content.len(), 1);
         assert!(matches!(
-            &api_messages[0].content[0],
-            ApiContentBlock::Text { text, .. } if text == "hi"
+            &api_messages[0].content[1],
+            ApiContentBlock::Text { text, .. } if text == "answer"
         ));
     }
 

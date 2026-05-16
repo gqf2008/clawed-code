@@ -48,8 +48,8 @@ use clawed_bus::events::{
     UserQuestionResponse,
 };
 use crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste,
-    EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind,
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode,
+    KeyEventKind, KeyModifiers, MouseEventKind,
 };
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -659,7 +659,6 @@ fn build_resume_picker() -> Option<FooterPicker> {
 fn restore_terminal_after_tui() {
     clawed_tools::diff_ui::set_tui_mode(false);
     let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
-    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     let _ = crossterm::execute!(
         std::io::stdout(),
         crossterm::event::PopKeyboardEnhancementFlags
@@ -833,6 +832,11 @@ struct App {
     /// X coordinate of the right panel boundary from last render. Used to
     /// determine which panel the mouse wheel scrolls. 0 when panel hidden.
     last_right_panel_x: u16,
+    /// Scrollbar interaction state.
+    scrollbar_rect: Rect,
+    scrollbar_total: usize,
+    scrollbar_viewport: usize,
+    scrollbar_dragging: bool,
 }
 
 /// A single context suggestion (file, MCP resource, or agent).
@@ -925,6 +929,10 @@ impl App {
             tool_monitor_cache: tool_monitor::ToolMonitorCache::new(),
             max_context_tokens: 0,
             last_right_panel_x: 0,
+            scrollbar_rect: Rect::default(),
+            scrollbar_total: 0,
+            scrollbar_viewport: 0,
+            scrollbar_dragging: false,
         }
     }
 
@@ -2982,6 +2990,30 @@ fn render_stats_panel(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(para, area);
 }
 
+/// Map a mouse row (absolute terminal coordinate) to a scroll position
+/// and update scroll_offset accordingly.
+fn scroll_to_row(app: &mut App, row: u16) {
+    if app.scrollbar_total == 0 || app.scrollbar_viewport == 0 {
+        return;
+    }
+    let track_h = app.scrollbar_viewport;
+    let rel_row = row.saturating_sub(app.scrollbar_rect.y) as usize;
+    let max_scroll = app.scrollbar_total.saturating_sub(track_h);
+    if max_scroll == 0 {
+        app.scroll_offset = 0;
+        app.auto_scroll = true;
+        return;
+    }
+    // Map row to first_visible_line, then to scroll_offset.
+    let first_vis = (rel_row * app.scrollbar_total / track_h).min(app.scrollbar_total - track_h);
+    app.scroll_offset = max_scroll - first_vis;
+    app.auto_scroll = app.scroll_offset == 0;
+    if app.auto_scroll {
+        app.new_messages_count = 0;
+    }
+    app.request_redraw();
+}
+
 /// Scroll the focused sub-panel of the right panel. Positive delta scrolls
 /// up (back in history), negative scrolls down.
 fn scroll_right_panel(app: &mut App, delta: i32) {
@@ -3275,6 +3307,13 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
             msg_viewport_height as u16,
         );
         render_scrollbar(frame, sb_area, total_visual, msg_viewport_height, first_visible_line);
+        app.scrollbar_rect = sb_area;
+        app.scrollbar_total = total_visual;
+        app.scrollbar_viewport = msg_viewport_height;
+    } else {
+        app.scrollbar_rect = Rect::default();
+        app.scrollbar_total = 0;
+        app.scrollbar_viewport = 0;
     }
 }
 
@@ -3725,9 +3764,8 @@ fn context_bar(pct: f64) -> &'static str {
     &CONTEXT_BARS[filled]
 }
 
-/// Build a 5-segment colored context bar as a Line for the stats panel.
 fn build_context_bar_5(pct: f64, style: Style) -> Line<'static> {
-    const SEGMENTS: usize = 5;
+    const SEGMENTS: usize = 3;
     let filled = ((pct / 100.0 * SEGMENTS as f64).round() as usize).clamp(0, SEGMENTS);
     let empty = SEGMENTS - filled;
     let text = format!(
@@ -4217,11 +4255,6 @@ pub async fn run_tui(
     // Enable bracketed paste so multi-line paste arrives as Event::Paste(String)
     // instead of individual Key events (which would submit on Enter).
     crossterm::execute!(std::io::stdout(), EnableBracketedPaste)?;
-    // Enable mouse capture so the terminal does not handle scroll natively.
-    // Without alternate screen, the terminal's viewport would scroll on mouse
-    // wheel, conflicting with the TUI's internal scroll. Text selection remains
-    // available via Shift+click.
-    crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
 
     // Always push keyboard enhancement flags so modifiers for keys like Enter
     // are disambiguated (matching codex-rs behavior). Terminals that don't support
@@ -4922,9 +4955,13 @@ pub async fn run_tui(
                     }
                 }
                 Event::Mouse(mouse) => {
-                    // Dispatch scroll to the panel under the mouse cursor.
                     let in_right_panel = app.last_right_panel_x > 0
                         && mouse.column >= app.last_right_panel_x;
+                    let on_scrollbar = app.scrollbar_rect.width > 0
+                        && mouse.column >= app.scrollbar_rect.x
+                        && mouse.column < app.scrollbar_rect.x + app.scrollbar_rect.width
+                        && mouse.row >= app.scrollbar_rect.y
+                        && mouse.row < app.scrollbar_rect.y + app.scrollbar_rect.height;
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
                             if in_right_panel {
@@ -4946,6 +4983,20 @@ pub async fn run_tui(
                                 }
                             }
                             app.request_redraw();
+                        }
+                        MouseEventKind::Down(_) => {
+                            if on_scrollbar {
+                                app.scrollbar_dragging = true;
+                                scroll_to_row(&mut app, mouse.row);
+                            }
+                        }
+                        MouseEventKind::Drag(_) => {
+                            if app.scrollbar_dragging {
+                                scroll_to_row(&mut app, mouse.row);
+                            }
+                        }
+                        MouseEventKind::Up(_) => {
+                            app.scrollbar_dragging = false;
                         }
                         _ => {}
                     }
