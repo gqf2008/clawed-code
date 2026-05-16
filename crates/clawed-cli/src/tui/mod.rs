@@ -2,14 +2,19 @@
 //!
 //! Layout:
 //! ```text
-//! Messages (scrollable)
-//! ── claude-3.5 │ turn 3 │ 4096↑ 1024↓ │ 80% ctx │ 📥2 ──  (separator + static info)
-//! ⠹ thinking  01:20  Bash (00:03)  2 agents                         (dynamic status, only when active)
-//! ▸ queued message 1                                          (queue items, only when queued)
-//! ▸ queued message 2
-//! ──────────────────────────────────────────────────────────  (input separator, always)
-//! > user input here_
-//! Tab: complete  Ctrl+J: newline  Ctrl+C: abort/quit          (hint bar, toggleable)
+//! ┌────────────────────────────────────┬───────────┐
+//! │  Messages (scrollable)             │  Tasks    │ ← right top panel
+//! │                                    ├───────────┤
+//! │                                    │  Tools    │ ← tool call history
+//! │                                    ├───────────┤
+//! │                                    │  Stats    │ ← model / turn / tokens / cost / ctx%
+//! ├────────────────────────────────────┴───────────┤
+//! │  ────────────────────────────────────────────  │ ← input separator
+//! │  > user input here_                            │ ← input area (full width)
+//! │  ────────────────────────────────────────────  │ ← input separator
+//! ├────────────────────────────────────────────────┤
+//! │  Tab: complete  Ctrl+J: newline  Ctrl+C: abort │ ← status bar (full width)
+//! └────────────────────────────────────────────────┘
 //! ```
 
 mod bash_mode;
@@ -25,6 +30,7 @@ mod statusline;
 mod tasklist;
 mod taskplan;
 mod textarea;
+mod tool_monitor;
 pub(crate) mod verbs;
 
 pub use input::InputWidget;
@@ -49,7 +55,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Clear, List, ListItem, Paragraph, Wrap},
     Frame,
 };
 use tokio::sync::mpsc;
@@ -65,6 +71,7 @@ use self::messages::{Message, MessageContent};
 use self::overlay::{Overlay, OverlayAction, SelectionItem};
 use self::permission::PendingPermission;
 use self::status::{ToolInfo, TuiStatusState};
+use self::tool_monitor::ToolHistoryEntry;
 
 type TuiTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;
 
@@ -355,6 +362,8 @@ struct LayoutSignature {
     term_width: u16,
     /// Terminal height — changes shift the entire layout vertically.
     term_height: u16,
+    /// Right panel width (0 when hidden).
+    panel_width: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -712,6 +721,13 @@ struct PendingUserQuestion {
     pub request: clawed_bus::events::UserQuestionRequest,
 }
 
+/// Which section of the right panel has keyboard focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RightPanelFocus {
+    Tasks,
+    ToolHistory,
+}
+
 struct App {
     messages: Vec<Message>,
     scroll_offset: usize,
@@ -723,6 +739,14 @@ struct App {
     status: TuiStatusState,
     task_plan: taskplan::TaskPlan,
     task_list: tasklist::TaskListState,
+    /// Tool call history for the right-side monitor panel.
+    tool_history: Vec<ToolHistoryEntry>,
+    /// Scroll offset for the tool history panel.
+    tool_history_scroll: usize,
+    /// Current width of the right side panel (adjustable).
+    panel_width: u16,
+    /// Which sub-panel of the right panel has focus (if any).
+    right_panel_focus: Option<RightPanelFocus>,
     permission: Option<PendingPermission>,
     /// Pending user question from the AskUser tool (bus-based TUI mode).
     user_question: Option<PendingUserQuestion>,
@@ -764,8 +788,6 @@ struct App {
     /// Layout state from the previous frame, used to detect geometry changes
     /// that need a full terminal clear to avoid ghost cells.
     last_layout_sig: LayoutSignature,
-    /// Tracks task panel width to detect toggles between visible/hidden.
-    last_task_panel_width: u16,
     pending_workflow: Option<PendingWorkflow>,
     cached_visible_lines: Vec<Line<'static>>,
     cached_visible_lines_dirty: bool,
@@ -810,6 +832,9 @@ struct App {
     bash_mode: bash_mode::BashModeState,
     /// Latest progress text per active agent, rendered ephemerally (not in message history).
     agent_progress: HashMap<String, String>,
+    /// Pending tool input summaries keyed by tool_name. Populated by ToolUseReady,
+    /// consumed by ToolUseComplete to build ToolHistoryEntry.
+    pending_tool_inputs: HashMap<String, String>,
 }
 
 /// A single context suggestion (file, MCP resource, or agent).
@@ -855,6 +880,10 @@ impl App {
             status,
             task_plan: taskplan::TaskPlan::new(),
             task_list: tasklist::TaskListState::new(),
+            tool_history: Vec::new(),
+            tool_history_scroll: 0,
+            panel_width: 30,
+            right_panel_focus: None,
             permission: None,
             user_question: None,
             overlay: None,
@@ -876,7 +905,6 @@ impl App {
             is_generating: false,
             expecting_turn_start: false,
             last_layout_sig: LayoutSignature::default(),
-            last_task_panel_width: 0,
             pending_workflow: None,
             cached_visible_lines: Vec::new(),
             cached_visible_lines_dirty: false,
@@ -897,6 +925,7 @@ impl App {
             teammate_selection: None,
             bash_mode: bash_mode::BashModeState::new(),
             agent_progress: HashMap::new(),
+            pending_tool_inputs: HashMap::new(),
         }
     }
 
@@ -1328,6 +1357,8 @@ impl App {
             footer_menu_rows(self)
         };
 
+        let panel_width = self.task_list.panel_width(self.panel_width);
+
         LayoutSignature {
             has_overlay: self.overlay.is_some(),
             has_permission,
@@ -1339,6 +1370,7 @@ impl App {
             has_tip: self.status.has_tip(),
             term_width: self.term_width,
             term_height: self.term_height,
+            panel_width,
         }
     }
 
@@ -1547,6 +1579,11 @@ impl App {
                     msg.invalidate_cache();
                     self.invalidate_visible_lines();
                 }
+                // Store input for tool history entry on completion.
+                if let Some(ref inp) = input_str {
+                    self.pending_tool_inputs
+                        .insert(tool_name.clone(), inp.clone());
+                }
                 // Start BashModeProgress panel for shell commands.
                 if is_shell_tool(&tool_name) {
                     self.bash_mode
@@ -1590,6 +1627,21 @@ impl App {
                 if let Some(msg) = msg {
                     msg.update_tool_result(is_error, duration_ms, &result);
                     self.invalidate_visible_lines();
+                }
+                // Push to tool history.
+                let input_summary = self
+                    .pending_tool_inputs
+                    .remove(&tool_name)
+                    .unwrap_or_default();
+                self.tool_history.push(ToolHistoryEntry {
+                    tool_name: tool_name.clone(),
+                    input_summary,
+                    duration_ms,
+                    is_error,
+                    timestamp: Instant::now(),
+                });
+                if self.tool_history.len() > 50 {
+                    self.tool_history.remove(0);
                 }
             }
             AgentNotification::ToolOutputLine {
@@ -2644,23 +2696,13 @@ fn render(frame: &mut Frame, app: &mut App) {
         .map(|perm| permission::layout_for(area.width, perm));
     let has_permission = perm_layout.is_some();
 
-    // ── Top-level horizontal split: left message column, right task panel ──
-    let task_panel_width = app.task_list.panel_width();
-    let h_chunks = Layout::horizontal([
-        Constraint::Min(1),                         // messages (left)
-        Constraint::Length(task_panel_width),       // task side panel (right, 0 if hidden)
-    ]).split(area);
-    let left_col = h_chunks[0];
-    let task_panel_area = if task_panel_width > 0 { h_chunks[1] } else { Rect::default() };
-
-    // Build vertical layout constraints (inside left column only)
+    // ── Row counts (shared between layout and rendering) ──
     let bottom_bar_rows = if has_permission {
         0
     } else {
         u16::from(!app.bottom_bar_hidden)
     };
     let task_plan_rows = app.task_plan.render_height();
-    // task_list no longer consumes vertical rows — it lives in the right side panel.
     let bash_mode_rows = app.bash_mode.render_height();
 
     let input_rows = if app.footer_picker.is_some() || app.input.has_completion() {
@@ -2673,50 +2715,70 @@ fn render(frame: &mut Frame, app: &mut App) {
     } else {
         footer_menu_rows(app)
     };
-    // Input area is framed by two horizontal lines (top + bottom), matching official CC.
-    let footer_rows = if let Some(layout) = perm_layout {
+    // Input area (framed by two separator lines), without the bottom bar.
+    let input_area_rows = if let Some(layout) = perm_layout {
         layout.total_rows()
     } else {
-        2 + completion_rows + input_rows + bottom_bar_rows
+        2 + completion_rows + input_rows
     };
 
-    // Queue items: 1 row per queued message (capped at 5), no header row.
     let queue_rows = if has_permission || app.queued_inputs.is_empty() {
         0
     } else {
         app.queued_inputs.len().min(5) as u16
     };
-
     let search_rows = if has_permission {
         0
     } else {
         u16::from(app.search_state.is_some())
     };
-
     let tip_rows = if has_permission {
         0
     } else {
         u16::from(app.status.has_tip())
     };
-
     let suggestion_rows = if app.suggestions.is_empty() || has_permission {
         0
     } else {
-        (app.suggestions.len().min(5) + 1) as u16 // +1 for divider
+        (app.suggestions.len().min(5) + 1) as u16
     };
 
-    let constraints = [
+    // ── Top-level vertical split: content + input + status bar ──
+    let top_chunks = Layout::vertical([
+        Constraint::Min(1),                  // content area
+        Constraint::Length(input_area_rows), // input area (full width)
+        Constraint::Length(bottom_bar_rows), // status bar (full width)
+    ])
+    .split(area);
+    let content_area = top_chunks[0];
+    let input_area = top_chunks[1];
+    let status_bar_area = top_chunks[2];
+
+    // ── Content area: horizontal split ──
+    let task_panel_width = app.task_list.panel_width(app.panel_width);
+    let h_chunks = Layout::horizontal([
+        Constraint::Min(1),                   // left column
+        Constraint::Length(task_panel_width), // right panel (0 if hidden)
+    ])
+    .split(content_area);
+    let left_col = h_chunks[0];
+    let right_panel = if task_panel_width > 0 {
+        h_chunks[1]
+    } else {
+        Rect::default()
+    };
+
+    // ── Left column: vertical (messages + overlays) ──
+    let left_constraints = [
         Constraint::Min(1),                  // messages
         Constraint::Length(task_plan_rows),  // task plan (0 if empty)
-        Constraint::Length(bash_mode_rows),  // BashModeProgress panel (0 if inactive)
-        Constraint::Length(1 + tip_rows),    // info line + optional tip
-        Constraint::Length(queue_rows),      // queue items (0 or n)
+        Constraint::Length(bash_mode_rows),  // BashModeProgress panel
+        Constraint::Length(1 + tip_rows),    // separator + optional tip
+        Constraint::Length(queue_rows),      // queue items
         Constraint::Length(suggestion_rows), // context suggestion overlay
-        Constraint::Length(search_rows),     // search box (0 or 1)
-        Constraint::Length(footer_rows),     // input/permission footer
+        Constraint::Length(search_rows),     // search box
     ];
-
-    let chunks = Layout::vertical(constraints).split(left_col);
+    let chunks = Layout::vertical(left_constraints).split(left_col);
     let msg_area = chunks[0];
     let task_area = chunks[1];
     let bash_area = chunks[2];
@@ -2724,11 +2786,34 @@ fn render(frame: &mut Frame, app: &mut App) {
     let queue_area = chunks[4];
     let suggestion_area = chunks[5];
     let search_area = chunks[6];
-    let footer_area = chunks[7];
 
-    // ── Render task side panel (right column) ──
+    // ── Render right panel (tasks + tool history + stats) ──
     if task_panel_width > 0 {
-        tasklist::render(frame, task_panel_area, &mut app.task_list);
+        let stats_rows = 3u16.min(right_panel.height);
+        let remaining = right_panel.height.saturating_sub(stats_rows);
+        let tool_rows = remaining / 2;
+        let task_rows = remaining - tool_rows;
+        let r_chunks = Layout::vertical([
+            Constraint::Length(task_rows),   // tasks
+            Constraint::Length(tool_rows),   // tool history
+            Constraint::Length(stats_rows),  // stats
+        ])
+        .split(right_panel);
+
+        tasklist::render(frame, r_chunks[0], &mut app.task_list);
+
+        let active_names: Vec<String> = app.status.active_tools.keys().cloned().collect();
+        let is_focused = app.right_panel_focus == Some(RightPanelFocus::ToolHistory);
+        tool_monitor::render(
+            frame,
+            r_chunks[1],
+            &app.tool_history,
+            &active_names,
+            &mut app.tool_history_scroll,
+            is_focused,
+        );
+
+        render_stats_panel(frame, r_chunks[2], app);
     }
 
     // Teammate view header: fixed 1 row above messages when viewing a teammate.
@@ -2764,16 +2849,14 @@ fn render(frame: &mut Frame, app: &mut App) {
     }
 
     if let Some(perm) = app.permission.as_ref() {
-        let layout = permission::layout_for(footer_area.width, perm);
-        // Permission prompt: rows adapt to terminal width instead of assuming a
-        // fixed 3-line footer.
+        let layout = permission::layout_for(input_area.width, perm);
         let perm_chunks = Layout::vertical([
             Constraint::Length(layout.desc_rows),
             Constraint::Length(layout.detail_rows),
             Constraint::Length(layout.button_rows),
             Constraint::Length(layout.hint_rows),
         ])
-        .split(footer_area);
+        .split(input_area);
         permission::render(
             frame,
             perm_chunks[0],
@@ -2783,27 +2866,17 @@ fn render(frame: &mut Frame, app: &mut App) {
             perm,
         );
     } else {
-        // Normal: top line ─ input ─ completion popup (optional) ─ bottom line ─ status bar
         let input_chunks = Layout::vertical([
-            Constraint::Length(1),               // top line
+            Constraint::Length(1),               // top separator
             Constraint::Length(input_rows),      // input (1–5 rows)
             Constraint::Length(completion_rows), // completion popup / footer picker
-            Constraint::Length(1),               // bottom line
-            Constraint::Length(bottom_bar_rows), // status bar
+            Constraint::Length(1),               // bottom separator
         ])
-        .split(footer_area);
+        .split(input_area);
 
         render_input_separator(frame, input_chunks[0]);
         render_input(frame, input_chunks[1], app);
         render_input_separator(frame, input_chunks[3]);
-        if bottom_bar_rows > 0 {
-            bottombar::render(
-                frame,
-                input_chunks[4],
-                app.is_generating,
-                &app.permission_mode,
-            );
-        }
 
         if let Some(picker) = app.footer_picker.as_ref() {
             render_footer_picker(frame, input_chunks[2], input_chunks[1], picker);
@@ -2812,19 +2885,99 @@ fn render(frame: &mut Frame, app: &mut App) {
         }
     }
 
+    // ── Status bar (full width, very bottom) ──
+    if bottom_bar_rows > 0 {
+        bottombar::render(
+            frame,
+            status_bar_area,
+            app.is_generating,
+            &app.permission_mode,
+        );
+    }
+
     // Overlay renders last (on top of everything in message area)
     if let Some(ref ov) = app.overlay {
         overlay::render(frame, msg_area, ov);
     }
 
-    // Detect task panel visibility toggle — needs full clear to eliminate ghost cells
-    // in the right column when panel appears/disappears.
-    let new_panel_width = app.task_list.panel_width();
-    if new_panel_width != app.last_task_panel_width {
-        app.needs_full_clear = true;
-        app.last_task_panel_width = new_panel_width;
-        app.request_redraw();
+}
+
+/// Render the stats panel in the right column (model, turn, tokens, cost, ctx%).
+fn render_stats_panel(frame: &mut Frame, area: Rect, app: &App) {
+    if area.width == 0 || area.height == 0 {
+        return;
     }
+
+    let dim = Style::default().fg(MUTED);
+    let bold = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+    let warn = Style::default().fg(Color::Yellow);
+    let danger = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Model
+    let short_model = shorten_model_name(&app.model);
+    if !short_model.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled(short_model, bold),
+        ]));
+    }
+
+    // Turn
+    if app.total_turns > 0 {
+        lines.push(Line::from(vec![
+            Span::styled(format!("turn {}", app.total_turns), dim),
+        ]));
+    }
+
+    // Tokens
+    if app.context_tokens > 0 || app.total_output_tokens > 0 {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!(
+                    "{}\u{2191} {}\u{2193}",
+                    fmt_tokens(app.context_tokens),
+                    fmt_tokens(app.total_output_tokens),
+                ),
+                dim,
+            ),
+        ]));
+    }
+
+    // Cost
+    if app.total_cost_usd > 0.0 {
+        lines.push(Line::from(vec![
+            Span::styled(clawed_core::model::format_cost(app.total_cost_usd), dim),
+        ]));
+    }
+
+    // Context %
+    if app.status.context_pct > 0.0 {
+        let ctx_pct = app.status.context_pct;
+        let ctx_style = if ctx_pct >= 80.0 {
+            danger
+        } else if ctx_pct >= 60.0 {
+            warn
+        } else {
+            dim
+        };
+        let bar = context_bar(ctx_pct);
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:.0}% ctx {}", ctx_pct, bar), ctx_style),
+        ]));
+    }
+
+    if lines.is_empty() {
+        lines.push(Line::styled("  (no data)", dim));
+    }
+
+    let block = Block::bordered()
+        .border_set(ratatui::symbols::border::PLAIN)
+        .title(" Stats ")
+        .title_style(dim);
+
+    let para = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+    frame.render_widget(para, area);
 }
 
 fn poll_interval(app: &App) -> Duration {
@@ -4284,6 +4437,32 @@ pub async fn run_tui(
                         }
                         (KeyCode::Char('t'), KeyModifiers::CONTROL) => {
                             app.task_list.toggle_side_panel();
+                            if !app.task_list.is_expanded() {
+                                app.right_panel_focus = None;
+                            }
+                            app.request_redraw();
+                            continue;
+                        }
+                        (KeyCode::Right, KeyModifiers::ALT) => {
+                            if app.task_list.is_expanded() {
+                                app.panel_width = (app.panel_width + 5).min(50);
+                                app.request_redraw();
+                            }
+                            continue;
+                        }
+                        (KeyCode::Left, KeyModifiers::ALT) => {
+                            if app.task_list.is_expanded() {
+                                app.panel_width = (app.panel_width.saturating_sub(5)).max(20);
+                                app.request_redraw();
+                            }
+                            continue;
+                        }
+                        (KeyCode::Tab, KeyModifiers::NONE) if app.task_list.is_expanded() => {
+                            app.right_panel_focus = match app.right_panel_focus {
+                                None => Some(RightPanelFocus::Tasks),
+                                Some(RightPanelFocus::Tasks) => Some(RightPanelFocus::ToolHistory),
+                                Some(RightPanelFocus::ToolHistory) => None,
+                            };
                             app.request_redraw();
                             continue;
                         }
@@ -4326,18 +4505,42 @@ pub async fn run_tui(
                         // Scroll back
                         (KeyCode::PageUp, _) | (KeyCode::Up, KeyModifiers::SHIFT) => {
                             let step = if key.code == KeyCode::PageUp { 10 } else { 1 };
-                            app.scroll_offset = app.scroll_offset.saturating_add(step);
-                            app.auto_scroll = false;
+                            match app.right_panel_focus {
+                                Some(RightPanelFocus::Tasks) => {
+                                    app.task_list.scroll_offset =
+                                        app.task_list.scroll_offset.saturating_add(step);
+                                }
+                                Some(RightPanelFocus::ToolHistory) => {
+                                    app.tool_history_scroll =
+                                        app.tool_history_scroll.saturating_add(step);
+                                }
+                                None => {
+                                    app.scroll_offset = app.scroll_offset.saturating_add(step);
+                                    app.auto_scroll = false;
+                                }
+                            }
                             app.request_redraw();
                             continue;
                         }
                         (KeyCode::PageDown, _) | (KeyCode::Down, KeyModifiers::SHIFT) => {
                             let step = if key.code == KeyCode::PageDown { 10 } else { 1 };
-                            if app.scroll_offset > 0 {
-                                app.scroll_offset = app.scroll_offset.saturating_sub(step);
-                                if app.scroll_offset == 0 {
-                                    app.auto_scroll = true;
-                                    app.new_messages_count = 0;
+                            match app.right_panel_focus {
+                                Some(RightPanelFocus::Tasks) => {
+                                    app.task_list.scroll_offset =
+                                        app.task_list.scroll_offset.saturating_sub(step);
+                                }
+                                Some(RightPanelFocus::ToolHistory) => {
+                                    app.tool_history_scroll =
+                                        app.tool_history_scroll.saturating_sub(step);
+                                }
+                                None => {
+                                    if app.scroll_offset > 0 {
+                                        app.scroll_offset = app.scroll_offset.saturating_sub(step);
+                                        if app.scroll_offset == 0 {
+                                            app.auto_scroll = true;
+                                            app.new_messages_count = 0;
+                                        }
+                                    }
                                 }
                             }
                             app.request_redraw();

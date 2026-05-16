@@ -114,12 +114,13 @@ impl TaskListState {
         self.tasks.sort_by_key(sort_order);
     }
 
-    /// Width the side panel should occupy. Narrow enough to not crowd messages.
-    pub fn panel_width(&self) -> u16 {
+    /// Width the side panel should occupy. Uses the dynamic `panel_width` setting
+    /// from the App state.
+    pub fn panel_width(&self, dynamic_width: u16) -> u16 {
         if !self.side_panel_visible {
             return 0;
         }
-        30
+        dynamic_width
     }
 }
 
@@ -304,7 +305,8 @@ mod tests {
         let mut state = TaskListState::new();
         state.side_panel_visible = true;
         state.tasks.push(mk_task("t", TaskStatus::Pending));
-        assert_eq!(state.panel_width(), 30);
+        assert_eq!(state.panel_width(30), 30);
+        assert_eq!(state.panel_width(40), 40);
     }
 
     #[test]
@@ -312,7 +314,7 @@ mod tests {
         let mut state = TaskListState::new();
         state.side_panel_visible = false;
         state.tasks.push(mk_task("t", TaskStatus::Pending));
-        assert_eq!(state.panel_width(), 0);
+        assert_eq!(state.panel_width(30), 0);
     }
 
     #[test]
