@@ -48,7 +48,7 @@ use clawed_bus::events::{
     UserQuestionResponse,
 };
 use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode,
+    self, DisableBracketedPaste, EnableBracketedPaste, EnableMouseCapture, Event, KeyCode,
     KeyEventKind, KeyModifiers, MouseEventKind,
 };
 use ratatui::{
@@ -4964,20 +4964,18 @@ pub async fn run_tui(
                     }
                 }
                 Event::Mouse(mouse) => {
-                    // Always log on scroll to debug dispatch.
-                    if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) {
-                        let _ = std::fs::write(
-                            "mouse-debug.log",
-                            format!(
-                                "col={} row={} panel_x={} tasks=({},{}) tools=({},{}) term={}x{}\n",
-                                mouse.column, mouse.row,
-                                app.last_right_panel_x,
-                                app.right_tasks_rect.y, app.right_tasks_rect.y + app.right_tasks_rect.height,
-                                app.right_tools_rect.y, app.right_tools_rect.y + app.right_tools_rect.height,
-                                app.term_width, app.term_height,
-                            ),
-                        );
-                    }
+                    // Debug: log all mouse events.
+                    let _ = std::fs::write(
+                        "mouse-debug.log",
+                        format!(
+                            "kind={:?} col={} row={} panel_x={} tasks=({},{}) tools=({},{})\n",
+                            mouse.kind,
+                            mouse.column, mouse.row,
+                            app.last_right_panel_x,
+                            app.right_tasks_rect.y, app.right_tasks_rect.y + app.right_tasks_rect.height,
+                            app.right_tools_rect.y, app.right_tools_rect.y + app.right_tools_rect.height,
+                        ),
+                    );
                     // Determine which panel the mouse is over.
                     let in_right_panel = app.last_right_panel_x > 0
                         && mouse.column >= app.last_right_panel_x;
