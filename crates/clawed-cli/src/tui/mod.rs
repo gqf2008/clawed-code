@@ -3045,7 +3045,7 @@ fn render_stats_panel(frame: &mut Frame, area: Rect, app: &mut App) {
         Span::styled(format!("{:.0}% ctx", ctx_pct), ctx_style),
         Span::styled(max_str, dim),
     ]));
-    lines.push(build_context_bar_5(ctx_pct));
+    lines.push(build_context_bar(ctx_pct, area.width.saturating_sub(2) as usize));
 
     let inner_height = area.height.saturating_sub(2) as usize;
     let max_scroll = lines.len().saturating_sub(inner_height);
@@ -3164,15 +3164,16 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    app.rebuild_visible_lines();
-
-    let viewport_height = area.height as usize;
-
     // Reserve the rightmost column for the scrollbar. Build the height
     // cache at the narrower width so message wrap does not overlap the bar.
     let sb_width: u16 = 1;
     let msg_width = area.width.saturating_sub(sb_width);
     markdown::set_render_width(msg_width);
+
+    app.rebuild_visible_lines();
+
+    let viewport_height = area.height as usize;
+
     if app.message_line_counts_width != msg_width
         || app.message_line_counts.iter().any(|c| c.is_none())
     {
@@ -3850,36 +3851,30 @@ fn context_bar(pct: f64) -> &'static str {
     &CONTEXT_BARS[filled]
 }
 
-/// Pre-computed colored context bars for each fill level (0–5).
-static COLORED_CONTEXT_BARS: std::sync::LazyLock<[Line<'static>; 6]> =
-    std::sync::LazyLock::new(|| {
-        const COLORS: [Color; 5] = [
-            Color::Green,
-            Color::Cyan,
-            Color::Yellow,
-            Color::Rgb(255, 165, 0),
-            Color::Red,
-        ];
-        const EMPTY: Color = Color::Rgb(100, 100, 100);
-        std::array::from_fn(|filled| {
-            let spans: Vec<Span<'static>> = (0..5)
-                .map(|i| {
-                    let (ch, style) = if i < filled {
-                        ("\u{25B0}", Style::default().fg(COLORS[i]))
-                    } else {
-                        ("\u{25B1}", Style::default().fg(EMPTY))
-                    };
-                    Span::styled(ch, style)
-                })
-                .collect();
-            Line::from(spans)
+fn build_context_bar(pct: f64, width: usize) -> Line<'static> {
+    const COLORS: [Color; 5] = [
+        Color::Green,
+        Color::Cyan,
+        Color::Yellow,
+        Color::Rgb(255, 165, 0),
+        Color::Red,
+    ];
+    const EMPTY: Color = Color::Rgb(100, 100, 100);
+    if width == 0 {
+        return Line::default();
+    }
+    let filled = ((pct / 100.0 * width as f64).round() as usize).clamp(0, width);
+    let spans: Vec<Span> = (0..width)
+        .map(|i| {
+            if i < filled {
+                let color_idx = (i * 5 / width).min(4);
+                Span::styled("\u{25B0}", Style::default().fg(COLORS[color_idx]))
+            } else {
+                Span::styled("\u{25B1}", Style::default().fg(EMPTY))
+            }
         })
-    });
-
-fn build_context_bar_5(pct: f64) -> Line<'static> {
-    const SEGMENTS: usize = 5;
-    let filled = ((pct / 100.0 * SEGMENTS as f64).round() as usize).clamp(0, SEGMENTS);
-    COLORED_CONTEXT_BARS[filled].clone()
+        .collect();
+    Line::from(spans)
 }
 
 /// Shorten a model identifier for display in the separator.
@@ -5076,6 +5071,15 @@ pub async fn run_tui(
                         && mouse.row < app.scrollbar_rect.y + app.scrollbar_rect.height;
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
+                            let debug = format!(
+                                "mouse=Up col={} row={} | px={} rp={} sub={:?} | task_y={}-{} tool_y={}-{} stat_y={}-{}",
+                                mouse.column, mouse.row,
+                                app.last_right_panel_x, in_right_panel, right_sub,
+                                app.right_tasks_rect.y, app.right_tasks_rect.y + app.right_tasks_rect.height,
+                                app.right_tools_rect.y, app.right_tools_rect.y + app.right_tools_rect.height,
+                                app.right_stats_rect.y, app.right_stats_rect.y + app.right_stats_rect.height,
+                            );
+                            app.push_message(MessageContent::System(debug));
                             if let Some(sub) = right_sub {
                                 scroll_right_sub(&mut app, sub, 3);
                             } else {

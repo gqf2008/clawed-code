@@ -1,32 +1,74 @@
 [
   {
-    "id": "explore-structure",
-    "content": "探索项目结构和关键文件",
+    "id": "1",
+    "content": "Explore project structure and workspace config",
     "status": "completed",
     "priority": "high"
   },
   {
-    "id": "build-check",
-    "content": "检查构建状态",
+    "id": "2",
+    "content": "Review core crate (clawed-core) - types, traits, config",
     "status": "completed",
     "priority": "high"
   },
   {
-    "id": "test-check",
-    "content": "运行测试并分析结果",
-    "status": "completed",
+    "id": "3",
+    "content": "Review tools crate (clawed-tools) - tool implementations",
+    "status": "in_progress",
     "priority": "high"
   },
   {
-    "id": "code-quality",
-    "content": "代码质量分析(clippy/fmt/安全)",
-    "status": "completed",
+    "id": "4",
+    "content": "Review agent crate (clawed-agent) - engine, sessions, hooks",
+    "status": "pending",
     "priority": "high"
   },
   {
-    "id": "generate-report",
-    "content": "生成完整审查报告",
-    "status": "completed",
+    "id": "5",
+    "content": "Review CLI crate (clawed-cli) - TUI/REPL entry points",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "id": "6",
+    "content": "Review API crate (clawed-api) - HTTP client, SSE, auth",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "id": "7",
+    "content": "Review MCP/Swarm/Bridge crates",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "id": "8",
+    "content": "Review bus crate (clawed-bus) - event system",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "id": "9",
+    "content": "Review computer-use and RPC crates",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "id": "10",
+    "content": "Analyze testing coverage across workspace",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "id": "11",
+    "content": "Security audit - auth, input handling, permissions",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "id": "12",
+    "content": "Compile final audit report",
+    "status": "pending",
     "priority": "high"
   }
 ]
