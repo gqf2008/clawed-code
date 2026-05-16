@@ -297,15 +297,16 @@ pub fn query_stream_with_injection(
                 stop_sequences: None,
                 temperature: config.temperature,
                 top_p: None,
-                thinking: Some(clawed_api::types::ThinkingConfig {
-                    thinking_type: "enabled".into(),
-                    budget_tokens: Some(10_000),
-                }),
-                context_management: Some(clawed_api::types::ContextManagementConfig {
-                    edits: vec![clawed_api::types::ContextEditStrategy::ClearThinking20251015 {
-                        keep: clawed_api::types::ThinkingKeepStrategy::All("all".into()),
-                    }],
-                }),
+                thinking: config.thinking.clone(),
+                context_management: if config.thinking.is_some() {
+                    Some(clawed_api::types::ContextManagementConfig {
+                        edits: vec![clawed_api::types::ContextEditStrategy::ClearThinking20251015 {
+                            keep: clawed_api::types::ThinkingKeepStrategy::All("all".into()),
+                        }],
+                    })
+                } else {
+                    None
+                },
                 tool_choice: None,
             };
 

@@ -28,6 +28,7 @@ tokio-util = { workspace = true }
 crossterm = { workspace = true }
 dirs = { workspace = true }
 reqwest = { workspace = true }
+rig-core = { workspace = true }
 
 [lints]
 workspace = true

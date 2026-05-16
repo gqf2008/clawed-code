@@ -63,6 +63,7 @@ ratatui = { version = "0.29", features = ["unstable-rendered-line-info"] }
 pulldown-cmark = { version = "0.12", default-features = false, features = ["simd"] }
 assert_cmd = "2"
 predicates = "3"
+rig-core = "0.37"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

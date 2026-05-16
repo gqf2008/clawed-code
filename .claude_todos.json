@@ -1,50 +1,38 @@
 [
   {
     "id": "1",
-    "content": "Review clawed-core (base types, Tool trait, permissions, config)",
-    "status": "in_progress",
+    "content": "Review clawed-core: base types, Tool trait, permissions, config",
+    "status": "pending",
     "priority": "high"
   },
   {
     "id": "2",
-    "content": "Review clawed-bus (event bus pattern)",
+    "content": "Review clawed-bus: event bus, ClientHandle, broadcast",
     "status": "pending",
     "priority": "high"
   },
   {
     "id": "3",
-    "content": "Review clawed-agent (engine orchestration, sessions, hooks, compaction)",
+    "content": "Review clawed-api: HTTP client, SSE streaming, OAuth",
     "status": "pending",
     "priority": "high"
   },
   {
     "id": "4",
-    "content": "Review clawed-tools (ToolRegistry, tool implementations)",
+    "content": "Review clawed-agent: engine orchestration, sessions, hooks",
     "status": "pending",
     "priority": "high"
   },
   {
     "id": "5",
-    "content": "Review clawed-api (HTTP client, SSE, OAuth)",
+    "content": "Review clawed-tools: tool implementations, ToolRegistry",
     "status": "pending",
-    "priority": "medium"
+    "priority": "high"
   },
   {
     "id": "6",
-    "content": "Review clawed-mcp (MCP servers)",
+    "content": "Summarize findings and architectural assessment",
     "status": "pending",
     "priority": "medium"
-  },
-  {
-    "id": "7",
-    "content": "Review clawed-swarm (multi-agent)",
-    "status": "pending",
-    "priority": "medium"
-  },
-  {
-    "id": "8",
-    "content": "Summarize findings",
-    "status": "pending",
-    "priority": "high"
   }
 ]
