@@ -835,7 +835,6 @@ struct App {
     /// Y ranges of the right sub-panels from last render.
     right_tasks_rect: Rect,
     right_tools_rect: Rect,
-    right_stats_rect: Rect,
     /// Scrollbar interaction state.
     scrollbar_rect: Rect,
     scrollbar_total: usize,
@@ -935,7 +934,6 @@ impl App {
             last_right_panel_x: 0,
             right_tasks_rect: Rect::default(),
             right_tools_rect: Rect::default(),
-            right_stats_rect: Rect::default(),
             scrollbar_rect: Rect::default(),
             scrollbar_total: 0,
             scrollbar_viewport: 0,
@@ -2830,7 +2828,6 @@ fn render(frame: &mut Frame, app: &mut App) {
 
         app.right_tasks_rect = r_chunks[0];
         app.right_tools_rect = r_chunks[1];
-        app.right_stats_rect = r_chunks[2];
 
         let active_names: Vec<String> = app.status.active_tools.keys().cloned().collect();
         let is_focused = app.right_panel_focus == Some(RightPanelFocus::ToolHistory);

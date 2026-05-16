@@ -333,10 +333,7 @@ pub(crate) fn likely_markdown(text: &str) -> bool {
         // Line-start patterns
         if at_line_start {
             match b {
-                b'#' | b'-' | b'*' | b'+' | b'>' | b'|' => {
-                    if b == b'|' && i + 2 < bytes.len() && (bytes[i + 1] == b' ' || bytes[i + 1] == b'-' || bytes[i + 1] == b':'){
-                        return true;
-                    }
+                b'#' | b'-' | b'*' | b'+' | b'>' => {
                     if i + 1 < bytes.len() && bytes[i + 1] == b' ' {
                         return true;
                     }
@@ -360,6 +357,15 @@ pub(crate) fn likely_markdown(text: &str) -> bool {
                         }
                         if j == bytes.len() || bytes[j] == b'\n' {
                             return true;
+                        }
+                    }
+                }
+                b'|' => {
+                    // Table row or separator: `| col1 | col2 |` or `|---|---|` or `|:---|`
+                    if i + 1 < bytes.len() {
+                        match bytes[i + 1] {
+                            b' ' | b'-' | b':' => return true,
+                            _ => {}
                         }
                     }
                 }
