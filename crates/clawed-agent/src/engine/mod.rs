@@ -168,6 +168,7 @@ impl QueryEngine {
             context_window: self.context_window.load(Ordering::Relaxed),
             auto_compact_state: Some(Arc::clone(&self.auto_compact)),
             break_cache: self.take_break_cache(),
+            session_id: self.session_id.clone(),
             session_context,
         }
     }

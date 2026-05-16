@@ -503,6 +503,7 @@ impl ApiClient {
             thinking: None,
             tool_choice: None,
             context_management: None,
+            metadata: None,
         }
     }
 

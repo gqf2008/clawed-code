@@ -29,6 +29,10 @@ pub struct MessagesRequest {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_management: Option<ContextManagementConfig>,
+    /// Metadata for session tracking (user_id with session_id).
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
     /// Tool choice override — controls how the model selects tools.
     ///
     /// Anthropic values: `{"type":"auto"}`, `{"type":"any"}`, `{"type":"tool","name":"…"}`.
@@ -51,6 +55,7 @@ impl Default for MessagesRequest {
             top_p: None,
             thinking: None,
             context_management: None,
+            metadata: None,
             tool_choice: None,
         }
     }

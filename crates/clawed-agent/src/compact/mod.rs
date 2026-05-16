@@ -360,6 +360,7 @@ pub async fn compact_conversation(
         thinking: None,
         tool_choice: None,
             context_management: None,
+            metadata: None,
     };
 
     let response = client.messages(&request).await.map_err(|e| {

@@ -108,6 +108,8 @@ pub struct QueryConfig {
     pub auto_compact_state: Option<Arc<tokio::sync::Mutex<AutoCompactState>>>,
     /// If true, skip cache_control markers on this query (one-shot /break-cache).
     pub break_cache: bool,
+    /// Session ID for metadata tracking.
+    pub session_id: String,
     /// Session context (date + git status) for post-compact re-injection.
     /// If set, this is appended after compact boundary messages so the model
     /// retains time/repo awareness across compaction.
@@ -126,6 +128,7 @@ impl Default for QueryConfig {
             context_window: 200_000, // fallback; prefer runtime value from model capabilities
             auto_compact_state: None,
             break_cache: false,
+            session_id: String::new(),
             session_context: None,
         }
     }
@@ -307,6 +310,9 @@ pub fn query_stream_with_injection(
                 } else {
                     None
                 },
+                metadata: Some(serde_json::json!({
+                    "user_id": config.session_id,
+                })),
                 tool_choice: None,
             };
 
