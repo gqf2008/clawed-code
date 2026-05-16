@@ -494,13 +494,11 @@ pub fn query_stream_with_injection(
                                 // blocks even when our request had `thinking: null`;
                                 // storing them then trying to pass them back on the
                                 // next turn (or dropping them and breaking the
-                                // proxy's prefix cache) trips a 400
-                                // "content[].thinking in the thinking mode must be
-                                // passed back to the API". The cleanest cure is to
-                                // never store thinking we didn't ask for.
-                                if has_thinking
-                                    && (!thinking_text.is_empty() || thinking_signature.is_some())
-                                {
+                                // DeepSeek and some proxies return empty thinking/reasoning_content
+                                // for obvious tool calls. The block must be stored and passed
+                                // back exactly as received — dropping it causes 400:
+                                // "thinking must be passed back to the API".
+                                if has_thinking && current_thinking_active {
                                     assistant_blocks.push(ContentBlock::Thinking {
                                         thinking: std::mem::take(&mut thinking_text),
                                         signature: thinking_signature.take(),
