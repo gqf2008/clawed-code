@@ -217,6 +217,20 @@ pub(super) fn messages_to_api(
     skip_cache: bool,
     has_thinking: bool,
 ) -> Vec<ApiMessage> {
+    // Count thinking blocks in the conversation for debug logging.
+    let (total_thinking, total_redacted) = count_thinking_blocks(messages);
+    if total_thinking + total_redacted > 0 {
+        tracing::info!(
+            total_thinking,
+            total_redacted,
+            has_thinking,
+            "messages_to_api: {} thinking / {} redacted in conversation, has_thinking={}",
+            total_thinking,
+            total_redacted,
+            has_thinking
+        );
+    }
+
     let to_api_content = |content: &[ContentBlock]| {
         content
             .iter()
@@ -262,6 +276,24 @@ pub(super) fn messages_to_api(
         }
     }
     api_msgs
+}
+
+/// Count thinking and redacted_thinking blocks across all messages.
+fn count_thinking_blocks(messages: &[Message]) -> (usize, usize) {
+    let mut thinking = 0usize;
+    let mut redacted = 0usize;
+    for msg in messages {
+        if let Message::Assistant(a) = msg {
+            for block in &a.content {
+                match block {
+                    ContentBlock::Thinking { .. } => thinking += 1,
+                    ContentBlock::RedactedThinking { .. } => redacted += 1,
+                    _ => {}
+                }
+            }
+        }
+    }
+    (thinking, redacted)
 }
 
 /// Convert a single content block to API format.

@@ -1,44 +1,44 @@
 [
   {
     "id": "1",
-    "content": "Explore project structure and identify core modules",
+    "content": "Explore project structure and crate layout",
     "status": "in_progress",
     "priority": "high"
   },
   {
     "id": "2",
-    "content": "Review clawed-core: base types, Tool trait, permissions, config",
+    "content": "Review clawed-core (base types, traits, config)",
     "status": "pending",
     "priority": "high"
   },
   {
     "id": "3",
-    "content": "Review clawed-bus: event bus pattern and ClientHandle",
+    "content": "Review clawed-bus (event bus)",
     "status": "pending",
     "priority": "high"
   },
   {
     "id": "4",
-    "content": "Review clawed-agent: engine orchestration, query loop",
+    "content": "Review clawed-agent (engine, sessions, hooks, permissions)",
     "status": "pending",
     "priority": "high"
   },
   {
     "id": "5",
-    "content": "Review clawed-tools: ToolRegistry and tool implementations",
+    "content": "Review clawed-tools (tool system, registry)",
     "status": "pending",
     "priority": "high"
   },
   {
     "id": "6",
-    "content": "Review clawed-api: HTTP client and SSE streaming",
+    "content": "Review clawed-api (HTTP client, SSE, OAuth)",
     "status": "pending",
     "priority": "medium"
   },
   {
     "id": "7",
-    "content": "Summarize findings: architecture strengths, issues, risks",
+    "content": "Summarize findings and architectural assessment",
     "status": "pending",
-    "priority": "high"
+    "priority": "medium"
   }
 ]
