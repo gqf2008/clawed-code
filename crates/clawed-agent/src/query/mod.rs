@@ -301,14 +301,14 @@ pub fn query_stream_with_injection(
                     false
                 }
             });
-            let effective_thinking = if has_thinking_blocks || config.thinking.is_some() {
-                config.thinking.clone().or_else(|| Some(clawed_api::types::ThinkingConfig {
+            // Always enable thinking. DeepSeek and cc-switch track thinking state
+            // per API key and require it on every request, even the first turn.
+            let effective_thinking = Some(
+                config.thinking.clone().unwrap_or(clawed_api::types::ThinkingConfig {
                     thinking_type: "enabled".into(),
                     budget_tokens: Some(10_000),
-                }))
-            } else {
-                None
-            };
+                })
+            );
 
             let has_thinking = effective_thinking.is_some();
             let request = MessagesRequest {
