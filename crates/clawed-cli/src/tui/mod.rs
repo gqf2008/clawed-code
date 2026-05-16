@@ -834,6 +834,9 @@ struct App {
     agent_progress: HashMap<String, String>,
     /// Cached render state for the tool monitor panel.
     tool_monitor_cache: tool_monitor::ToolMonitorCache,
+    /// X coordinate of the right panel boundary from last render. Used to
+    /// determine which panel the mouse wheel scrolls. 0 when panel hidden.
+    last_right_panel_x: u16,
 }
 
 /// A single context suggestion (file, MCP resource, or agent).
@@ -925,6 +928,7 @@ impl App {
             bash_mode: bash_mode::BashModeState::new(),
             agent_progress: HashMap::new(),
             tool_monitor_cache: tool_monitor::ToolMonitorCache::new(),
+            last_right_panel_x: 0,
         }
     }
 
@@ -2764,6 +2768,11 @@ fn render(frame: &mut Frame, app: &mut App) {
     } else {
         Rect::default()
     };
+    app.last_right_panel_x = if task_panel_width > 0 {
+        right_panel.x
+    } else {
+        0
+    };
 
     // ── Left column: vertical (messages + overlays) ──
     let left_constraints = [
@@ -2973,6 +2982,28 @@ fn render_stats_panel(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(para, area);
 }
 
+/// Scroll the focused sub-panel of the right panel. Positive delta scrolls
+/// up (back in history), negative scrolls down.
+fn scroll_right_panel(app: &mut App, delta: i32) {
+    let step = delta.unsigned_abs() as usize;
+    match app.right_panel_focus.unwrap_or(RightPanelFocus::Tasks) {
+        RightPanelFocus::Tasks => {
+            if delta > 0 {
+                app.task_list.scroll_offset = app.task_list.scroll_offset.saturating_add(step);
+            } else {
+                app.task_list.scroll_offset = app.task_list.scroll_offset.saturating_sub(step);
+            }
+        }
+        RightPanelFocus::ToolHistory => {
+            if delta > 0 {
+                app.tool_history_scroll = app.tool_history_scroll.saturating_add(step);
+            } else {
+                app.tool_history_scroll = app.tool_history_scroll.saturating_sub(step);
+            }
+        }
+    }
+}
+
 fn poll_interval(app: &App) -> Duration {
     if app.spinner_active() || app.status.active_shells > 0 || !app.status.active_agents.is_empty()
     {
@@ -2980,6 +3011,39 @@ fn poll_interval(app: &App) -> Duration {
     } else {
         IDLE_POLL_INTERVAL
     }
+}
+
+/// Render a proportional scrollbar on the right edge of the message area.
+fn render_scrollbar(frame: &mut Frame, area: Rect, total_visual: usize, viewport_height: usize, first_visible_line: usize) {
+    if total_visual <= viewport_height {
+        return;
+    }
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let track_h = viewport_height;
+    let thumb_h = (track_h * track_h / total_visual).max(1);
+    let max_top = track_h - thumb_h;
+    let thumb_top = (track_h * first_visible_line / total_visual).min(max_top);
+
+    let track = Style::default().fg(MUTED);
+    let thumb = Style::default().fg(Color::Rgb(100, 100, 100));
+    let mut spans: Vec<Span> = Vec::with_capacity(track_h);
+    for row in 0..track_h {
+        let (ch, style) = if row >= thumb_top && row < thumb_top + thumb_h {
+            ("\u{2588}", thumb) // █ full block
+        } else {
+            ("\u{2502}", track) // │ box drawing light vertical
+        };
+        if row > 0 {
+            spans.push(Span::raw("\n"));
+        }
+        spans.push(Span::styled(ch, style));
+    }
+
+    let para = Paragraph::new(Line::from(spans));
+    frame.render_widget(para, area);
 }
 
 fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -2997,33 +3061,37 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let viewport_height = area.height as usize;
 
-    // --- Sticky header ---
-    let sticky_rows = compute_sticky_rows(app, viewport_height);
-    let msg_area = if sticky_rows > 0 {
-        Rect::new(
-            area.x,
-            area.y + sticky_rows,
-            area.width,
-            area.height - sticky_rows,
-        )
-    } else {
-        area
-    };
-    let msg_viewport_height = msg_area.height as usize;
-
-    // --- Virtual scroll: compute visible message range from height cache ---
-    if app.message_line_counts_width != area.width
+    // Reserve the rightmost column for the scrollbar. Build the height
+    // cache at the narrower width so message wrap does not overlap the bar.
+    let sb_width: u16 = 1;
+    let msg_width = area.width.saturating_sub(sb_width);
+    if app.message_line_counts_width != msg_width
         || app.message_line_counts.iter().any(|c| c.is_none())
     {
-        app.build_height_cache(area.width);
-        app.message_line_counts_width = area.width;
+        app.build_height_cache(msg_width);
+        app.message_line_counts_width = msg_width;
     }
-
     let total_visual: usize = app
         .message_line_counts
         .iter()
         .map(|c| c.unwrap_or(1) as usize)
         .sum();
+    let has_scrollbar = total_visual > viewport_height && msg_width > 0;
+    let adjusted_area = Rect::new(area.x, area.y, msg_width, area.height);
+
+    // --- Sticky header ---
+    let sticky_rows = compute_sticky_rows(app, viewport_height);
+    let msg_area = if sticky_rows > 0 {
+        Rect::new(
+            adjusted_area.x,
+            adjusted_area.y + sticky_rows,
+            adjusted_area.width,
+            adjusted_area.height - sticky_rows,
+        )
+    } else {
+        adjusted_area
+    };
+    let msg_viewport_height = msg_area.height as usize;
 
     // The first visible line counting from the top of the (wrapped) content.
     // Used by the scroll-up path and system message block adjustment.
@@ -3184,20 +3252,31 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
     // Render sticky header overlay at the top of the message area.
     if sticky_rows > 0 {
         if let Some(idx) = app.sticky_anchor {
-            let sticky_area = Rect::new(area.x, area.y, area.width, sticky_rows);
+            let sticky_area = Rect::new(adjusted_area.x, adjusted_area.y, adjusted_area.width, sticky_rows);
             render_sticky_header(frame, sticky_area, &app.messages[idx]);
         }
     }
 
     // Render "N new messages" pill when scrolled up and new content arrived.
     if app.new_messages_count > 0 && app.scroll_offset > 0 {
-        render_new_messages_pill(frame, area, app.new_messages_count);
+        render_new_messages_pill(frame, adjusted_area, app.new_messages_count);
     }
 
     // Render ephemeral agent progress lines at the bottom of the message area.
     // Hidden when scrolled up so the overlay does not obscure message history.
     if app.scroll_offset == 0 {
-        render_agent_progress(frame, area, app);
+        render_agent_progress(frame, adjusted_area, app);
+    }
+
+    // Render scrollbar on the right edge when content overflows.
+    if has_scrollbar {
+        let sb_area = Rect::new(
+            area.x + area.width.saturating_sub(sb_width),
+            msg_area.y,
+            sb_width,
+            msg_viewport_height as u16,
+        );
+        render_scrollbar(frame, sb_area, total_visual, msg_viewport_height, first_visible_line);
     }
 }
 
@@ -4841,12 +4920,24 @@ pub async fn run_tui(
                 }
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollUp => {
-                        app.scroll_offset = app.scroll_offset.saturating_add(3);
-                        app.auto_scroll = false;
+                        // Dispatch to right panel sub-panels or main output based
+                        // on mouse column position.
+                        let in_right_panel = app.last_right_panel_x > 0
+                            && mouse.column >= app.last_right_panel_x;
+                        if in_right_panel {
+                            scroll_right_panel(&mut app, 3);
+                        } else {
+                            app.scroll_offset = app.scroll_offset.saturating_add(3);
+                            app.auto_scroll = false;
+                        }
                         app.request_redraw();
                     }
                     MouseEventKind::ScrollDown => {
-                        if app.scroll_offset > 0 {
+                        let in_right_panel = app.last_right_panel_x > 0
+                            && mouse.column >= app.last_right_panel_x;
+                        if in_right_panel {
+                            scroll_right_panel(&mut app, -3i32);
+                        } else if app.scroll_offset > 0 {
                             app.scroll_offset = app.scroll_offset.saturating_sub(3);
                             if app.scroll_offset == 0 {
                                 app.auto_scroll = true;
