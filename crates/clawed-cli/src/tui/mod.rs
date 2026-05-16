@@ -1620,30 +1620,18 @@ impl App {
                         )
                     })
                 };
+                let mut tool_input: Option<String> = None;
                 if let Some(msg) = msg {
+                    tool_input = match &msg.content {
+                        MessageContent::ToolExecution { input, .. } => input.clone(),
+                        _ => None,
+                    };
                     msg.update_tool_result(is_error, duration_ms, &result);
                     self.invalidate_visible_lines();
                 }
-                // Push to tool history. Extract input summary from the ToolExecution
-                // message; avoids a separate HashMap that must stay in sync.
-                let input_summary = self
-                    .messages
-                    .iter()
-                    .rev()
-                    .find(|m| {
-                        matches!(
-                            &m.content,
-                            MessageContent::ToolExecution { name, .. } if *name == tool_name
-                        )
-                    })
-                    .and_then(|m| match &m.content {
-                        MessageContent::ToolExecution { input, .. } => input.clone(),
-                        _ => None,
-                    })
-                    .unwrap_or_default();
                 self.tool_history.push(ToolHistoryEntry {
                     tool_name: tool_name.clone(),
-                    input_summary,
+                    input_summary: tool_input.unwrap_or_default(),
                     duration_ms,
                     is_error,
                     timestamp: Instant::now(),
@@ -4870,8 +4858,8 @@ pub async fn run_tui(
                     _ => {}
                 },
                 Event::Resize(_, _) => {
-                    // Full clear ensures no ghost cells after resize changes layout geometry.
                     app.needs_full_clear = true;
+                    app.tool_monitor_cache.dirty = true;
                     app.request_redraw();
                 }
                 Event::Paste(text) => {
