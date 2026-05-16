@@ -3029,20 +3029,18 @@ fn render_scrollbar(frame: &mut Frame, area: Rect, total_visual: usize, viewport
 
     let track = Style::default().fg(MUTED);
     let thumb = Style::default().fg(Color::Rgb(100, 100, 100));
-    let mut spans: Vec<Span> = Vec::with_capacity(track_h);
-    for row in 0..track_h {
-        let (ch, style) = if row >= thumb_top && row < thumb_top + thumb_h {
-            ("\u{2588}", thumb) // █ full block
-        } else {
-            ("\u{2502}", track) // │ box drawing light vertical
-        };
-        if row > 0 {
-            spans.push(Span::raw("\n"));
-        }
-        spans.push(Span::styled(ch, style));
-    }
+    let lines: Vec<Line> = (0..track_h)
+        .map(|row| {
+            let (ch, style) = if row >= thumb_top && row < thumb_top + thumb_h {
+                ("\u{2588}", thumb) // █ full block
+            } else {
+                ("\u{2502}", track) // │ box drawing light vertical
+            };
+            Line::from(Span::styled(ch, style))
+        })
+        .collect();
 
-    let para = Paragraph::new(Line::from(spans));
+    let para = Paragraph::new(lines);
     frame.render_widget(para, area);
 }
 
@@ -4918,35 +4916,34 @@ pub async fn run_tui(
                         input::InputAction::None => {}
                     }
                 }
-                Event::Mouse(mouse) => match mouse.kind {
-                    MouseEventKind::ScrollUp => {
-                        // Dispatch to right panel sub-panels or main output based
-                        // on mouse column position.
-                        let in_right_panel = app.last_right_panel_x > 0
-                            && mouse.column >= app.last_right_panel_x;
-                        if in_right_panel {
-                            scroll_right_panel(&mut app, 3);
-                        } else {
-                            app.scroll_offset = app.scroll_offset.saturating_add(3);
-                            app.auto_scroll = false;
-                        }
-                        app.request_redraw();
-                    }
-                    MouseEventKind::ScrollDown => {
-                        let in_right_panel = app.last_right_panel_x > 0
-                            && mouse.column >= app.last_right_panel_x;
-                        if in_right_panel {
-                            scroll_right_panel(&mut app, -3i32);
-                        } else if app.scroll_offset > 0 {
-                            app.scroll_offset = app.scroll_offset.saturating_sub(3);
-                            if app.scroll_offset == 0 {
-                                app.auto_scroll = true;
-                                app.new_messages_count = 0;
+                Event::Mouse(mouse) => {
+                    // Dispatch scroll to the panel under the mouse cursor.
+                    let in_right_panel = app.last_right_panel_x > 0
+                        && mouse.column >= app.last_right_panel_x;
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => {
+                            if in_right_panel {
+                                scroll_right_panel(&mut app, 3);
+                            } else {
+                                app.scroll_offset = app.scroll_offset.saturating_add(3);
+                                app.auto_scroll = false;
                             }
+                            app.request_redraw();
                         }
-                        app.request_redraw();
+                        MouseEventKind::ScrollDown => {
+                            if in_right_panel {
+                                scroll_right_panel(&mut app, -3i32);
+                            } else if app.scroll_offset > 0 {
+                                app.scroll_offset = app.scroll_offset.saturating_sub(3);
+                                if app.scroll_offset == 0 {
+                                    app.auto_scroll = true;
+                                    app.new_messages_count = 0;
+                                }
+                            }
+                            app.request_redraw();
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 },
                 Event::Resize(_, _) => {
                     app.needs_full_clear = true;
