@@ -54,9 +54,9 @@ impl CostWindow {
     fn duration(&self) -> Option<Duration> {
         match self {
             Self::All => None,
-            Self::Today => Some(Duration::from_secs(24 * 3600)),
-            Self::Week => Some(Duration::from_secs(7 * 24 * 3600)),
-            Self::Month => Some(Duration::from_secs(30 * 24 * 3600)),
+            Self::Today => Some(Duration::from_hours(24)),
+            Self::Week => Some(Duration::from_hours(168)),
+            Self::Month => Some(Duration::from_hours(720)),
         }
     }
 }

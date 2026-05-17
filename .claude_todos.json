@@ -1,74 +1,44 @@
 [
   {
     "id": "1",
-    "content": "Explore project structure and workspace config",
+    "content": "Review recently modified files and git diff",
     "status": "completed",
     "priority": "high"
   },
   {
     "id": "2",
-    "content": "Review core crate (clawed-core) - types, traits, config",
+    "content": "Deep dive: TUI markdown.rs (currently modified)",
     "status": "completed",
     "priority": "high"
   },
   {
     "id": "3",
-    "content": "Review tools crate (clawed-tools) - tool implementations",
-    "status": "in_progress",
+    "content": "Deep dive: ACP crate code quality",
+    "status": "completed",
     "priority": "high"
   },
   {
     "id": "4",
-    "content": "Review agent crate (clawed-agent) - engine, sessions, hooks",
-    "status": "pending",
+    "content": "Deep dive: ToolCategory dual definition + unwrap patterns",
+    "status": "completed",
     "priority": "high"
   },
   {
     "id": "5",
-    "content": "Review CLI crate (clawed-cli) - TUI/REPL entry points",
-    "status": "pending",
-    "priority": "high"
+    "content": "Deep dive: agent engine and executor",
+    "status": "completed",
+    "priority": "medium"
   },
   {
     "id": "6",
-    "content": "Review API crate (clawed-api) - HTTP client, SSE, auth",
-    "status": "pending",
-    "priority": "high"
+    "content": "Deep dive: TUI mod.rs - parse_inline_spans vs markdown duplication",
+    "status": "completed",
+    "priority": "medium"
   },
   {
     "id": "7",
-    "content": "Review MCP/Swarm/Bridge crates",
-    "status": "pending",
-    "priority": "medium"
-  },
-  {
-    "id": "8",
-    "content": "Review bus crate (clawed-bus) - event system",
-    "status": "pending",
-    "priority": "medium"
-  },
-  {
-    "id": "9",
-    "content": "Review computer-use and RPC crates",
-    "status": "pending",
-    "priority": "medium"
-  },
-  {
-    "id": "10",
-    "content": "Analyze testing coverage across workspace",
-    "status": "pending",
-    "priority": "high"
-  },
-  {
-    "id": "11",
-    "content": "Security audit - auth, input handling, permissions",
-    "status": "pending",
-    "priority": "high"
-  },
-  {
-    "id": "12",
-    "content": "Compile final audit report",
-    "status": "pending",
+    "content": "Compile findings with code citations",
+    "status": "in_progress",
     "priority": "high"
   }
 ]

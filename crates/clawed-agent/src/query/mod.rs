@@ -292,7 +292,7 @@ pub fn query_stream_with_injection(
             // Auto-detect: enable thinking if any assistant message contains
             // thinking blocks. Required by DeepSeek and other providers that
             // track thinking state per API key / conversation.
-            let has_thinking_blocks = messages.iter().any(|msg| {
+            let _has_thinking_blocks = messages.iter().any(|msg| {
                 if let Message::Assistant(a) = msg {
                     a.content.iter().any(|b| {
                         matches!(b, ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. })

@@ -455,15 +455,14 @@ pub(crate) fn likely_markdown(text: &str) -> bool {
                         }
                     }
                 }
-                b'|' => {
+                b'|'
                     // Table row or separator: `| col1 | col2 |` or `|---|---|` or `|:---|`
-                    if i + 1 < bytes.len() {
+                    if i + 1 < bytes.len() => {
                         match bytes[i + 1] {
                             b' ' | b'-' | b':' => return true,
                             _ => {}
                         }
                     }
-                }
                 _ if b.is_ascii_digit() => {
                     let mut j = i + 1;
                     while j < bytes.len() && bytes[j].is_ascii_digit() {

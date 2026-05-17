@@ -1966,7 +1966,7 @@ impl App {
                         let status = if s.connected { "✓" } else { "✗" };
                         lines
                             .push_str(
-                                &format!("  {status} {} ({} tools)\n", s.name, s.tool_count,),
+                                &format!("  {status} {} ({} tools)\n", s.name, s.tool_count),
                             );
                     }
                     self.push_message(MessageContent::System(lines));
@@ -2602,7 +2602,7 @@ impl App {
                 if name.is_empty() {
                     self.push_message(MessageContent::System("Usage: /tag <name>".to_string()));
                 } else {
-                    self.push_message(MessageContent::System(format!("✓ Tagged session: {name}",)));
+                    self.push_message(MessageContent::System(format!("✓ Tagged session: {name}")));
                 }
             }
             crate::commands::CommandResult::Stickers => {
@@ -5101,17 +5101,15 @@ pub async fn run_tui(
                             }
                             app.request_redraw();
                         }
-                        MouseEventKind::Down(_) => {
-                            if on_scrollbar {
+                        MouseEventKind::Down(_)
+                            if on_scrollbar => {
                                 app.scrollbar_dragging = true;
                                 scroll_to_row(&mut app, mouse.row);
                             }
-                        }
-                        MouseEventKind::Drag(_) => {
-                            if app.scrollbar_dragging {
+                        MouseEventKind::Drag(_)
+                            if app.scrollbar_dragging => {
                                 scroll_to_row(&mut app, mouse.row);
                             }
-                        }
                         MouseEventKind::Up(_) => {
                             app.scrollbar_dragging = false;
                         }
@@ -5563,7 +5561,7 @@ async fn handle_async_command(
                 } else {
                     prompt.clone()
                 };
-                app.push_message(MessageContent::System(format!("Retrying: {preview}",)));
+                app.push_message(MessageContent::System(format!("Retrying: {preview}")));
                 let _ = client.submit(&prompt);
                 app.mark_generating();
             } else {
@@ -5693,7 +5691,7 @@ async fn handle_async_command(
             .await;
             match result {
                 Ok(Ok(filename)) => {
-                    app.push_message(MessageContent::System(format!("✓ Exported to {filename}",)));
+                    app.push_message(MessageContent::System(format!("✓ Exported to {filename}")));
                 }
                 Ok(Err(e)) => {
                     app.push_message(MessageContent::System(format!("Export failed: {e}")));
@@ -5919,7 +5917,7 @@ async fn handle_async_command(
                 }
                 Err(e) => {
                     app.push_message(MessageContent::System(
-                        format!("Feedback task failed: {e}",),
+                        format!("Feedback task failed: {e}"),
                     ));
                 }
             }
@@ -6252,7 +6250,7 @@ async fn handle_async_command(
             let skills = clawed_core::skills::get_skills(&cwd);
             match crate::repl_commands::find_skill(&skills, &name) {
                 Ok(skill) => {
-                    app.push_message(MessageContent::System(format!("Running skill: {name}",)));
+                    app.push_message(MessageContent::System(format!("Running skill: {name}")));
                     if !skill.allowed_tools.is_empty() {
                         app.push_message(MessageContent::System(format!(
                             "Skill restricts tools to: {}",

@@ -83,7 +83,7 @@ impl UserPrompter for BusUserPrompter {
             return Err(anyhow::anyhow!("No UI client listening for user questions"));
         }
 
-        let timeout = std::time::Duration::from_secs(300);
+        let timeout = std::time::Duration::from_mins(5);
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(resp)) => {
                 if resp.cancelled {

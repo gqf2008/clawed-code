@@ -100,7 +100,7 @@ impl PermissionPrompter for BusPermissionPrompter {
             return PermissionResponse::deny();
         }
 
-        let timeout = std::time::Duration::from_secs(300);
+        let timeout = std::time::Duration::from_mins(5);
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(bus_resp)) => {
                 if bus_resp.granted {

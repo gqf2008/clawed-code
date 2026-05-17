@@ -311,7 +311,7 @@ impl ToolExecutor {
                     // a brief summary to avoid overflowing the TUI layout.
                     let desc = build_perm_description(canonical, &input);
                     let suggestions = perm.suggestions.clone();
-                    let perm_timeout = std::time::Duration::from_secs(300); // 5 min default
+                    let perm_timeout = std::time::Duration::from_mins(5); // 5 min default
                     let response = match tokio::time::timeout(
                         perm_timeout,
                         self.prompter()

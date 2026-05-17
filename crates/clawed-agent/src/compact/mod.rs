@@ -478,16 +478,14 @@ pub fn summarize_tool_uses(messages: &[Message]) -> String {
                     // Track files
                     if let Some(path) = input["file_path"].as_str() {
                         match name.as_str() {
-                            "Read" => {
-                                if !files_read.contains(&path.to_string()) {
+                            "Read"
+                                if !files_read.contains(&path.to_string()) => {
                                     files_read.push(path.to_string());
                                 }
-                            }
-                            "Edit" | "Write" | "MultiEdit" => {
-                                if !files_modified.contains(&path.to_string()) {
+                            "Edit" | "Write" | "MultiEdit"
+                                if !files_modified.contains(&path.to_string()) => {
                                     files_modified.push(path.to_string());
                                 }
-                            }
                             _ => {}
                         }
                     }

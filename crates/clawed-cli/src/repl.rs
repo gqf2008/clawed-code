@@ -843,7 +843,7 @@ pub async fn run(
                                         .unwrap_or_else(|| {
                                             eprintln!("{}Unknown color: '{}'. Options: red, green, yellow, blue, magenta, cyan, white, default\x1b[0m",
                                                 theme::c_warn(), name);
-                                            return "";
+                                            ""
                                         });
                                     if !code.is_empty() {
                                         println!(
@@ -1614,7 +1614,7 @@ Report format: markdown with file, line, severity (CRITICAL/HIGH/MEDIUM/LOW), ca
                                 let display_id = if session_id.len() >= 8 {
                                     &session_id[..8]
                                 } else {
-                                    &session_id
+                                    session_id
                                 };
                                 println!("  ID:     {display_id}");
                             }
@@ -1674,7 +1674,7 @@ You can read ~/.bashrc, ~/.zshrc, ~/.config/fish/config.fish, etc. and modify ~/
                                 println!("  \x1b[2mURL: {}\x1b[0m", url);
                                 match opener::open(url) {
                                     Ok(_) => {
-                                        println!("  {}Desktop app launched.\x1b[0m", theme::c_ok())
+                                        println!("  {}Desktop app launched.\x1b[0m", theme::c_ok());
                                     }
                                     Err(e) => eprintln!(
                                         "{}Failed to open desktop: {}\x1b[0m",
@@ -1909,7 +1909,7 @@ You can read ~/.bashrc, ~/.zshrc, ~/.config/fish/config.fish, etc. and modify ~/
                         let _stream_guard = spawn_stream_input(engine.abort_signal());
                         // Render notifications until TurnComplete (10min per-notification timeout)
                         let mut renderer = OutputRenderer::new(&model);
-                        let render_timeout = Duration::from_secs(600);
+                        let render_timeout = Duration::from_mins(10);
                         while let Some(notification) =
                             recv_with_timeout(client, render_timeout).await
                         {

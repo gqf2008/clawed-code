@@ -34,7 +34,7 @@ impl StatusLineState {
             command,
             output: Arc::new(Mutex::new(String::new())),
             updating: Arc::new(AtomicBool::new(false)),
-            last_update: Instant::now() - Duration::from_secs(60),
+            last_update: Instant::now() - Duration::from_mins(1),
             needs_refresh: true,
         }
     }
