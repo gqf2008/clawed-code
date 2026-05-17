@@ -249,8 +249,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut TaskListState) {
     state.scroll_offset = state.scroll_offset.min(max_scroll);
     let visible: Vec<Line> = wrapped.iter().skip(state.scroll_offset).take(inner_height).cloned().collect();
 
-    let title = if state.scroll_offset > 0 {
-        format!(" Tasks \u{2191}{} ", state.scroll_offset)
+    let title = if max_scroll > 0 {
+        format!(
+            " Tasks {}/{}\u{2195} ",
+            state.scroll_offset + visible.len(),
+            wrapped.len()
+        )
     } else {
         " Tasks ".to_string()
     };
@@ -262,6 +266,34 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut TaskListState) {
 
     let para = Paragraph::new(visible).block(block).wrap(Wrap { trim: false });
     frame.render_widget(para, area);
+
+    // Scrollbar — on the right border line, inside the panel
+    if max_scroll > 0 {
+        let sb_area = Rect::new(
+            area.x + area.width.saturating_sub(2),
+            area.y + 1,
+            1,
+            area.height.saturating_sub(2),
+        );
+        let track_h = sb_area.height as usize;
+        let total = wrapped.len();
+        let thumb_h = (track_h * track_h / total).max(1);
+        let max_top = track_h - thumb_h;
+        let thumb_top = (track_h * state.scroll_offset / total).min(max_top);
+        let track = super::muted();
+        let thumb = Style::default().fg(Color::Rgb(140, 140, 140));
+        let sb_lines: Vec<Line> = (0..track_h)
+            .map(|row| {
+                let (ch, style) = if row >= thumb_top && row < thumb_top + thumb_h {
+                    ("\u{258C}", thumb)
+                } else {
+                    ("\u{00B7}", track)
+                };
+                Line::from(Span::styled(ch, style))
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(sb_lines), sb_area);
+    }
 }
 
 fn split_at_display_width(s: &str, max_width: usize) -> (&str, &str) {

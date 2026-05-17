@@ -1084,6 +1084,23 @@ impl App {
 
         if self.is_generating && index + 1 == self.messages.len() {
             if let MessageContent::AssistantText(text) = &msg.content {
+                if markdown::likely_markdown(text) {
+                    let dim = muted();
+                    let prefix = Span::styled("\u{25CF} ", dim);
+                    let blank_prefix = Span::raw("   ");
+                    return markdown::render_markdown(text)
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, mut line)| {
+                            if i == 0 {
+                                line.spans.insert(0, prefix.clone());
+                            } else {
+                                line.spans.insert(0, blank_prefix.clone());
+                            }
+                            line
+                        })
+                        .collect();
+                }
                 return plain_text_lines(text);
             }
         }
@@ -3113,13 +3130,13 @@ fn render_scrollbar(frame: &mut Frame, area: Rect, total_visual: usize, viewport
     let thumb_top = (track_h * first_visible_line / total_visual).min(max_top);
 
     let track = Style::default().fg(MUTED);
-    let thumb = Style::default().fg(Color::Rgb(100, 100, 100));
+    let thumb = Style::default().fg(Color::Rgb(140, 140, 140));
     let lines: Vec<Line> = (0..track_h)
         .map(|row| {
             let (ch, style) = if row >= thumb_top && row < thumb_top + thumb_h {
-                ("\u{2588}", thumb) // █ full block
+                ("\u{258C}", thumb)
             } else {
-                ("\u{2502}", track) // │ box drawing light vertical
+                ("\u{00B7}", track)
             };
             Line::from(Span::styled(ch, style))
         })
@@ -4354,6 +4371,12 @@ pub async fn run_tui(
     let mut terminal = ratatui::Terminal::new(backend)?;
     // Clear screen for a clean start
     terminal.clear()?;
+    // Set a default render width before the first frame so streaming
+    // markdown rendering (which may run during notification processing
+    // before the first render) has a reasonable width to work with.
+    if let Ok(size) = crossterm::terminal::size() {
+        markdown::set_render_width(size.0.max(40));
+    }
 
     // Suppress diff_ui stderr output in TUI mode to prevent ratatui corruption.
     clawed_tools::diff_ui::set_tui_mode(true);

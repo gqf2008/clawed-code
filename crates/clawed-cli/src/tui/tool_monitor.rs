@@ -139,6 +139,34 @@ pub fn render(
 
     let para = Paragraph::new(visible).block(block).wrap(Wrap { trim: false });
     frame.render_widget(para, area);
+
+    // Scrollbar — on the right border line, inside the panel
+    if max_scroll > 0 {
+        let sb_area = Rect::new(
+            area.x + area.width.saturating_sub(2),
+            area.y + 1,
+            1,
+            area.height.saturating_sub(2),
+        );
+        let track_h = sb_area.height as usize;
+        let total = cache.lines.len();
+        let thumb_h = (track_h * track_h / total).max(1);
+        let max_top = track_h - thumb_h;
+        let thumb_top = (track_h * *scroll_offset / total).min(max_top);
+        let track = Style::default().fg(MUTED);
+        let thumb = Style::default().fg(Color::Rgb(140, 140, 140));
+        let sb_lines: Vec<Line> = (0..track_h)
+            .map(|row| {
+                let (ch, style) = if row >= thumb_top && row < thumb_top + thumb_h {
+                    ("\u{258C}", thumb)
+                } else {
+                    ("\u{00B7}", track)
+                };
+                Line::from(Span::styled(ch, style))
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(sb_lines), sb_area);
+    }
 }
 
 fn shorten(name: &str, max: usize) -> String {
