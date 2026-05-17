@@ -114,7 +114,10 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
     } else {
         crossterm::terminal::size().ok().map(|(w, _)| w as usize)
     };
-    let fmt_text = skin.text(text, width);
+    // Termimad requires a `|-` bottom row to render full table borders.
+    // Also add a leading alignment row so the top border appears.
+    let adjusted = ensure_table_borders(text);
+    let fmt_text = skin.text(if adjusted.is_empty() { text } else { &adjusted }, width);
     let mut buf = Vec::new();
     // termimad's Display writes ANSI SGR sequences via crossterm's queue! macro.
     // queue! does not check for TTY — it unconditionally writes escape codes.
@@ -294,6 +297,83 @@ fn ansi_color(idx: u8) -> Color {
         15 => Color::White,
         n => Color::Indexed(n),
     }
+}
+
+/// Add termimad's expected alignment-row-above-header and `|-`-row-below
+/// so pipe tables render with full top and bottom borders.
+fn ensure_table_borders(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let is_sep = |l: &str| {
+        let t = l.trim();
+        t.starts_with('|') && t.ends_with('|')
+            && t.len() >= 3
+            && t[1..t.len() - 1]
+                .split('|')
+                .all(|c| c.chars().all(|ch| matches!(ch, '-' | ':' | ' ')))
+    };
+    let is_row = |l: &str| {
+        let t = l.trim();
+        t.starts_with('|') && t.ends_with('|') && !is_sep(l)
+    };
+    // Mark which original lines belong to a table block
+    let n = lines.len();
+    let mut tbl_start = vec![usize::MAX; n];  // block-start index per line
+    let mut tbl_end = vec![usize::MAX; n];    // block-end (exclusive) per line
+    for i in 0..n {
+        if is_sep(lines[i]) && tbl_start[i] == usize::MAX {
+            // Scan back to find header (first table row before separator)
+            let mut start = i;
+            if start > 0 && is_row(lines[start - 1]) {
+                start -= 1;
+            }
+            // Check for alignment row above header
+            if start > 0 && is_sep(lines[start - 1]) {
+                start -= 1; // don't need to add one
+            }
+            // Scan forward to find end of table data
+            let mut end = i + 1;
+            while end < n && is_row(lines[end]) {
+                end += 1;
+            }
+            // Check for existing `|-` bottom row
+            let have_bottom = end < n
+                && lines[end].trim().starts_with('|')
+                && lines[end].trim()[1..].chars().all(|ch| matches!(ch, '-' | '_'));
+            if have_bottom {
+                end += 1;
+            }
+            for j in start..end {
+                tbl_start[j] = start;
+                tbl_end[j] = end;
+            }
+        }
+    }
+    // Build output, inserting missing rows
+    let mut out = String::with_capacity(text.len() + 64);
+    let mut i = 0;
+    while i < n {
+        let t = lines[i].trim();
+        if tbl_start[i] == i && is_row(lines[i]) && (i + 1 < n && is_sep(lines[i + 1])) {
+            // This is a header row without an alignment row above — insert one
+            let cols = t[1..t.len() - 1].split('|').count();
+            for _ in 0..cols {
+                out.push_str("|:-:");
+            }
+            out.push_str("|\n");
+        }
+        out.push_str(lines[i]);
+        out.push('\n');
+        // If this is the last row of a table block that lacks `|-`, add it
+        if tbl_end[i] != usize::MAX && i + 1 == tbl_end[i] && tbl_end[i] <= n {
+            out.push_str("|-");
+            out.push('\n');
+        }
+        i += 1;
+    }
+    if !text.ends_with('\n') && out.ends_with('\n') {
+        out.pop();
+    }
+    out
 }
 
 /// Quick heuristic: does this text look like it contains markdown?
