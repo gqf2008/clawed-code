@@ -1,43 +1,31 @@
 [
   {
     "id": "1",
-    "content": "Review recently modified files and git diff",
+    "content": "Explore OutputMode enum and its usage patterns",
     "status": "completed",
     "priority": "high"
   },
   {
     "id": "2",
-    "content": "Deep dive: TUI markdown.rs (currently modified)",
+    "content": "Explore CLI argument handling and provider/config patterns",
     "status": "completed",
     "priority": "high"
   },
   {
     "id": "3",
-    "content": "Deep dive: ACP crate code quality",
+    "content": "Explore agent loop and compaction logic",
     "status": "completed",
-    "priority": "high"
+    "priority": "medium"
   },
   {
     "id": "4",
-    "content": "Deep dive: ToolCategory dual definition + unwrap patterns",
+    "content": "Explore tool system and MCP integration",
     "status": "completed",
-    "priority": "high"
+    "priority": "medium"
   },
   {
     "id": "5",
-    "content": "Deep dive: agent engine and executor",
-    "status": "completed",
-    "priority": "medium"
-  },
-  {
-    "id": "6",
-    "content": "Deep dive: TUI mod.rs - parse_inline_spans vs markdown duplication",
-    "status": "completed",
-    "priority": "medium"
-  },
-  {
-    "id": "7",
-    "content": "Compile findings with code citations",
+    "content": "Summarize findings with concrete code examples",
     "status": "in_progress",
     "priority": "high"
   }

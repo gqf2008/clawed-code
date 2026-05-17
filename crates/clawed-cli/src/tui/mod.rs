@@ -858,8 +858,6 @@ struct App {
     scrollbar_total: usize,
     scrollbar_viewport: usize,
     scrollbar_dragging: bool,
-    /// Saved scroll ratio (0.0–1.0) to restore after a resize.
-    scroll_ratio: Option<f64>,
 }
 
 /// A single context suggestion (file, MCP resource, or agent).
@@ -960,7 +958,6 @@ impl App {
             scrollbar_total: 0,
             scrollbar_viewport: 0,
             scrollbar_dragging: false,
-            scroll_ratio: None,
         }
     }
 
@@ -3181,14 +3178,6 @@ fn render_messages(frame: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .map(|c| c.unwrap_or(1) as usize)
         .sum();
-    // After a resize, restore proportional scroll position
-    if let Some(ratio) = app.scroll_ratio.take() {
-        if total_visual > viewport_height {
-            let new_max = total_visual - viewport_height;
-            app.scroll_offset = (ratio * new_max as f64).round() as usize;
-            app.auto_scroll = app.scroll_offset == 0;
-        }
-    }
     let has_scrollbar = total_visual > viewport_height && msg_width > 0;
     let adjusted_area = Rect::new(area.x, area.y, msg_width, area.height);
 
@@ -4482,11 +4471,11 @@ pub async fn run_tui(
             app.request_redraw();
         }
 
-        // Ghost cells from layout changes are handled by ratatui's diff-based
-        // rendering on the alternate screen; no terminal-level clear needed.
+        // On resize or layout change, force a real terminal clear before redraw
+        // so the new layout doesn't get scribbled over the old one.
         if app.needs_full_clear {
             app.needs_full_clear = false;
-            app.request_redraw();
+            let _ = terminal.clear();
         }
 
         if app.needs_redraw {
@@ -5116,23 +5105,17 @@ pub async fn run_tui(
                         _ => {}
                     }
                 },
-                Event::Resize(_, _) => {
+                Event::Resize(w, h) => {
+                    app.term_width = w;
+                    app.term_height = h;
                     app.needs_full_clear = true;
                     app.tool_monitor_cache.dirty = true;
-                    // Save scroll ratio to restore after height cache rebuild
-                    if app.scroll_offset > 0 {
-                        let total: usize = app.message_line_counts.iter()
-                            .map(|c| c.unwrap_or(1) as usize).sum();
-                        let vp = app.term_height.saturating_sub(8) as usize;
-                        let max = total.saturating_sub(vp);
-                        app.scroll_ratio = if max > 0 {
-                            Some(app.scroll_offset as f64 / max as f64)
-                        } else {
-                            None
-                        };
-                    } else {
-                        app.scroll_ratio = None;
-                    }
+                    // Reset to bottom on resize — the height cache will be rebuilt
+                    // with the new geometry, making old scroll_offset meaningless.
+                    app.auto_scroll = true;
+                    app.scroll_offset = 0;
+                    app.new_messages_count = 0;
+                    app.invalidate_visible_lines();
                     app.request_redraw();
                 }
                 Event::Paste(text) => {
