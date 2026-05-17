@@ -1084,30 +1084,6 @@ impl App {
 
         if self.is_generating && index + 1 == self.messages.len() {
             if let MessageContent::AssistantText(text) = &msg.content {
-                if markdown::likely_markdown(text) {
-                    let rendered = markdown::render_markdown(text);
-                    // Safety: if termimad left raw ANSI escapes in output, fall back to plain text.
-                    let has_ansi = rendered.iter().any(|line| {
-                        line.spans.iter().any(|s| s.content.contains('\x1b'))
-                    });
-                    if !has_ansi {
-                        let dim = muted();
-                        let prefix = Span::styled("\u{25CF} ", dim);
-                        let blank_prefix = Span::raw("   ");
-                        return rendered
-                            .into_iter()
-                            .enumerate()
-                            .map(|(i, mut line)| {
-                                if i == 0 {
-                                    line.spans.insert(0, prefix.clone());
-                                } else {
-                                    line.spans.insert(0, blank_prefix.clone());
-                                }
-                                line
-                            })
-                            .collect();
-                    }
-                }
                 return plain_text_lines(text);
             }
         }
@@ -5071,15 +5047,6 @@ pub async fn run_tui(
                         && mouse.row < app.scrollbar_rect.y + app.scrollbar_rect.height;
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
-                            let debug = format!(
-                                "mouse=Up col={} row={} | px={} rp={} sub={:?} | task_y={}-{} tool_y={}-{} stat_y={}-{}",
-                                mouse.column, mouse.row,
-                                app.last_right_panel_x, in_right_panel, right_sub,
-                                app.right_tasks_rect.y, app.right_tasks_rect.y + app.right_tasks_rect.height,
-                                app.right_tools_rect.y, app.right_tools_rect.y + app.right_tools_rect.height,
-                                app.right_stats_rect.y, app.right_stats_rect.y + app.right_stats_rect.height,
-                            );
-                            app.push_message(MessageContent::System(debug));
                             if let Some(sub) = right_sub {
                                 scroll_right_sub(&mut app, sub, 3);
                             } else {

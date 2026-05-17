@@ -75,7 +75,7 @@ pub fn render(
                     Span::styled(" running", dim),
                 ]));
             }
-            for entry in entries.iter().rev().take(inner_height.saturating_sub(cache.lines.len())) {
+            for entry in entries.iter().rev() {
                 let (icon, style) = if entry.is_error {
                     ("\u{2717}", error_style)
                 } else {
