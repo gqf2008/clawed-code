@@ -612,10 +612,9 @@ pub(crate) fn spawn_stream_input(abort: AbortSignal) -> StreamInputGuard {
                             abort.abort();
                             break;
                         }
-                        KeyCode::Backspace
-                            if buffer.pop().is_some() && do_split => {
-                                redraw_input_dock(term_h, &buffer);
-                            }
+                        KeyCode::Backspace if buffer.pop().is_some() && do_split => {
+                            redraw_input_dock(term_h, &buffer);
+                        }
                         KeyCode::Char(c)
                             if !key.modifiers.contains(KeyModifiers::CONTROL)
                                 && !key.modifiers.contains(KeyModifiers::ALT) =>

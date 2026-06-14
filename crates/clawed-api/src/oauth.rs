@@ -203,7 +203,7 @@ impl OAuthFlow {
 
         // Wait for the callback (timeout after 5 min)
         let code = tokio::time::timeout(
-            std::time::Duration::from_secs(300),
+            std::time::Duration::from_mins(5),
             wait_for_code(&listener, &state),
         )
         .await

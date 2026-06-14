@@ -351,15 +351,14 @@ mod tests {
         assert!(fe.success);
         assert!(be.success);
 
-        // Message to backend agent cannot route through frontend coordinator
-        assert!(
-            net.send_message("frontend", &be.agent_id, "hello", None)
-                .await
-                .unwrap()
-                .success
-                == false
-                || true
-        ); // error or not-found response — teams are isolated
+        // Message to backend agent cannot route through frontend coordinator (teams are isolated):
+        // it must either error or return success=false.
+        let routed = net
+            .send_message("frontend", &be.agent_id, "hello", None)
+            .await
+            .map(|r| r.success)
+            .unwrap_or(false);
+        assert!(!routed, "cross-team message must not route");
 
         // Each team has exactly 1 agent
         let fts = net.team_status("frontend").await.unwrap();

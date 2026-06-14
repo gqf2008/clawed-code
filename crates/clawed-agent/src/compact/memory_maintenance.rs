@@ -216,8 +216,8 @@ async fn call_maintenance_llm(
         top_p: None,
         thinking: None,
         tool_choice: None,
-            context_management: None,
-            metadata: None,
+        context_management: None,
+        metadata: None,
     };
 
     let response = client

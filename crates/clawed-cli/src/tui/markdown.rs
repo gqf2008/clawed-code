@@ -305,7 +305,8 @@ fn ensure_table_borders(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let is_sep = |l: &str| {
         let t = l.trim();
-        t.starts_with('|') && t.ends_with('|')
+        t.starts_with('|')
+            && t.ends_with('|')
             && t.len() >= 3
             && t[1..t.len() - 1]
                 .split('|')
@@ -317,8 +318,8 @@ fn ensure_table_borders(text: &str) -> String {
     };
     // Mark which original lines belong to a table block
     let n = lines.len();
-    let mut tbl_start = vec![usize::MAX; n];  // block-start index per line
-    let mut tbl_end = vec![usize::MAX; n];    // block-end (exclusive) per line
+    let mut tbl_start = vec![usize::MAX; n]; // block-start index per line
+    let mut tbl_end = vec![usize::MAX; n]; // block-end (exclusive) per line
     for i in 0..n {
         if is_sep(lines[i]) && tbl_start[i] == usize::MAX {
             // Scan back to find header (first table row before separator)
@@ -338,7 +339,9 @@ fn ensure_table_borders(text: &str) -> String {
             // Check for existing `|-` bottom row
             let have_bottom = end < n
                 && lines[end].trim().starts_with('|')
-                && lines[end].trim()[1..].chars().all(|ch| matches!(ch, '-' | '_'));
+                && lines[end].trim()[1..]
+                    .chars()
+                    .all(|ch| matches!(ch, '-' | '_'));
             if have_bottom {
                 end += 1;
             }

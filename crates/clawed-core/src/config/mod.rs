@@ -243,7 +243,14 @@ impl Settings {
     }
 
     /// The Claude Code config directory (`~/.claude/`).
+    ///
+    /// Honors the `CLAUDE_CONFIG_DIR` env var when set (useful for tests and
+    /// isolated installs); otherwise resolves `~/.claude` via the platform
+    /// home directory.
     pub fn claude_dir() -> Option<PathBuf> {
+        if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
+            return Some(PathBuf::from(dir));
+        }
         dirs::home_dir().map(|h| h.join(".claude"))
     }
 

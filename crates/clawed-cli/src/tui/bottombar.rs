@@ -100,7 +100,10 @@ pub fn render(
             left_spans.push(Span::styled(" resize  ", dim));
         }
         left_spans.push(Span::styled("ctrl+t", key_style));
-        left_spans.push(Span::styled(if panel_visible { " hide  " } else { " tasks  " }, dim));
+        left_spans.push(Span::styled(
+            if panel_visible { " hide  " } else { " tasks  " },
+            dim,
+        ));
         left_spans.push(Span::styled("ctrl+p", key_style));
         left_spans.push(Span::styled(" model", dim));
     }

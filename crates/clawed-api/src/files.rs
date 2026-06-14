@@ -25,9 +25,9 @@ const MAX_RETRIES: u32 = 3;
 const BASE_DELAY_MS: u64 = 500;
 const MAX_FILE_SIZE_BYTES: u64 = 500 * 1024 * 1024; // 500 MB
 const DEFAULT_CONCURRENCY: usize = 5;
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
-const UPLOAD_TIMEOUT: Duration = Duration::from_secs(120);
-const LIST_TIMEOUT: Duration = Duration::from_secs(60);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_mins(1);
+const UPLOAD_TIMEOUT: Duration = Duration::from_mins(2);
+const LIST_TIMEOUT: Duration = Duration::from_mins(1);
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

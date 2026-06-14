@@ -292,9 +292,7 @@ fn messages_for_compact(messages: &[Message]) -> Vec<ApiMessage> {
                             signature: signature.clone(),
                         }),
                         clawed_core::message::ContentBlock::RedactedThinking { data } => {
-                            Some(ApiContentBlock::RedactedThinking {
-                                data: data.clone(),
-                            })
+                            Some(ApiContentBlock::RedactedThinking { data: data.clone() })
                         }
                         _ => None,
                     })
@@ -359,8 +357,8 @@ pub async fn compact_conversation(
         top_p: None,
         thinking: None,
         tool_choice: None,
-            context_management: None,
-            metadata: None,
+        context_management: None,
+        metadata: None,
     };
 
     let response = client.messages(&request).await.map_err(|e| {
@@ -478,14 +476,14 @@ pub fn summarize_tool_uses(messages: &[Message]) -> String {
                     // Track files
                     if let Some(path) = input["file_path"].as_str() {
                         match name.as_str() {
-                            "Read"
-                                if !files_read.contains(&path.to_string()) => {
-                                    files_read.push(path.to_string());
-                                }
+                            "Read" if !files_read.contains(&path.to_string()) => {
+                                files_read.push(path.to_string());
+                            }
                             "Edit" | "Write" | "MultiEdit"
-                                if !files_modified.contains(&path.to_string()) => {
-                                    files_modified.push(path.to_string());
-                                }
+                                if !files_modified.contains(&path.to_string()) =>
+                            {
+                                files_modified.push(path.to_string());
+                            }
                             _ => {}
                         }
                     }
@@ -502,7 +500,7 @@ pub fn summarize_tool_uses(messages: &[Message]) -> String {
 
     // Sort by count descending
     let mut sorted: Vec<_> = tool_counts.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    sorted.sort_by_key(|item| std::cmp::Reverse(item.1));
 
     for (tool, count) in &sorted {
         summary.push_str(&format!("  {} — {} call(s)\n", tool, count));

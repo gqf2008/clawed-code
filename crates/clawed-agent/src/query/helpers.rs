@@ -212,10 +212,7 @@ pub(super) fn make_continuation_message(attempt: u32, limit: u32) -> UserMessage
 /// When `skip_cache` is true, no cache_control markers are added (for `/break-cache`).
 /// When `has_thinking` is true, real thinking blocks are preserved as-is (required by the
 /// API when extended thinking is enabled); otherwise they are converted to XML text.
-pub(super) fn messages_to_api(
-    messages: &[Message],
-    skip_cache: bool,
-) -> Vec<ApiMessage> {
+pub(super) fn messages_to_api(messages: &[Message], skip_cache: bool) -> Vec<ApiMessage> {
     let to_api_content = |content: &[ContentBlock]| {
         content
             .iter()

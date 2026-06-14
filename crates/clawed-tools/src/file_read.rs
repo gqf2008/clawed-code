@@ -57,7 +57,7 @@ fn find_similar_files(path: &Path, max_suggestions: usize) -> Vec<String> {
         }
     }
 
-    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+    candidates.sort_by_key(|item| std::cmp::Reverse(item.1));
     candidates
         .iter()
         .take(max_suggestions)

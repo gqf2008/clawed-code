@@ -428,14 +428,16 @@ fn thinking_block_without_signature_passed_through_when_thinking_enabled() {
     // Unsigned thinking blocks must still be passed back when thinking
     // mode is enabled — dropping them causes a 400 from the API:
     // "content[].thinking in the thinking mode must be passed back".
+    // The signature is emitted as `Some("")` (not `None`): DeepSeek and some
+    // proxies require the field present even when empty (see helpers.rs).
     let block = ContentBlock::Thinking {
         thinking: "hmm".into(),
         signature: None,
     };
     let api = block_to_api(&block);
     assert!(
-        matches!(&api, ApiContentBlock::Thinking { signature, .. } if signature.is_none()),
-        "unsigned thinking block must be passed through as Thinking, got: {api:?}"
+        matches!(&api, ApiContentBlock::Thinking { signature, .. } if signature.as_deref() == Some("")),
+        "unsigned thinking block must be passed through as Thinking with empty signature (DeepSeek/proxy compat), got: {api:?}"
     );
 }
 

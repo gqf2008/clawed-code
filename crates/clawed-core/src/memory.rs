@@ -214,7 +214,7 @@ pub fn scan_memory_dir(dir: &Path) -> Vec<MemoryHeader> {
         });
     }
 
-    headers.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+    headers.sort_by_key(|h| std::cmp::Reverse(h.mtime));
     headers.truncate(MAX_MEMORY_FILES);
     headers
 }
@@ -360,7 +360,7 @@ pub fn load_memories_for_prompt(cwd: &Path) -> Option<String> {
         all_headers.extend(scan_memory_dir(dir));
     }
     // Re-sort globally and cap
-    all_headers.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+    all_headers.sort_by_key(|h| std::cmp::Reverse(h.mtime));
     all_headers.truncate(MAX_MEMORY_FILES);
 
     if all_headers.is_empty() {
@@ -422,7 +422,7 @@ pub fn load_memories_for_prompt(cwd: &Path) -> Option<String> {
 pub fn list_memory_files(cwd: &Path) -> Vec<MemoryHeader> {
     let dirs = memory_dirs(cwd);
     let mut all: Vec<MemoryHeader> = dirs.iter().flat_map(|d| scan_memory_dir(d)).collect();
-    all.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+    all.sort_by_key(|h| std::cmp::Reverse(h.mtime));
     all
 }
 
@@ -477,7 +477,7 @@ pub fn prune_memories(dir: &Path, config: &PruneConfig) -> std::io::Result<(usiz
     }
 
     // Sort oldest-first for pruning order
-    headers.sort_by(|a, b| a.mtime.cmp(&b.mtime));
+    headers.sort_by_key(|a| a.mtime);
 
     let mut deleted = 0usize;
     let mut bytes_freed = 0u64;
@@ -909,19 +909,19 @@ mod tests {
 
     #[test]
     fn human_age_minutes() {
-        let t = SystemTime::now() - Duration::from_secs(5 * 60);
+        let t = SystemTime::now() - Duration::from_mins(5);
         assert_eq!(human_age(t), "5 min ago");
     }
 
     #[test]
     fn human_age_hours() {
-        let t = SystemTime::now() - Duration::from_secs(2 * 3600);
+        let t = SystemTime::now() - Duration::from_hours(2);
         assert_eq!(human_age(t), "2 hr ago");
     }
 
     #[test]
     fn human_age_days() {
-        let t = SystemTime::now() - Duration::from_secs(3 * 86400);
+        let t = SystemTime::now() - Duration::from_hours(72);
         assert_eq!(human_age(t), "3 days ago");
     }
 
@@ -1266,7 +1266,7 @@ mod tests {
         let old = tmp.path().join("old.md");
         std::fs::write(&old, "---\ntype: user\n---\nVery old memory").unwrap();
         // Manually set mtime to 100 days ago
-        let old_time = SystemTime::now() - Duration::from_secs(100 * 86400);
+        let old_time = SystemTime::now() - Duration::from_hours(2400);
         let _ = filetime::set_file_mtime(&old, filetime::FileTime::from_system_time(old_time));
 
         let config = PruneConfig {

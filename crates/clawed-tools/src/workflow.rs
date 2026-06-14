@@ -346,7 +346,7 @@ async fn execute_bash(cmd: &str, cwd: &Path) -> anyhow::Result<String> {
             .spawn()?
     };
 
-    let result = tokio::time::timeout(Duration::from_secs(60), child.wait_with_output())
+    let result = tokio::time::timeout(Duration::from_mins(1), child.wait_with_output())
         .await
         .map_err(|_| anyhow::anyhow!("Command timed out after 60s"))??;
 

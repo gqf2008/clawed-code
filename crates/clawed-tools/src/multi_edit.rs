@@ -148,7 +148,7 @@ impl Tool for MultiEditTool {
             indexed_edits.push((start, end, new_str));
         }
         // Apply from end to start so byte offsets remain valid
-        indexed_edits.sort_by(|a, b| b.0.cmp(&a.0));
+        indexed_edits.sort_by_key(|item| std::cmp::Reverse(item.0));
         for (start, end, new_str) in indexed_edits {
             content.replace_range(start..end, new_str);
         }

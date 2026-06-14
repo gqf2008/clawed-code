@@ -321,9 +321,8 @@ mod tests {
         let adapter = McpBusAdapter::new(McpManager::new());
         let tmp = tempfile::tempdir().unwrap();
         // Isolate from user-level MCP configs in ~/.claude/
-        let _home_guard = std::env::var("HOME").ok().map(|original| {
+        let _home_guard = std::env::var("HOME").ok().inspect(|_original| {
             std::env::set_var("HOME", tmp.path());
-            original
         });
         let notifications = adapter.discover_and_load(tmp.path()).await.unwrap();
         assert!(notifications.is_empty());

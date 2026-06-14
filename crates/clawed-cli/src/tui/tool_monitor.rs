@@ -3,8 +3,8 @@
 use super::MUTED;
 use ratatui::{
     layout::Rect,
-    symbols::border,
     style::{Color, Modifier, Style},
+    symbols::border,
     text::{Line, Span},
     widgets::{Block, Paragraph, Wrap},
     Frame,
@@ -114,7 +114,8 @@ pub fn render(
     // Scroll
     let max_scroll = cache.lines.len().saturating_sub(inner_height);
     *scroll_offset = (*scroll_offset).min(max_scroll);
-    let visible: Vec<Line> = cache.lines
+    let visible: Vec<Line> = cache
+        .lines
         .iter()
         .skip(*scroll_offset)
         .take(inner_height)
@@ -134,10 +135,16 @@ pub fn render(
     let block = Block::bordered()
         .border_set(border::PLAIN)
         .title(title)
-        .title_style(Style::default().fg(focus_color).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(focus_color)
+                .add_modifier(Modifier::BOLD),
+        )
         .border_style(Style::default().fg(focus_color));
 
-    let para = Paragraph::new(visible).block(block).wrap(Wrap { trim: false });
+    let para = Paragraph::new(visible)
+        .block(block)
+        .wrap(Wrap { trim: false });
     frame.render_widget(para, area);
 
     // Scrollbar — on the right border line, inside the panel

@@ -223,7 +223,7 @@ mod exit_code {
 
 #[tokio::main]
 async fn main() {
-    if let Err(e) = run().await {
+    if let Err(e) = Box::pin(run()).await {
         let msg = format!("{e:#}");
         eprintln!("\x1b[31mError: {msg}\x1b[0m");
         let code = if msg.contains("permission") || msg.contains("Permission") {
@@ -643,7 +643,7 @@ async fn run() -> anyhow::Result<()> {
             full_prompt
         };
 
-        let task = async {
+        let task = Box::pin(async {
             if cli.output_format == "json" {
                 output::run_json(&engine, &full_prompt).await
             } else if cli.output_format == "stream-json" {
@@ -653,7 +653,7 @@ async fn run() -> anyhow::Result<()> {
             } else {
                 output::run_task_interactive(&engine, &full_prompt).await
             }
-        };
+        });
 
         run_with_timeout(task, cli.timeout).await?;
     } else if !stdin_is_tty {
@@ -666,7 +666,7 @@ async fn run() -> anyhow::Result<()> {
         .await??;
         let stdin_buf = stdin_buf.trim().to_string();
         if !stdin_buf.is_empty() {
-            let task = async {
+            let task = Box::pin(async {
                 if cli.output_format == "json" {
                     output::run_json(&engine, &stdin_buf).await
                 } else if cli.output_format == "stream-json" {
@@ -676,7 +676,7 @@ async fn run() -> anyhow::Result<()> {
                 } else {
                     output::run_task_interactive(&engine, &stdin_buf).await
                 }
-            };
+            });
 
             run_with_timeout(task, cli.timeout).await?;
         } else {

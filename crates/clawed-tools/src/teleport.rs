@@ -53,10 +53,10 @@ pub struct BundleUploadResult {
 
 /// Retry configuration matching the TypeScript defaults.
 const TELEPORT_RETRY_DELAYS: [Duration; 4] = [
-    Duration::from_millis(2000),
-    Duration::from_millis(4000),
-    Duration::from_millis(8000),
-    Duration::from_millis(16000),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+    Duration::from_secs(8),
+    Duration::from_secs(16),
 ];
 
 // ── Environment API ─────────────────────────────────────────────────────────

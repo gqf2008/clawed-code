@@ -24,10 +24,10 @@ const MAX_TRACKED_SOURCES: usize = 10;
 const MIN_CACHE_MISS_TOKENS: i64 = 2_000;
 
 /// 5-minute TTL threshold.
-const CACHE_TTL_5MIN: Duration = Duration::from_secs(5 * 60);
+const CACHE_TTL_5MIN: Duration = Duration::from_mins(5);
 
 /// 1-hour TTL threshold.
-pub const CACHE_TTL_1HOUR: Duration = Duration::from_secs(60 * 60);
+pub const CACHE_TTL_1HOUR: Duration = Duration::from_hours(1);
 
 /// Source prefixes that are tracked for cache break detection.
 const TRACKED_SOURCE_PREFIXES: &[&str] = &[

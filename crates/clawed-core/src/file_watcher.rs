@@ -248,7 +248,7 @@ mod tests {
         fs::write(&md, "# Modified").unwrap();
 
         // Wait for debounced event (500ms debounce + some margin)
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
 
         let events = handle.drain();
         assert!(
@@ -278,7 +278,7 @@ mod tests {
         let debouncer = {
             // Create a minimal debouncer just for the test struct
             new_debouncer(
-                Duration::from_secs(60),
+                Duration::from_mins(1),
                 |_: Result<Vec<notify_debouncer_mini::DebouncedEvent>, notify::Error>| {},
             )
             .unwrap()

@@ -61,7 +61,7 @@ impl AcpAgent {
     }
 
     /// Send a session/update notification to the client.
-    fn notify_session(&self, sid: &str, update: Value) {
+    fn notify_session(sid: &str, update: Value) {
         if let Some(f) = NOTIFY.get() {
             f(
                 json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":sid,"update":update}}),
@@ -109,13 +109,22 @@ impl AcpAgent {
         while let Some(event) = stream.next().await {
             match &event {
                 AgentEvent::TextDelta(t) | AgentEvent::ThinkingDelta(t) => {
-                    self.notify_session(sid, json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":t}}));
+                    Self::notify_session(
+                        sid,
+                        json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":t}}),
+                    );
                 }
                 AgentEvent::ToolUseStart { id, name, .. } => {
-                    self.notify_session(sid, json!({"sessionUpdate":"tool_call","toolCallId":id,"title":name,"kind":"tool","status":"pending"}));
+                    Self::notify_session(
+                        sid,
+                        json!({"sessionUpdate":"tool_call","toolCallId":id,"title":name,"kind":"tool","status":"pending"}),
+                    );
                 }
                 AgentEvent::ToolResult { id, .. } => {
-                    self.notify_session(sid, json!({"sessionUpdate":"tool_call_update","toolCallId":id,"status":"completed"}));
+                    Self::notify_session(
+                        sid,
+                        json!({"sessionUpdate":"tool_call_update","toolCallId":id,"status":"completed"}),
+                    );
                 }
                 AgentEvent::TurnComplete {
                     stop_reason: sr, ..

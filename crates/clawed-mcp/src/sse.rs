@@ -218,7 +218,7 @@ impl SseTransport {
             );
         }
 
-        let timeout = std::time::Duration::from_secs(300);
+        let timeout = std::time::Duration::from_mins(5);
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(response)) => {
                 if let Some(error) = response.error {

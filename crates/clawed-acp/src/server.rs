@@ -221,13 +221,13 @@ impl AcpServer {
     }
 
     async fn handle_cancel(&self, params: Option<&Value>) -> Result<Value> {
-        let sid = self.get_sid(params)?;
+        let sid = Self::get_sid(params)?;
         self.agent.handle_cancel(sid).await?;
         Ok(json!({}))
     }
 
     async fn handle_close(&self, params: Option<&Value>) -> Result<Value> {
-        let sid = self.get_sid(params)?;
+        let sid = Self::get_sid(params)?;
         self.agent.handle_close_session(sid).await?;
         Ok(json!({}))
     }
@@ -409,7 +409,7 @@ impl AcpServer {
     }
 
     /// Helpers
-    fn get_sid<'a>(&self, params: Option<&'a Value>) -> Result<&'a str> {
+    fn get_sid<'a>(params: Option<&'a Value>) -> Result<&'a str> {
         params
             .and_then(|p| p.get("sessionId").and_then(|v| v.as_str()))
             .ok_or(anyhow::anyhow!("Missing sessionId"))

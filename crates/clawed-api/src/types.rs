@@ -139,17 +139,19 @@ pub struct ContextManagementConfig {
 #[serde(tag = "type")]
 pub enum ContextEditStrategy {
     #[serde(rename = "clear_thinking_20251015")]
-    ClearThinking20251015 {
-        keep: ThinkingKeepStrategy,
-    },
+    ClearThinking20251015 { keep: ThinkingKeepStrategy },
 }
 
 /// How many thinking turns to preserve: "all" or { type: "thinking_turns", value: N }.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ThinkingKeepStrategy {
-    All(String),  // "all"
-    Turns { #[serde(rename = "type")] keep_type: String, value: u32 },
+    All(String), // "all"
+    Turns {
+        #[serde(rename = "type")]
+        keep_type: String,
+        value: u32,
+    },
 }
 
 /// A single message in the API conversation (user or assistant role).

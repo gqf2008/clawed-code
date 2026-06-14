@@ -500,7 +500,7 @@ impl BusHandle {
     /// Returns `None` if the UI is disconnected or no client responds
     /// within the timeout (default 5 minutes).
     pub async fn request_user_question(&mut self, question: &str) -> Option<UserQuestionResponse> {
-        self.request_user_question_with_timeout(question, std::time::Duration::from_secs(300))
+        self.request_user_question_with_timeout(question, std::time::Duration::from_mins(5))
             .await
     }
 

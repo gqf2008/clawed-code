@@ -46,7 +46,7 @@ impl ChromiumBrowser {
     }
 
     /// Native Messaging host directory for this browser.
-    pub fn native_messaging_dir(&self) -> Option<PathBuf> {
+    pub fn native_messaging_dir() -> Option<PathBuf> {
         let _home = dirs::home_dir()?;
         #[cfg(target_os = "macos")]
         {
@@ -82,8 +82,8 @@ impl ChromiumBrowser {
     }
 
     /// Check whether this browser appears to be installed.
-    pub fn is_installed(&self) -> bool {
-        self.native_messaging_dir()
+    pub fn is_installed() -> bool {
+        ChromiumBrowser::native_messaging_dir()
             .is_some_and(|d| d.parent().is_some_and(|p| p.exists()))
     }
 }
@@ -93,7 +93,7 @@ pub fn detect_browsers() -> Vec<ChromiumBrowser> {
     use ChromiumBrowser::{Arc, Brave, Chrome, Edge, Opera};
     [Chrome, Edge, Brave, Opera, Arc]
         .into_iter()
-        .filter(|b| b.is_installed())
+        .filter(|_| ChromiumBrowser::is_installed())
         .collect()
 }
 
@@ -131,7 +131,7 @@ pub fn install_native_host_manifest() -> Result<Vec<(ChromiumBrowser, PathBuf)>>
 
     let mut installed = Vec::new();
     for browser in detect_browsers() {
-        if let Some(dir) = browser.native_messaging_dir() {
+        if let Some(dir) = ChromiumBrowser::native_messaging_dir() {
             fs::create_dir_all(&dir)
                 .with_context(|| format!("failed to create {}", dir.display()))?;
             let path = dir.join("com.anthropic.clawed.json");
@@ -156,7 +156,7 @@ pub fn install_native_host_manifest() -> Result<Vec<(ChromiumBrowser, PathBuf)>>
 /// Remove the Native Messaging host manifest from all detected browsers.
 pub fn uninstall_native_host_manifest() -> Result<()> {
     for browser in detect_browsers() {
-        if let Some(dir) = browser.native_messaging_dir() {
+        if let Some(dir) = ChromiumBrowser::native_messaging_dir() {
             let path = dir.join("com.anthropic.clawed.json");
             if path.exists() {
                 fs::remove_file(&path)?;
@@ -183,8 +183,8 @@ pub struct ChromeStatus {
 impl ChromeStatus {
     pub fn check() -> Self {
         let browsers = detect_browsers();
-        let native_host_installed = browsers.iter().any(|b| {
-            b.native_messaging_dir()
+        let native_host_installed = browsers.iter().any(|_| {
+            ChromiumBrowser::native_messaging_dir()
                 .is_some_and(|d| d.join("com.anthropic.clawed.json").exists())
         });
 
@@ -329,7 +329,6 @@ pub fn write_native_message(msg: &ChromeMessage) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn manifest_serialization_roundtrip() {

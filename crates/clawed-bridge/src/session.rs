@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn create_and_get_session() {
         let (bus, _client) = EventBus::new(64);
-        let mut router = SessionRouter::new(bus, Duration::from_secs(3600));
+        let mut router = SessionRouter::new(bus, Duration::from_hours(1));
 
         let ch = make_channel("feishu", "oc_abc");
 
@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn different_channels_get_different_sessions() {
         let (bus, _client) = EventBus::new(64);
-        let mut router = SessionRouter::new(bus, Duration::from_secs(3600));
+        let mut router = SessionRouter::new(bus, Duration::from_hours(1));
 
         let ch1 = make_channel("feishu", "oc_1");
         let ch2 = make_channel("feishu", "oc_2");
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn destroy_session() {
         let (bus, _client) = EventBus::new(64);
-        let mut router = SessionRouter::new(bus, Duration::from_secs(3600));
+        let mut router = SessionRouter::new(bus, Duration::from_hours(1));
 
         let ch = make_channel("telegram", "123");
         router.get_or_create(&ch);
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn active_channels_list() {
         let (bus, _client) = EventBus::new(64);
-        let mut router = SessionRouter::new(bus, Duration::from_secs(3600));
+        let mut router = SessionRouter::new(bus, Duration::from_hours(1));
 
         let ch1 = make_channel("feishu", "a");
         let ch2 = make_channel("telegram", "b");
@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn get_client_mut() {
         let (bus, _client) = EventBus::new(64);
-        let mut router = SessionRouter::new(bus, Duration::from_secs(3600));
+        let mut router = SessionRouter::new(bus, Duration::from_hours(1));
 
         let ch = make_channel("feishu", "a");
         assert!(router.get_client_mut(&ch).is_none());

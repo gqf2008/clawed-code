@@ -16,6 +16,9 @@ fn clawed() -> Command {
 fn clawed_with_temp_home() -> (Command, tempfile::TempDir) {
     let tmp = tempfile::tempdir().expect("create temp dir for home");
     let mut cmd = clawed();
+    // CLAUDE_CONFIG_DIR overrides claude_dir() directly (works cross-platform,
+    // unlike HOME/USERPROFILE which `dirs::home_dir()` ignores on Windows).
+    cmd.env("CLAUDE_CONFIG_DIR", tmp.path());
     cmd.env("HOME", tmp.path());
     (cmd, tmp)
 }

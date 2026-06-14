@@ -3,8 +3,8 @@
 use super::MUTED;
 use ratatui::{
     layout::Rect,
-    symbols::border,
     style::{Color, Modifier, Style},
+    symbols::border,
     text::{Line, Span},
     widgets::{Block, Paragraph, Wrap},
     Frame,
@@ -104,7 +104,7 @@ impl TaskListState {
     }
 
     #[allow(dead_code)]
-    pub fn render_height(&self) -> u16 {
+    pub fn render_height() -> u16 {
         // Side panel no longer uses vertical layout constraints.
         0
     }
@@ -152,9 +152,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut TaskListState) {
             .border_set(border::PLAIN)
             .title(" Tasks ")
             .title_style(super::muted());
-        let text = Paragraph::new(vec![
-            Line::styled("  (empty)", super::muted()),
-        ]);
+        let text = Paragraph::new(vec![Line::styled("  (empty)", super::muted())]);
         frame.render_widget(text.block(block), area);
         return;
     }
@@ -165,9 +163,21 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut TaskListState) {
     let progress_style = Style::default().fg(Color::Cyan);
     let accent = Style::default().fg(Color::Magenta);
 
-    let done = state.tasks.iter().filter(|t| t.status == TaskStatus::Completed).count();
-    let in_prog = state.tasks.iter().filter(|t| t.status == TaskStatus::InProgress).count();
-    let pending = state.tasks.iter().filter(|t| t.status == TaskStatus::Pending).count();
+    let done = state
+        .tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Completed)
+        .count();
+    let in_prog = state
+        .tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::InProgress)
+        .count();
+    let pending = state
+        .tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Pending)
+        .count();
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -181,11 +191,18 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut TaskListState) {
         parts.push(Span::styled(format!("{done} done"), done_style));
     }
     if in_prog > 0 {
-        if !parts.is_empty() { parts.push(Span::styled(", ", dim)); }
-        parts.push(Span::styled(format!("{in_prog} in progress"), progress_style));
+        if !parts.is_empty() {
+            parts.push(Span::styled(", ", dim));
+        }
+        parts.push(Span::styled(
+            format!("{in_prog} in progress"),
+            progress_style,
+        ));
     }
     if pending > 0 {
-        if !parts.is_empty() { parts.push(Span::styled(", ", dim)); }
+        if !parts.is_empty() {
+            parts.push(Span::styled(", ", dim));
+        }
         parts.push(Span::styled(format!("{pending} open"), dim));
     }
     header_spans.extend(parts);
@@ -213,14 +230,24 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut TaskListState) {
         }
         lines.push(Line::from(task_spans));
         if !task.depends_on.is_empty() {
-            let blocked_list = task.depends_on.iter().map(|id| format!("#{id}")).collect::<Vec<_>>().join(", ");
-            lines.push(Line::styled(format!("   \u{25B8} blocked by {blocked_list}"), dim));
+            let blocked_list = task
+                .depends_on
+                .iter()
+                .map(|id| format!("#{id}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(Line::styled(
+                format!("   \u{25B8} blocked by {blocked_list}"),
+                dim,
+            ));
         }
     }
 
     let inner_width = area.width.saturating_sub(2) as usize;
     let inner_height = area.height.saturating_sub(2) as usize;
-    if inner_height == 0 || inner_width == 0 { return; }
+    if inner_height == 0 || inner_width == 0 {
+        return;
+    }
 
     let mut wrapped: Vec<Line<'_>> = Vec::new();
     for line in &lines {
@@ -229,7 +256,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut TaskListState) {
         if w <= inner_width {
             wrapped.push(line.clone());
         } else {
-            let default_style = line.spans.iter()
+            let default_style = line
+                .spans
+                .iter()
                 .find(|s| !s.content.trim().is_empty())
                 .map(|s| s.style)
                 .unwrap_or_default();
@@ -247,7 +276,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut TaskListState) {
 
     let max_scroll = wrapped.len().saturating_sub(inner_height);
     state.scroll_offset = state.scroll_offset.min(max_scroll);
-    let visible: Vec<Line> = wrapped.iter().skip(state.scroll_offset).take(inner_height).cloned().collect();
+    let visible: Vec<Line> = wrapped
+        .iter()
+        .skip(state.scroll_offset)
+        .take(inner_height)
+        .cloned()
+        .collect();
 
     let title = if max_scroll > 0 {
         format!(
@@ -264,7 +298,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut TaskListState) {
         .title(title)
         .title_style(super::muted());
 
-    let para = Paragraph::new(visible).block(block).wrap(Wrap { trim: false });
+    let para = Paragraph::new(visible)
+        .block(block)
+        .wrap(Wrap { trim: false });
     frame.render_widget(para, area);
 
     // Scrollbar — on the right border line, inside the panel
@@ -300,7 +336,9 @@ fn split_at_display_width(s: &str, max_width: usize) -> (&str, &str) {
     let mut w = 0usize;
     for (i, c) in s.char_indices() {
         let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-        if w + cw > max_width { return (&s[..i], &s[i..]); }
+        if w + cw > max_width {
+            return (&s[..i], &s[i..]);
+        }
         w += cw;
     }
     (s, "")
@@ -311,13 +349,20 @@ mod tests {
     use super::*;
 
     fn mk_task(content: &str, status: TaskStatus) -> TaskItem {
-        TaskItem { id: format!("task-{content}"), content: content.to_string(), status, priority: "medium".to_string(), owner: None, depends_on: Vec::new(), completed_at: None }
+        TaskItem {
+            id: format!("task-{content}"),
+            content: content.to_string(),
+            status,
+            priority: "medium".to_string(),
+            owner: None,
+            depends_on: Vec::new(),
+            completed_at: None,
+        }
     }
 
     #[test]
     fn render_height_empty() {
-        let state = TaskListState::new();
-        assert_eq!(state.render_height(), 0);
+        assert_eq!(TaskListState::render_height(), 0);
     }
 
     #[test]
@@ -325,7 +370,7 @@ mod tests {
         let mut state = TaskListState::new();
         state.tasks.push(mk_task("hello", TaskStatus::Pending));
         state.side_panel_visible = true;
-        assert_eq!(state.render_height(), 0);
+        assert_eq!(TaskListState::render_height(), 0);
     }
 
     #[test]

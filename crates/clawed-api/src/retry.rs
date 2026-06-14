@@ -343,7 +343,7 @@ mod tests {
             delay
         );
         assert!(
-            delay < Duration::from_millis(1000),
+            delay < Duration::from_secs(1),
             "delay {:?} >= 1000ms",
             delay
         );
@@ -355,7 +355,7 @@ mod tests {
         let delay = retry_delay(2, None, &config);
         // base = 500ms * 2^1 = 1000ms, plus jitter
         assert!(
-            delay >= Duration::from_millis(1000),
+            delay >= Duration::from_secs(1),
             "delay {:?} < 1000ms",
             delay
         );

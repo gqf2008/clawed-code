@@ -195,7 +195,7 @@ impl StreamableHttpTransport {
 
         let mut byte_stream = response.bytes_stream();
         let mut buffer = String::new();
-        let timeout = std::time::Duration::from_secs(300);
+        let timeout = std::time::Duration::from_mins(5);
         let deadline = tokio::time::Instant::now() + timeout;
 
         loop {

@@ -73,7 +73,7 @@ impl StdioTransport {
         self.stdin.write_all(b"\n").await?;
         self.stdin.flush().await?;
 
-        const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+        const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(1);
 
         let result = tokio::time::timeout(REQUEST_TIMEOUT, async {
             loop {

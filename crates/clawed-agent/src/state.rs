@@ -489,6 +489,7 @@ mod tests {
             output_tokens: 2000,
             model_usage: std::collections::HashMap::new(),
             total_cost_usd: 0.1,
+            thinking: None,
             messages: vec![],
             git_branch: Some("main".to_string()),
             custom_title: None,

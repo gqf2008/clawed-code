@@ -1090,7 +1090,7 @@ mod tests {
             .execute(
                 "t1",
                 "Bash",
-                json!({"command": "echo line1\necho line2\necho line3"}),
+                json!({"command": "echo line1 && echo line2 && echo line3"}),
                 &ctx,
             )
             .await;

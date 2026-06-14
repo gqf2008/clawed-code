@@ -218,9 +218,8 @@ fn remove_manifest_entry(id: &str) {
 
 /// Return the sessions directory: `~/.claude/sessions/`
 pub fn sessions_dir() -> PathBuf {
-    dirs::home_dir()
+    crate::config::Settings::claude_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".claude")
         .join("sessions")
 }
 
@@ -306,7 +305,7 @@ pub fn list_sessions() -> Vec<SessionMeta> {
     let manifest = load_manifest();
     if !manifest.sessions.is_empty() {
         let mut sessions = manifest.sessions;
-        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
         return sessions;
     }
 
@@ -333,7 +332,7 @@ pub fn list_sessions() -> Vec<SessionMeta> {
         })
         .collect();
 
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
 
     // Rebuild manifest from scanned sessions
     if !sessions.is_empty() {
@@ -714,9 +713,8 @@ const MAX_HISTORY_PER_PROJECT: usize = 100;
 
 /// Path to the global prompt history file.
 fn prompt_history_path() -> PathBuf {
-    dirs::home_dir()
+    crate::config::Settings::claude_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".claude")
         .join("prompt_history.jsonl")
 }
 
@@ -1235,10 +1233,8 @@ pub fn read_tail_metadata(id: &str) -> anyhow::Result<SessionMeta> {
                     meta.custom_title = Some(t.clone());
                     meta.title = t;
                 }
-                TranscriptEntry::AiTitle { ai_title: t, .. } => {
-                    if meta.custom_title.is_none() {
-                        meta.title = t;
-                    }
+                TranscriptEntry::AiTitle { ai_title: t, .. } if meta.custom_title.is_none() => {
+                    meta.title = t;
                 }
                 TranscriptEntry::Summary { summary: s, .. } => meta.summary = Some(s),
                 TranscriptEntry::LastPrompt { last_prompt: p, .. } => meta.last_prompt = Some(p),
@@ -2082,7 +2078,7 @@ mod tests {
         };
         // search_sessions uses list_sessions() which reads from disk;
         // instead we test the filter logic directly here
-        let sessions = vec![s1.clone()];
+        let sessions = [s1.clone()];
         let query = "jwt";
         let lower = query.to_lowercase();
         let found: Vec<_> = sessions
@@ -2139,7 +2135,7 @@ mod tests {
             last_prompt: None,
             insights: None,
         };
-        let sessions = vec![s];
+        let sessions = [s];
         let query = "uppercase";
         let lower = query.to_lowercase();
         let found: Vec<_> = sessions

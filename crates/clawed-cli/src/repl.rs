@@ -118,6 +118,11 @@ async fn recv_with_timeout(
     }
 }
 
+// `repl::run` is a ~2000-line legacy REPL loop; its async state exceeds clippy's
+// 512 KB stack threshold. The real fix is to split it into smaller helpers (like
+// the tui/mod.rs decomposition), tracked separately — boxing the whole future just
+// moves the frame to the heap without addressing the size.
+#[allow(clippy::large_stack_frames)]
 pub async fn run(
     engine: Arc<QueryEngine>,
     mut client: Option<ClientHandle>,

@@ -16,8 +16,8 @@ use crate::types::{
 
 /// Transport abstraction — delegates to the concrete transport type.
 enum Transport {
-    Stdio(StdioTransport),
-    StreamableHttp(StreamableHttpTransport),
+    Stdio(Box<StdioTransport>),
+    StreamableHttp(Box<StreamableHttpTransport>),
 }
 
 impl Transport {
@@ -84,7 +84,7 @@ impl McpClient {
                     .with_context(|| {
                         format!("Failed to connect to MCP server '{}'", config.name)
                     })?;
-                Transport::StreamableHttp(t)
+                Transport::StreamableHttp(Box::new(t))
             }
             McpTransportType::Stdio => {
                 info!(
@@ -96,7 +96,7 @@ impl McpClient {
                 let t = StdioTransport::spawn(&config.command, &config.args, &config.env)
                     .await
                     .with_context(|| format!("Failed to start MCP server '{}'", config.name))?;
-                Transport::Stdio(t)
+                Transport::Stdio(Box::new(t))
             }
         };
 

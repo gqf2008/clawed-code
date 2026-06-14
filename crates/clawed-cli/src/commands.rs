@@ -1091,7 +1091,7 @@ mod tests {
         }
         match SlashCommand::parse("/compact focus on code", &s) {
             Some(SlashCommand::Compact { instructions }) => {
-                assert_eq!(instructions, "focus on code")
+                assert_eq!(instructions, "focus on code");
             }
             _ => panic!("expected Compact"),
         }

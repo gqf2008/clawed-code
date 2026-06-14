@@ -3,7 +3,7 @@ use clawed_core::tool::{Tool, ToolContext, ToolResult};
 use serde_json::{json, Value};
 
 /// Timeout for user input (5 minutes).
-const USER_INPUT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+const USER_INPUT_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(5);
 
 pub struct AskUserTool;
 

@@ -176,7 +176,7 @@ impl ChannelGateway {
 
                     let task = tokio::spawn(async move {
                         let mut formatter = MessageFormatter::new();
-                        let idle_timeout = Duration::from_secs(600); // 10 min no-notification timeout
+                        let idle_timeout = Duration::from_mins(10); // 10 min no-notification timeout
                         loop {
                             match tokio::time::timeout(idle_timeout, notif_rx.recv()).await {
                                 Ok(Ok(notif)) => {

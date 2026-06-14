@@ -443,7 +443,7 @@ impl ApiClient {
             let mut buffer = String::new();
             // 60s is aggressive enough to detect stalled streams quickly, while
             // still accommodating normal inter-event gaps (e.g. extended thinking).
-            let chunk_timeout = std::time::Duration::from_secs(60);
+            let chunk_timeout = std::time::Duration::from_mins(1);
 
             loop {
                 match tokio::time::timeout(chunk_timeout, byte_stream.next()).await {

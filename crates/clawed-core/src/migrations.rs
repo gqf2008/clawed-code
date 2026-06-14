@@ -231,7 +231,7 @@ impl Migration for CleanupStaleSessionExports {
         }
 
         let now = std::time::SystemTime::now();
-        let max_age = std::time::Duration::from_secs(7 * 24 * 60 * 60); // 7 days
+        let max_age = std::time::Duration::from_hours(168); // 7 days
 
         for entry in fs::read_dir(&exports_dir)? {
             let entry = entry?;

@@ -7,10 +7,12 @@ impl QueryEngine {
     pub async fn save_session(&self) -> anyhow::Result<()> {
         use clawed_core::session::*;
         let s = self.state.read().await;
-        let thinking = self.thinking_config().map(|tc| clawed_core::session::SessionThinkingConfig {
-            thinking_type: tc.thinking_type,
-            budget_tokens: tc.budget_tokens,
-        });
+        let thinking =
+            self.thinking_config()
+                .map(|tc| clawed_core::session::SessionThinkingConfig {
+                    thinking_type: tc.thinking_type,
+                    budget_tokens: tc.budget_tokens,
+                });
         let snapshot = SessionSnapshot {
             id: self.session_id.clone(),
             title: title_from_messages(&s.messages),
@@ -55,10 +57,12 @@ impl QueryEngine {
     pub async fn rename_session(&self, name: &str) -> anyhow::Result<()> {
         use clawed_core::session::*;
         let s = self.state.read().await;
-        let thinking = self.thinking_config().map(|tc| clawed_core::session::SessionThinkingConfig {
-            thinking_type: tc.thinking_type,
-            budget_tokens: tc.budget_tokens,
-        });
+        let thinking =
+            self.thinking_config()
+                .map(|tc| clawed_core::session::SessionThinkingConfig {
+                    thinking_type: tc.thinking_type,
+                    budget_tokens: tc.budget_tokens,
+                });
         let snapshot = SessionSnapshot {
             id: self.session_id.clone(),
             title: name.to_string(),
