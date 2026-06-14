@@ -1,6 +1,5 @@
 /target
 **/target
-Cargo.lock
 *.swp
 *.swo
 *~
@@ -9,9 +8,22 @@ Cargo.lock
 *.pdb
 target/
 .claude/
-.github/
 graphify-out/
 session-*.json
 session-*.md
 session-*.log
 session-*.jsonl
+
+# Local tool state and generated artifacts (not version-controlled)
+.omc/
+.deepseek/
+.claude_todos.json
+*.ansi
+TEST_REPORT.md
+REVIEW_REPORT.md
+E2E_TEST_REPORT.md
+scripts/screenshots/
+scripts/tui_screenshots/
+scripts/output_print.txt
+scripts/verification_report.md
+count_unwrap.py
